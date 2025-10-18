@@ -35,12 +35,18 @@ jobs:
       run: mix deps.get --only test
 
     - name: Compile dependencies
+      env:
+        MIX_ENV: test
       run: mix deps.compile
 
     - name: Compile project
+      env:
+        MIX_ENV: test
       run: mix compile
 
     - name: Run tests
+      env:
+        MIX_ENV: test
       run: mix test
 
   release:
