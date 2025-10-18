@@ -16,7 +16,8 @@ defmodule Concord.MixProject do
         ignore_warnings: ".dialyzer_ignore.exs",
         flags: [],
         list_unused_filters: false
-      ]
+      ],
+      test_coverage: [summary: [threshold: 40]]
     ]
   end
 
