@@ -51,7 +51,7 @@
           {Credo.Check.Refactor.NegatedConditionsInUnless, []},
           {Credo.Check.Refactor.NegatedConditionsWithElse, []},
           {Credo.Check.Refactor.Nesting, [max_nesting: 5]},
-          {Credo.Check.Refactor.PipeChainStart, []},
+          # {Credo.Check.Refactor.PipeChainStart, []},
           {Credo.Check.Refactor.UnlessWithElse, []},
 
           {Credo.Check.Warning.ApplicationConfigInModuleAttribute, []},

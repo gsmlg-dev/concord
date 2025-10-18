@@ -35,7 +35,8 @@ defmodule Concord.Auth do
   end
 
   defp generate_token do
-    :crypto.strong_rand_bytes(32)
+    32
+    |> :crypto.strong_rand_bytes()
     |> Base.url_encode64(padding: false)
   end
 
