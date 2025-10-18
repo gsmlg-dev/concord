@@ -1,19 +1,26 @@
 defmodule Concord.Application do
+  @moduledoc """
+  Application supervisor for Concord distributed key-value store.
+  Starts and manages all the necessary processes including clustering,
+  telemetry, authentication, and the Raft consensus algorithm.
+  """
   use Application
   require Logger
+
+  alias Concord.{Auth, StateMachine, Telemetry}
 
   @impl true
   def start(_type, _args) do
     # Attach telemetry handlers
-    Concord.Telemetry.setup()
+    Telemetry.setup()
 
     children = [
       # Start telemetry poller for periodic metrics
-      {Concord.Telemetry.Poller, []},
+      {Telemetry.Poller, []},
       # Start libcluster for automatic node discovery
       {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
       # Start auth token manager
-      Concord.Auth.TokenStore,
+      Auth.TokenStore,
       # Start the Concord cluster after a brief delay
       {Task, fn -> init_cluster() end}
     ]
@@ -35,7 +42,7 @@ defmodule Concord.Application do
 
     node_id = node_id()
     cluster_name = :concord_cluster
-    machine = {:module, Concord.StateMachine, %{}}
+    machine = {:module, StateMachine, %{}}
 
     nodes = [Node.self() | Node.list()]
     server_ids = Enum.map(nodes, &{cluster_name, &1})

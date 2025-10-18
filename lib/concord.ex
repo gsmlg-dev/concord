@@ -19,6 +19,8 @@ defmodule Concord do
 
   require Logger
 
+  alias Concord.{Auth, StateMachine}
+
   @timeout 5_000
   @cluster_name :concord_cluster
 
@@ -197,7 +199,7 @@ defmodule Concord do
 
   defp fun(query) do
     fn state ->
-      Concord.StateMachine.query(query, state)
+      StateMachine.query(query, state)
     end
   end
 
@@ -208,7 +210,7 @@ defmodule Concord do
   defp check_auth(opts) do
     if Application.get_env(:concord, :auth_enabled, false) do
       token = Keyword.get(opts, :token)
-      Concord.Auth.verify_token(token)
+      Auth.verify_token(token)
     else
       :ok
     end

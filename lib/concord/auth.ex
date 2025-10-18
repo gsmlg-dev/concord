@@ -4,13 +4,15 @@ defmodule Concord.Auth do
   Implements token-based authentication.
   """
 
+  alias Concord.Auth.TokenStore
+
   @doc """
   Verifies an authentication token.
   """
   def verify_token(nil), do: {:error, :unauthorized}
 
   def verify_token(token) when is_binary(token) do
-    case Concord.Auth.TokenStore.get(token) do
+    case TokenStore.get(token) do
       {:ok, _permissions} -> :ok
       :error -> {:error, :unauthorized}
     end
@@ -23,7 +25,7 @@ defmodule Concord.Auth do
   """
   def create_token(permissions \\ [:read, :write]) do
     token = generate_token()
-    :ok = Concord.Auth.TokenStore.put(token, permissions)
+    :ok = TokenStore.put(token, permissions)
     {:ok, token}
   end
 
@@ -31,7 +33,7 @@ defmodule Concord.Auth do
   Revokes an authentication token.
   """
   def revoke_token(token) do
-    Concord.Auth.TokenStore.delete(token)
+    TokenStore.delete(token)
   end
 
   defp generate_token do
@@ -42,6 +44,10 @@ defmodule Concord.Auth do
 
   # Token storage using ETS
   defmodule TokenStore do
+    @moduledoc """
+    ETS-based token storage for authentication.
+    Provides fast in-memory storage and retrieval of authentication tokens.
+    """
     use GenServer
 
     def start_link(_opts) do

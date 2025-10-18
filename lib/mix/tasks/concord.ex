@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Concord.Cluster do
   """
 
   use Mix.Task
+  alias Concord.Auth
 
   @shortdoc "Manages Concord cluster operations"
 
@@ -44,7 +45,7 @@ defmodule Mix.Tasks.Concord.Cluster do
   def run(["token", "create" | _]) do
     Mix.Task.run("app.start")
 
-    {:ok, token} = Concord.Auth.create_token([:read, :write])
+    {:ok, token} = Auth.create_token([:read, :write])
     Mix.shell().info("Created token: #{token}")
     Mix.shell().info("Save this token securely!")
   end
@@ -52,7 +53,7 @@ defmodule Mix.Tasks.Concord.Cluster do
   def run(["token", "revoke", token | _]) do
     Mix.Task.run("app.start")
 
-    :ok = Concord.Auth.revoke_token(token)
+    :ok = Auth.revoke_token(token)
     Mix.shell().info("Token revoked successfully")
   end
 
