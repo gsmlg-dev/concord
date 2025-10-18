@@ -2,6 +2,9 @@ defmodule ConcordTest do
   use ExUnit.Case, async: false
 
   setup do
+    # Start test cluster
+    :ok = Concord.TestHelper.start_test_cluster()
+
     # Clean up any existing data
     on_exit(fn ->
       try do
@@ -9,6 +12,8 @@ defmodule ConcordTest do
       rescue
         _ -> :ok
       end
+
+      Concord.TestHelper.stop_test_cluster()
     end)
 
     :ok

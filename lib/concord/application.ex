@@ -35,7 +35,7 @@ defmodule Concord.Application do
 
     node_id = node_id()
     cluster_name = :concord_cluster
-    machine = {Concord.StateMachine, %{}}
+    machine = {:module, Concord.StateMachine, %{}}
 
     nodes = [Node.self() | Node.list()]
     server_ids = Enum.map(nodes, &{cluster_name, &1})
@@ -43,13 +43,16 @@ defmodule Concord.Application do
     data_dir = Application.get_env(:concord, :data_dir, "./data/#{node()}")
     File.mkdir_p!(data_dir)
 
+    # Create a proper uid from the node tuple
+    uid = node_id |> Tuple.to_list() |> Enum.join("_") |> String.replace("@", "_")
+
     server_config = %{
       id: node_id,
-      uid: Atom.to_string(node_id),
+      uid: uid,
       cluster_name: cluster_name,
       machine: machine,
       log_init_args: %{
-        uid: Atom.to_string(node_id),
+        uid: uid,
         data_dir: data_dir
       },
       initial_members: server_ids

@@ -6,8 +6,15 @@ defmodule Concord.AuthTest do
     original = Application.get_env(:concord, :auth_enabled)
     Application.put_env(:concord, :auth_enabled, true)
 
+    # Start test cluster
+    :ok = Concord.TestHelper.start_test_cluster()
+
+    # Start TokenStore GenServer for tests
+    {:ok, _} = Concord.Auth.TokenStore.start_link([])
+
     on_exit(fn ->
       Application.put_env(:concord, :auth_enabled, original)
+      Concord.TestHelper.stop_test_cluster()
     end)
 
     :ok

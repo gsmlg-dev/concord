@@ -10,7 +10,7 @@ defmodule Concord.Auth do
   def verify_token(nil), do: {:error, :unauthorized}
 
   def verify_token(token) when is_binary(token) do
-    case TokenStore.get(token) do
+    case Concord.Auth.TokenStore.get(token) do
       {:ok, _permissions} -> :ok
       :error -> {:error, :unauthorized}
     end
@@ -23,7 +23,7 @@ defmodule Concord.Auth do
   """
   def create_token(permissions \\ [:read, :write]) do
     token = generate_token()
-    :ok = TokenStore.put(token, permissions)
+    :ok = Concord.Auth.TokenStore.put(token, permissions)
     {:ok, token}
   end
 
@@ -31,7 +31,7 @@ defmodule Concord.Auth do
   Revokes an authentication token.
   """
   def revoke_token(token) do
-    TokenStore.delete(token)
+    Concord.Auth.TokenStore.delete(token)
   end
 
   defp generate_token do

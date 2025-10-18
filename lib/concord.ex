@@ -49,7 +49,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :put],
         %{duration: duration},
-        %{result: elem(result, 0)}
+        %{result: result}
       )
 
       result
@@ -71,10 +71,14 @@ defmodule Concord do
 
       result =
         case query({:get, key}, timeout) do
-          {:ok, result, _} -> result
-          {:timeout, _} -> {:error, :timeout}
-          {:error, :noproc} -> {:error, :cluster_not_ready}
-          {:error, reason} -> {:error, reason}
+          {:ok, {{_index, _term}, query_result}, _} ->
+            query_result
+          {:timeout, _} ->
+            {:error, :timeout}
+          {:error, :noproc} ->
+            {:error, :cluster_not_ready}
+          {:error, reason} ->
+            {:error, reason}
         end
 
       duration = System.monotonic_time() - start_time
@@ -82,7 +86,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :get],
         %{duration: duration},
-        %{result: elem(result, 0)}
+        %{result: result}
       )
 
       result
@@ -116,7 +120,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :delete],
         %{duration: duration},
-        %{result: elem(result, 0)}
+        %{result: result}
       )
 
       result
@@ -136,7 +140,7 @@ defmodule Concord do
       timeout = Keyword.get(opts, :timeout, @timeout)
 
       case query(:get_all, timeout) do
-        {:ok, result, _} -> result
+        {:ok, {{_index, _term}, query_result}, _} -> query_result
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
         {:error, reason} -> {:error, reason}
@@ -152,11 +156,11 @@ defmodule Concord do
     server_id = server_id()
 
     with {:ok, overview, _} <- :ra.member_overview(server_id, timeout),
-         {:ok, stats, _} <- query(:stats, timeout) do
+         {:ok, {{_index, _term}, query_result}, _} <- query(:stats, timeout) do
       {:ok,
        %{
          cluster: overview,
-         storage: stats,
+         storage: query_result,
          node: node()
        }}
     else

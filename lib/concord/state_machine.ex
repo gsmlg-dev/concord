@@ -8,14 +8,16 @@ defmodule Concord.StateMachine do
 
   @impl :ra_machine
   def init(_config) do
-    table = :ets.new(:concord_store, [:set, :public, :named_table])
-    %{table: table}
+    # Create the ETS table with a known name
+    _table = :ets.new(:concord_store, [:set, :public, :named_table])
+    # Return simple state similar to ra_machine_simple
+    {:concord_kv, %{}}
   end
 
   @impl :ra_machine
-  def apply(meta, {:put, key, value}, state) do
+  def apply(meta, {:put, key, value}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
-    :ets.insert(state.table, {key, value})
+    :ets.insert(:concord_store, {key, value})
 
     # Emit telemetry
     duration = System.monotonic_time() - start_time
@@ -26,12 +28,12 @@ defmodule Concord.StateMachine do
       %{operation: :put, key: key, index: Map.get(meta, :index)}
     )
 
-    {state, :ok, []}
+    {{:concord_kv, data}, :ok, []}
   end
 
-  def apply(meta, {:delete, key}, state) do
+  def apply(meta, {:delete, key}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
-    :ets.delete(state.table, key)
+    :ets.delete(:concord_store, key)
 
     duration = System.monotonic_time() - start_time
 
@@ -41,34 +43,46 @@ defmodule Concord.StateMachine do
       %{operation: :delete, key: key, index: Map.get(meta, :index)}
     )
 
-    {state, :ok, []}
+    {{:concord_kv, data}, :ok, []}
+  end
+
+  # Catch-all for unknown commands (e.g., internal ra commands)
+  def apply(meta, command, {:concord_kv, data}) do
+    # Log the unknown command for debugging
+    :telemetry.execute(
+      [:concord, :operation, :unknown_command],
+      %{command: inspect(command)},
+      %{index: Map.get(meta, :index)}
+    )
+
+    {{:concord_kv, data}, :ok, []}
   end
 
   @impl :ra_machine
-  def state_enter(status, state) do
+  def state_enter(status, {:concord_kv, _data}) do
     :telemetry.execute(
       [:concord, :state, :change],
       %{timestamp: System.system_time()},
       %{status: status, node: node()}
     )
 
-    state
+    []
   end
 
-  def query({:get, key}, state) do
-    case :ets.lookup(state.table, key) do
+  def query({:get, key}, {:concord_kv, _data}) do
+    case :ets.lookup(:concord_store, key) do
       [{^key, value}] -> {:ok, value}
       [] -> {:error, :not_found}
     end
   end
 
-  def query(:get_all, state) do
-    all = :ets.tab2list(state.table)
+  def query(:get_all, {:concord_kv, _data}) do
+    all = :ets.tab2list(:concord_store)
     {:ok, Map.new(all)}
   end
 
-  def query(:stats, state) do
-    info = :ets.info(state.table)
+  def query(:stats, {:concord_kv, _data}) do
+    info = :ets.info(:concord_store)
 
     {:ok,
      %{
@@ -78,11 +92,11 @@ defmodule Concord.StateMachine do
   end
 
   @impl :ra_machine
-  def snapshot_installed(snapshot, state) do
-    :ets.delete_all_objects(state.table)
+  def snapshot_installed(snapshot, _metadata, {:concord_kv, _data}, _aux) do
+    :ets.delete_all_objects(:concord_store)
 
     Enum.each(snapshot, fn {k, v} ->
-      :ets.insert(state.table, {k, v})
+      :ets.insert(:concord_store, {k, v})
     end)
 
     :telemetry.execute(
@@ -91,11 +105,11 @@ defmodule Concord.StateMachine do
       %{node: node()}
     )
 
-    {state, []}
+    []
   end
 
-  def snapshot(state) do
-    data = :ets.tab2list(state.table)
+  def snapshot({:concord_kv, _data}) do
+    data = :ets.tab2list(:concord_store)
 
     :telemetry.execute(
       [:concord, :snapshot, :created],
