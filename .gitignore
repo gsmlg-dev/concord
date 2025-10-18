@@ -21,3 +21,8 @@ concord-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+plts/
+
+# devenv
+.devenv/
+.devenv.*

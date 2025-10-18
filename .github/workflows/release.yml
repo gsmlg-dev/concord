@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+
+env:
+  MIX_ENV: prod
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Erlang/OTP
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27'
+        elixir-version: '1.18'
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-release-${{ hashFiles('**/mix.lock') }}
+
+    - name: Install dependencies
+      run: mix deps.get --only $MIX_ENV
+
+    - name: Compile dependencies
+      run: mix deps.compile
+
+    - name: Compile project
+      run: mix compile
+
+    - name: Run tests
+      run: mix test
+
+  release:
+    name: Release to Hex.pm
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Erlang/OTP
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27'
+        elixir-version: '1.18'
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          deps
+          _build
+        key: ${{ runner.os }}-mix-release-${{ hashFiles('**/mix.lock') }}
+
+    - name: Install dependencies
+      run: mix deps.get --only $MIX_ENV
+
+    - name: Compile dependencies
+      run: mix deps.compile
+
+    - name: Compile project
+      run: mix compile
+
+    - name: Update version in mix.exs
+      run: |
+        sed -i "s/version: \".*\"/version: \"${{ github.event.inputs.version }}\"/" mix.exs
+        git diff mix.exs
+
+    - name: Generate documentation
+      run: mix docs
+
+    - name: Publish to Hex.pm
+      env:
+        HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+      run: mix hex.publish --yes
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.event.inputs.version }}
+        release_name: Release v${{ github.event.inputs.version }}
+        body: |
+          ## Changes in v${{ github.event.inputs.version }}
+
+          This release was created automatically from the release workflow.
+
+          ### Installation
+
+          Add `concord` to your dependencies in `mix.exs`:
+
+          ```elixir
+          def deps do
+            [
+              {:concord, "~> ${{ github.event.inputs.version }}"}
+            ]
+          end
+          ```
+
+          ### Documentation
+
+          Documentation is available at: https://hexdocs.pm/concord/${{ github.event.inputs.version }}
+        draft: false
+        prerelease: false

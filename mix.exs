@@ -5,24 +5,50 @@ defmodule Concord.MixProject do
     [
       app: :concord,
       version: "0.1.0",
-      elixir: "~> 1.18",
+      elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      elixirc_paths: elixirc_paths(Mix.env()),
+      aliases: aliases(),
+      dialyzer: [
+        plt_add_apps: [:ex_unit, :mix, :iex],
+        plt_file: {:no_warn, "plts/dialyzer.plt"},
+        ignore_warnings: ".dialyzer_ignore.exs",
+        flags: [],
+        list_unused_filters: false
+      ],
+      test_coverage: [summary: [threshold: 40]]
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :crypto],
+      mod: {Concord.Application, []}
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   defp deps do
     [
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+      {:ra, "~> 2.6"},
+      {:libcluster, "~> 3.3"},
+      {:telemetry, "~> 1.2"},
+      {:telemetry_metrics, "~> 0.6"},
+      {:telemetry_poller, "~> 1.0"},
+      {:jason, "~> 1.4"},
+      {:plug_crypto, "~> 1.2"},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.29", only: :dev, runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      test: "test --no-start"
     ]
   end
 end
