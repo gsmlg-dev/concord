@@ -9,7 +9,14 @@ defmodule Concord.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      aliases: aliases()
+      aliases: aliases(),
+      dialyzer: [
+        plt_add_apps: [:ex_unit, :mix, :iex],
+        plt_file: {:no_warn, "plts/dialyzer.plt"},
+        ignore_warnings: ".dialyzer_ignore.exs",
+        flags: [],
+        list_unused_filters: true
+      ]
     ]
   end
 

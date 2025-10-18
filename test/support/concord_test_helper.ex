@@ -4,33 +4,42 @@ defmodule Concord.TestHelper do
   """
 
   def start_test_cluster do
-    # Clean up any existing ra data to ensure fresh start
+    cleanup_test_data()
+    ensure_applications_started()
+    restart_ra_system()
+
+    {node_id, server_config} = setup_server_config()
+    result = start_ra_server({node_id, server_config})
+
+    handle_server_start_result(result, {node_id, server_config})
+  end
+
+  defp cleanup_test_data do
     ra_data_dir = "./nonode@nohost"
-    File.rm_rf!(ra_data_dir)
-
-    # Also clean the test data directory
     data_dir = "./data/test_#{node()}"
-    File.rm_rf!(data_dir)
 
-    # Ensure required applications are started
+    File.rm_rf!(ra_data_dir)
+    File.rm_rf!(data_dir)
+  end
+
+  defp ensure_applications_started do
     {:ok, _} = Application.ensure_all_started(:telemetry)
     {:ok, _} = Application.ensure_all_started(:ra)
+  end
 
-    # Stop and restart the ra system for a clean state
+  defp restart_ra_system do
     try do
       :ra_system.stop_default()
     rescue
       _ -> :ok
     end
 
-    # Increased sleep time
     Process.sleep(200)
     :ra_system.start_default()
-
-    # Wait for RA system to be fully ready
     Process.sleep(100)
+  end
 
-    # Start the cluster manually for tests
+  defp setup_server_config do
     node_id = {:concord_cluster, node()}
     cluster_name = :concord_cluster
     machine = {:module, Concord.StateMachine, %{}}
@@ -38,7 +47,6 @@ defmodule Concord.TestHelper do
     data_dir = "./data/test_#{node()}"
     File.mkdir_p!(data_dir)
 
-    # Create a proper uid from the node tuple
     uid = node_id |> Tuple.to_list() |> Enum.join("_") |> String.replace("@", "_")
 
     server_config = %{
@@ -53,10 +61,14 @@ defmodule Concord.TestHelper do
       initial_members: [node_id]
     }
 
-    IO.inspect(node_id, label: "Starting RA server")
-    result = :ra.start_server(server_config)
-    IO.inspect(result, label: "RA start_server result")
+    {node_id, server_config}
+  end
 
+  defp start_ra_server({_node_id, server_config}) do
+    :ra.start_server(server_config)
+  end
+
+  defp handle_server_start_result(result, {node_id, _server_config}) do
     case result do
       :ok ->
         :ra.trigger_election(node_id)
@@ -69,50 +81,41 @@ defmodule Concord.TestHelper do
         wait_for_cluster_ready()
 
       {:error, :not_new} ->
-        # Server already exists, try to get it running properly
-        # First stop any existing server, then restart it
-        try do
-          :ra.stop_server(node_id)
-        rescue
-          _ -> :ok
-        end
-
-        # Give it time to clean up
-        Process.sleep(200)
-
-        # Force cleanup of RA data again
-        ra_data_dir = "./nonode@nohost"
-        File.rm_rf!(ra_data_dir)
-
-        # Stop and restart RA system completely
-        try do
-          :ra_system.stop_default()
-        rescue
-          _ -> :ok
-        end
-
-        Process.sleep(200)
-        :ra_system.start_default()
-        Process.sleep(100)
-
-        # Try starting again with fresh config
-        case :ra.start_server(server_config) do
-          :ok ->
-            :ra.trigger_election(node_id)
-            wait_for_cluster_ready()
-
-          {:ok, _} ->
-            wait_for_cluster_ready()
-
-          {:error, reason} ->
-            IO.inspect(reason, label: "Failed to restart server after full cleanup")
-            {:error, reason}
-        end
+        handle_server_already_exists(node_id)
 
       {:error, reason} ->
-        IO.inspect(reason, label: "Failed to start server")
         {:error, reason}
     end
+  end
+
+  defp handle_server_already_exists(node_id) do
+    cleanup_existing_server(node_id)
+
+    {node_id, server_config} = setup_server_config()
+
+    case start_ra_server({node_id, server_config}) do
+      :ok ->
+        :ra.trigger_election(node_id)
+        wait_for_cluster_ready()
+
+      {:ok, _} ->
+        wait_for_cluster_ready()
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp cleanup_existing_server(node_id) do
+    try do
+      :ra.stop_server(node_id)
+    rescue
+      _ -> :ok
+    end
+
+    Process.sleep(200)
+    cleanup_test_data()
+    restart_ra_system()
   end
 
   def stop_test_cluster do
@@ -165,20 +168,17 @@ defmodule Concord.TestHelper do
 
     case loop(until, fn ->
            case :ra.members(node_id) do
-             {:ok, members, leader} when is_list(members) ->
+             {:ok, members, _leader} when is_list(members) ->
                # Found members and leader, cluster is ready
-               IO.inspect({:ready, length(members), leader}, label: "Cluster ready")
                :ready
 
              {:error, :noproc} ->
                :not_ready
 
-             {:error, reason} ->
-               IO.inspect({:error, reason}, label: "RA error")
+             {:error, _reason} ->
                :not_ready
 
-             result ->
-               IO.inspect(result, label: "RA members result")
+             _result ->
                :not_ready
            end
          end) do
