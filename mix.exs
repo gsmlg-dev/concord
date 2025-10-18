@@ -14,7 +14,8 @@ defmodule Concord.MixProject do
         plt_add_apps: [:ex_unit, :mix, :iex],
         plt_file: {:no_warn, "plts/dialyzer.plt"},
         ignore_warnings: ".dialyzer_ignore.exs",
-        flags: []
+        flags: [],
+        list_unused_filters: false
       ]
     ]
   end
