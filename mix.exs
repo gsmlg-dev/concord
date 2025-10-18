@@ -42,7 +42,7 @@ defmodule Concord.MixProject do
       {:plug_crypto, "~> 1.2"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.29", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}
     ]
   end
 

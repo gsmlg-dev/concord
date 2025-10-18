@@ -8,9 +8,6 @@ on:
         required: true
         type: string
 
-env:
-  MIX_ENV: prod
-
 jobs:
   test:
     name: Test before release
@@ -35,7 +32,7 @@ jobs:
         key: ${{ runner.os }}-mix-release-${{ hashFiles('**/mix.lock') }}
 
     - name: Install dependencies
-      run: mix deps.get --only $MIX_ENV
+      run: mix deps.get --only test
 
     - name: Compile dependencies
       run: mix deps.compile
@@ -70,24 +67,35 @@ jobs:
         key: ${{ runner.os }}-mix-release-${{ hashFiles('**/mix.lock') }}
 
     - name: Install dependencies
+      env:
+        MIX_ENV: prod
       run: mix deps.get --only $MIX_ENV
 
     - name: Compile dependencies
+      env:
+        MIX_ENV: prod
       run: mix deps.compile
 
     - name: Compile project
+      env:
+        MIX_ENV: prod
       run: mix compile
 
     - name: Update version in mix.exs
+      env:
+        MIX_ENV: prod
       run: |
         sed -i "s/version: \".*\"/version: \"${{ github.event.inputs.version }}\"/" mix.exs
         git diff mix.exs
 
     - name: Generate documentation
+      env:
+        MIX_ENV: prod
       run: mix docs
 
     - name: Publish to Hex.pm
       env:
+        MIX_ENV: prod
         HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
       run: mix hex.publish --yes
 
