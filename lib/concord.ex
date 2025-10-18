@@ -73,10 +73,13 @@ defmodule Concord do
         case query({:get, key}, timeout) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
+
           {:timeout, _} ->
             {:error, :timeout}
+
           {:error, :noproc} ->
             {:error, :cluster_not_ready}
+
           {:error, reason} ->
             {:error, reason}
         end

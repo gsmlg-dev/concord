@@ -22,7 +22,9 @@ defmodule Concord.TestHelper do
     rescue
       _ -> :ok
     end
-    Process.sleep(200)  # Increased sleep time
+
+    # Increased sleep time
+    Process.sleep(200)
     :ra_system.start_default()
 
     # Wait for RA system to be fully ready
@@ -59,10 +61,13 @@ defmodule Concord.TestHelper do
       :ok ->
         :ra.trigger_election(node_id)
         wait_for_cluster_ready()
+
       {:ok, _} ->
         wait_for_cluster_ready()
+
       {:error, {:already_started, _}} ->
         wait_for_cluster_ready()
+
       {:error, :not_new} ->
         # Server already exists, try to get it running properly
         # First stop any existing server, then restart it
@@ -85,6 +90,7 @@ defmodule Concord.TestHelper do
         rescue
           _ -> :ok
         end
+
         Process.sleep(200)
         :ra_system.start_default()
         Process.sleep(100)
@@ -94,12 +100,15 @@ defmodule Concord.TestHelper do
           :ok ->
             :ra.trigger_election(node_id)
             wait_for_cluster_ready()
+
           {:ok, _} ->
             wait_for_cluster_ready()
+
           {:error, reason} ->
             IO.inspect(reason, label: "Failed to restart server after full cleanup")
             {:error, reason}
         end
+
       {:error, reason} ->
         IO.inspect(reason, label: "Failed to start server")
         {:error, reason}
@@ -155,21 +164,24 @@ defmodule Concord.TestHelper do
     node_id = {:concord_cluster, node()}
 
     case loop(until, fn ->
-      case :ra.members(node_id) do
-        {:ok, members, leader} when is_list(members) ->
-          # Found members and leader, cluster is ready
-          IO.inspect({:ready, length(members), leader}, label: "Cluster ready")
-          :ready
-        {:error, :noproc} ->
-          :not_ready
-        {:error, reason} ->
-          IO.inspect({:error, reason}, label: "RA error")
-          :not_ready
-        result ->
-          IO.inspect(result, label: "RA members result")
-          :not_ready
-      end
-    end) do
+           case :ra.members(node_id) do
+             {:ok, members, leader} when is_list(members) ->
+               # Found members and leader, cluster is ready
+               IO.inspect({:ready, length(members), leader}, label: "Cluster ready")
+               :ready
+
+             {:error, :noproc} ->
+               :not_ready
+
+             {:error, reason} ->
+               IO.inspect({:error, reason}, label: "RA error")
+               :not_ready
+
+             result ->
+               IO.inspect(result, label: "RA members result")
+               :not_ready
+           end
+         end) do
       :ok -> :ok
       :timeout -> {:error, :timeout}
     end
@@ -177,7 +189,9 @@ defmodule Concord.TestHelper do
 
   defp loop(until, fun) do
     case fun.() do
-      :ready -> :ok
+      :ready ->
+        :ok
+
       :not_ready ->
         if System.monotonic_time(:millisecond) < until do
           Process.sleep(100)
