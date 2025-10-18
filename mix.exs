@@ -10,6 +10,7 @@ defmodule Concord.MixProject do
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
+      package: package(),
       dialyzer: [
         plt_add_apps: [:ex_unit, :mix, :iex],
         plt_file: {:no_warn, "plts/dialyzer.plt"},
@@ -30,6 +31,18 @@ defmodule Concord.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
+
+  # Package metadata for Hex.pm
+  defp package do
+    [
+      description: "A distributed, strongly-consistent key-value store built on Raft",
+      licenses: ["MIT"],
+      links: %{
+        "GitHub" => "https://github.com/gsmlg-dev/concord",
+        "Documentation" => "https://hexdocs.pm/concord"
+      }
+    ]
+  end
 
   defp deps do
     [
