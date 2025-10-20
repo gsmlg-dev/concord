@@ -8,7 +8,7 @@ Concord is a distributed, strongly-consistent key-value store built in Elixir us
 
 ## Development Commands
 
-### Running Tests
+### Building and Testing
 ```bash
 # Run all tests
 mix test
@@ -18,6 +18,12 @@ mix test test/concord_test.exs
 
 # Run with coverage
 mix test --cover
+
+# Run linting
+mix credo
+
+# Run type checking
+mix dialyzer
 ```
 
 ### Cluster Management
@@ -43,6 +49,11 @@ mix concord.cluster token revoke <token>
 ### Testing with Multiple Nodes
 The test suite is configured with `--no-start` alias to avoid automatic cluster startup, allowing proper multi-node testing scenarios.
 
+### Code Quality
+- **Linting**: Credo is configured with a custom ruleset in `.credo.exs` with max line length of 120
+- **Type Checking**: Dialyzer is configured for static analysis with PLT files in `plts/dialyzer.plt`
+- **Coverage**: Test coverage threshold is set to 40% with detailed summaries
+
 ## Architecture Overview
 
 ### Core Components
@@ -50,11 +61,14 @@ The test suite is configured with `--no-start` alias to avoid automatic cluster 
 - **Concord.StateMachine** - Raft state machine implementing the distributed KV store using ETS
 - **Concord.Auth** - Authentication system with token-based access control
 - **Concord.Telemetry** - Comprehensive metrics and observability
+- **Mix.Tasks.Concord.Cluster** - Command-line cluster management tools
 
 ### Key Dependencies
 - **ra** - Raft consensus algorithm implementation
 - **libcluster** - Automatic node discovery via gossip protocol
 - **telemetry** - Metrics and observability framework
+- **jason** - JSON serialization for data storage
+- **plug_crypto** - Cryptographic utilities for secure token generation
 
 ### Data Flow
 1. **Write Operations**: Client API → Auth verification → Raft leader → Quorum replication → State machine → ETS storage
@@ -75,6 +89,13 @@ The `Concord.StateMachine` implements the `:ra_machine` behavior and uses:
 - Token creation and revocation operations
 
 ## Configuration
+
+The configuration follows standard Elixir patterns with environment-specific files:
+- `config/config.exs` - Base configuration with cluster name and libcluster topology
+- `config/dev.exs` - Development settings with auth disabled and local data directory
+- `config/test.exs` - Test configuration with `--no-start` alias for multi-node testing
+- `config/prod.exs` - Production settings with auth enabled and environment variables
+- `config/runtime.exs` - Runtime configuration loaded at startup
 
 ### Development (config/dev.exs)
 - Auth disabled by default
@@ -115,3 +136,4 @@ The test suite uses ExUnit with the `--no-start` mix alias to prevent automatic 
 - Raft logs and snapshots: `{data_dir}/`
 - ETS table: Named `:concord_store`
 - Telemetry events: `[:concord, :api, :*]`, `[:concord, :operation, :*]`, `[:concord, :state, :*]`
+- Cluster management tasks: `lib/mix/tasks/concord.ex`
