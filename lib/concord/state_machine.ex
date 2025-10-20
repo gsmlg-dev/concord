@@ -113,26 +113,26 @@ defmodule Concord.StateMachine do
 
   def apply_command(meta, :cleanup_expired, {:concord_kv, data}) do
     start_time = System.monotonic_time()
-    current_time = current_timestamp()
 
-    # Match pattern for expired entries
-    expired_match = {
-      :"$1",
-      %{value: :"$2", expires_at: :"$3"}
-    }
+    # Get all keys and check expiration manually (ETS select doesn't support map patterns)
+    all_keys = :ets.select(:concord_store, [{{:"$1", :"$2"}, [], [:"$1"]}])
 
-    guards = {:andalso, {:">", :"$3", 0}, {"<", :"$3", current_time}}
-
-    # Select all expired keys
-    expired_keys = :ets.select(:concord_store, [
-      {expired_match, guards, [:"$1"]}
-    ])
+    expired_keys = Enum.filter(all_keys, fn key ->
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {_value, expires_at} -> is_expired?(expires_at)
+            _ -> false
+          end
+        [] -> false
+      end
+    end)
 
     # Delete expired keys in batch
     deleted_count = Enum.reduce(expired_keys, 0, fn key, acc ->
       case :ets.delete(:concord_store, key) do
-        :ok -> acc + 1
-        _ -> acc
+        true -> acc + 1
+        false -> acc
       end
     end)
 
@@ -145,11 +145,150 @@ defmodule Concord.StateMachine do
         operation: :cleanup_expired,
         index: Map.get(meta, :index),
         deleted_count: deleted_count,
-        scanned_keys: length(expired_keys)
+        scanned_keys: length(all_keys)
       }
     )
 
     {{:concord_kv, data}, {:ok, deleted_count}, []}
+  end
+
+  def apply_command(meta, {:put_many, operations}, {:concord_kv, data}) when is_list(operations) do
+    start_time = System.monotonic_time()
+
+    # Pre-validate all operations
+    validation_result = validate_put_many_operations(operations)
+
+    case validation_result do
+      :ok ->
+        # All operations valid, proceed with atomic batch
+        results = execute_put_many_batch(operations)
+
+        # Check if all operations succeeded
+        case Enum.find(results, fn {status, _} -> status == :error end) do
+          nil ->
+            # All succeeded, emit telemetry and return success
+            duration = System.monotonic_time() - start_time
+
+            :telemetry.execute(
+              [:concord, :operation, :apply],
+              %{duration: duration},
+              %{
+                operation: :put_many,
+                index: Map.get(meta, :index),
+                batch_size: length(operations),
+                success_count: length(results)
+              }
+            )
+
+            {{:concord_kv, data}, {:ok, results}, []}
+
+          {_, _} ->
+            # Some failed, this should not happen with our validation, but handle gracefully
+            {{:concord_kv, data}, {:error, :partial_failure}, []}
+        end
+
+      {:error, reason} ->
+        # Validation failed, no changes made
+        {{:concord_kv, data}, {:error, reason}, []}
+    end
+  end
+
+  def apply_command(meta, {:get_many, keys}, {:concord_kv, data}) when is_list(keys) do
+    start_time = System.monotonic_time()
+
+    results = Enum.map(keys, fn key ->
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {value, expires_at} ->
+              if is_expired?(expires_at) do
+                {key, {:error, :not_found}}
+              else
+                {key, {:ok, value}}
+              end
+
+            _ ->
+              {key, {:error, :invalid_stored_format}}
+          end
+
+        [] ->
+          {key, {:error, :not_found}}
+      end
+    end)
+
+    duration = System.monotonic_time() - start_time
+
+    :telemetry.execute(
+      [:concord, :operation, :apply],
+      %{duration: duration},
+      %{
+        operation: :get_many,
+        index: Map.get(meta, :index),
+        batch_size: length(keys)
+      }
+    )
+
+    {{:concord_kv, data}, {:ok, results}, []}
+  end
+
+  def apply_command(meta, {:delete_many, keys}, {:concord_kv, data}) when is_list(keys) do
+    start_time = System.monotonic_time()
+
+    # Pre-validate all keys
+    case validate_delete_many_operations(keys) do
+      :ok ->
+        # All keys valid, proceed with atomic batch
+        results = execute_delete_many_batch(keys)
+
+        duration = System.monotonic_time() - start_time
+
+        :telemetry.execute(
+          [:concord, :operation, :apply],
+          %{duration: duration},
+          %{
+            operation: :delete_many,
+            index: Map.get(meta, :index),
+            batch_size: length(keys),
+            deleted_count: Enum.count(results, fn {_, result} -> result == :ok end)
+          }
+        )
+
+        {{:concord_kv, data}, {:ok, results}, []}
+
+      {:error, reason} ->
+        {{:concord_kv, data}, {:error, reason}, []}
+    end
+  end
+
+  def apply_command(meta, {:touch_many, operations}, {:concord_kv, data}) when is_list(operations) do
+    start_time = System.monotonic_time()
+
+    # Pre-validate all operations
+    validation_result = validate_touch_many_operations(operations)
+
+    case validation_result do
+      :ok ->
+        # All operations valid, proceed with atomic batch
+        results = execute_touch_many_batch(operations)
+
+        duration = System.monotonic_time() - start_time
+
+        :telemetry.execute(
+          [:concord, :operation, :apply],
+          %{duration: duration},
+          %{
+            operation: :touch_many,
+            index: Map.get(meta, :index),
+            batch_size: length(operations),
+            success_count: Enum.count(results, fn {_, result} -> result == :ok end)
+          }
+        )
+
+        {{:concord_kv, data}, {:ok, results}, []}
+
+      {:error, reason} ->
+        {{:concord_kv, data}, {:error, reason}, []}
+    end
   end
 
   # Catch-all for unknown commands (e.g., internal ra commands)
@@ -299,6 +438,30 @@ defmodule Concord.StateMachine do
     end
   end
 
+  def query({:get_many, keys}, {:concord_kv, _data}) when is_list(keys) do
+    results = Enum.map(keys, fn key ->
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {value, expires_at} ->
+              if is_expired?(expires_at) do
+                {key, {:error, :not_found}}
+              else
+                {key, {:ok, value}}
+              end
+
+            _ ->
+              {key, {:error, :invalid_stored_format}}
+          end
+
+        [] ->
+          {key, {:error, :not_found}}
+      end
+    end)
+
+    {:ok, Map.new(results)}
+  end
+
   def query(:stats, {:concord_kv, _data}) do
     info = :ets.info(:concord_store)
 
@@ -336,6 +499,137 @@ defmodule Concord.StateMachine do
     )
 
     data
+  end
+
+  # Helper functions for batch operations
+
+  defp validate_put_many_operations(operations) do
+    if length(operations) > 500 do
+      {:error, :batch_too_large}
+    else
+      # Validate each operation
+      case Enum.find_value(operations, fn operation ->
+        case validate_put_operation(operation) do
+          :ok -> nil
+          error -> error
+        end
+      end) do
+        nil -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp validate_put_operation({key, _value, expires_at}) when is_binary(key) do
+    cond do
+      byte_size(key) == 0 -> {:error, :invalid_key}
+      expires_at != nil and not is_integer(expires_at) -> {:error, :invalid_expires_at}
+      true -> :ok
+    end
+  end
+
+  defp validate_put_operation({key, _value}) when is_binary(key) do
+    if byte_size(key) == 0 do
+      {:error, :invalid_key}
+    else
+      :ok
+    end
+  end
+
+  defp validate_put_operation(_) do
+    {:error, :invalid_operation_format}
+  end
+
+  defp execute_put_many_batch(operations) do
+    Enum.map(operations, fn operation ->
+      case operation do
+        {key, value, expires_at} ->
+          formatted_value = format_value(value, expires_at)
+          case :ets.insert(:concord_store, {key, formatted_value}) do
+            true -> {key, :ok}
+            _ -> {key, {:error, :insert_failed}}
+          end
+
+        {key, value} ->
+          execute_put_many_batch([{key, value, nil}])
+          |> hd()
+
+        _ ->
+          {:error, :invalid_operation_format}
+      end
+    end)
+  end
+
+  defp validate_delete_many_operations(keys) do
+    if length(keys) > 500 do
+      {:error, :batch_too_large}
+    else
+      # Validate each key
+      case Enum.find(keys, fn key ->
+        not (is_binary(key) and byte_size(key) > 0)
+      end) do
+        nil -> :ok
+        _ -> {:error, :invalid_key}
+      end
+    end
+  end
+
+  defp execute_delete_many_batch(keys) do
+    Enum.map(keys, fn key ->
+      case :ets.delete(:concord_store, key) do
+        true -> {key, :ok}
+        false -> {key, {:error, :not_found}}
+        _ -> {key, {:error, :delete_failed}}
+      end
+    end)
+  end
+
+  defp validate_touch_many_operations(operations) do
+    if length(operations) > 500 do
+      {:error, :batch_too_large}
+    else
+      # Validate each operation
+      case Enum.find_value(operations, fn operation ->
+        case validate_touch_operation(operation) do
+          :ok -> nil
+          error -> error
+        end
+      end) do
+        nil -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp validate_touch_operation({key, ttl_seconds}) when is_binary(key) and byte_size(key) > 0 and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    :ok
+  end
+
+  defp validate_touch_operation(_) do
+    {:error, :invalid_touch_operation}
+  end
+
+  defp execute_touch_many_batch(operations) do
+    Enum.map(operations, fn {key, ttl_seconds} ->
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {value, _current_expires_at} ->
+              new_expires_at = current_timestamp() + ttl_seconds
+              new_stored_data = format_value(value, new_expires_at)
+              case :ets.insert(:concord_store, {key, new_stored_data}) do
+                true -> {key, :ok}
+                _ -> {key, {:error, :touch_failed}}
+              end
+
+            _ ->
+              {key, {:error, :invalid_stored_format}}
+          end
+
+        [] ->
+          {key, {:error, :not_found}}
+      end
+    end)
   end
 
   @impl :ra_machine

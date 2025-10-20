@@ -7,8 +7,9 @@ defmodule Concord.TTLIntegrationTest do
 
   describe "TTL Integration Tests" do
     setup do
-      # Use the test helper to set up a cluster
-      setup_test_cluster()
+      start_test_cluster()
+      on_exit(fn -> stop_test_cluster() end)
+      :ok
     end
 
     test "put with TTL option expires after specified time" do

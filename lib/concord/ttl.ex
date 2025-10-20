@@ -61,10 +61,11 @@ defmodule Concord.TTL do
   # GenServer Callbacks
 
   @impl true
-  def init(opts) do
+  def init(_opts) do
     # Get configuration from application environment
-    cleanup_interval = Keyword.get(opts, :cleanup_interval, default_cleanup_interval())
-    default_ttl = Keyword.get(opts, :default_ttl, default_ttl())
+    ttl_config = Application.get_env(:concord, :ttl, [])
+    cleanup_interval = Keyword.get(ttl_config, :cleanup_interval_seconds, default_cleanup_interval()) * 1000
+    default_ttl = Keyword.get(ttl_config, :default_seconds, default_ttl())
 
     state = %__MODULE__{
       cleanup_interval: cleanup_interval,

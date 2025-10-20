@@ -14,6 +14,10 @@ defmodule Concord.Telemetry do
       [:concord, :api, :touch],
       [:concord, :api, :ttl],
       [:concord, :api, :get_with_ttl],
+      [:concord, :api, :put_many],
+      [:concord, :api, :get_many],
+      [:concord, :api, :delete_many],
+      [:concord, :api, :touch_many],
       [:concord, :operation, :apply],
       [:concord, :state, :change],
       [:concord, :snapshot, :created],
@@ -126,6 +130,51 @@ defmodule Concord.Telemetry do
         duration_ms: duration_ms
       )
     end
+  end
+
+  # Batch operation telemetry events
+  def handle_event([:concord, :api, :put_many], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "Batch put: #{metadata.result} (#{metadata.batch_size} items, #{duration_ms}ms)",
+      batch_size: metadata.batch_size,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
+  end
+
+  def handle_event([:concord, :api, :get_many], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "Batch get: #{metadata.result} (#{metadata.batch_size} items, #{duration_ms}ms)",
+      batch_size: metadata.batch_size,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
+  end
+
+  def handle_event([:concord, :api, :delete_many], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "Batch delete: #{metadata.result} (#{metadata.batch_size} items, #{duration_ms}ms)",
+      batch_size: metadata.batch_size,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
+  end
+
+  def handle_event([:concord, :api, :touch_many], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "Batch touch: #{metadata.result} (#{metadata.batch_size} items, #{duration_ms}ms)",
+      batch_size: metadata.batch_size,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
   end
 
   # Telemetry Poller for periodic metrics

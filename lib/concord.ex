@@ -360,6 +360,234 @@ defmodule Concord do
     end
   end
 
+  @doc """
+  Stores multiple key-value pairs in the cluster atomically.
+
+  Either all operations succeed or all fail together.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+
+  ## Examples
+      iex> Concord.put_many([{"key1", "value1"}, {"key2", "value2"}], token: "token")
+      {:ok, %{"key1" => :ok, "key2" => :ok}}
+  """
+  def put_many(operations, opts \\ []) when is_list(operations) do
+    with :ok <- check_auth(opts),
+         :ok <- validate_batch_size(operations),
+         :ok <- validate_put_operations(operations) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      start_time = System.monotonic_time()
+
+      # Convert operations to expected format for StateMachine
+      formatted_operations = Enum.map(operations, fn
+        {key, value} -> {key, value, nil}
+        {key, value, ttl} when is_integer(ttl) -> {key, value, calculate_expires_at(ttl)}
+        {key, value, expires_at} -> {key, value, expires_at}
+      end)
+
+      result =
+        case command({:put_many, formatted_operations}, timeout) do
+          {:ok, {:ok, results}, _} ->
+            # Convert StateMachine results to map format
+            success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
+            {:ok, success_map}
+
+          {:ok, {:error, reason}, _} ->
+            {:error, reason}
+
+          {:timeout, _} ->
+            {:error, :timeout}
+
+          {:error, :noproc} ->
+            {:error, :cluster_not_ready}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :api, :put_many],
+        %{duration: duration},
+        %{result: result, batch_size: length(operations)}
+      )
+
+      result
+    end
+  end
+
+  @doc """
+  Stores multiple key-value pairs with a TTL atomically.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+
+  ## Examples
+      iex> Concord.put_many_with_ttl([{"key1", "value1"}, {"key2", "value2"}], 3600, token: "token")
+      {:ok, %{"key1" => :ok, "key2" => :ok}}
+  """
+  def put_many_with_ttl(operations, ttl_seconds, opts \\ []) when is_list(operations) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    # Add TTL to each operation
+    operations_with_ttl = Enum.map(operations, fn {key, value} ->
+      {key, value, ttl_seconds}
+    end)
+
+    put_many(operations_with_ttl, opts)
+  end
+
+  @doc """
+  Retrieves multiple values by key from the cluster.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+
+  ## Examples
+      iex> Concord.get_many(["key1", "key2"], token: "token")
+      {:ok, %{"key1" => {:ok, "value1"}, "key2" => {:error, :not_found}}}
+  """
+  def get_many(keys, opts \\ []) when is_list(keys) do
+    with :ok <- check_auth(opts),
+         :ok <- validate_batch_size(keys),
+         :ok <- validate_keys(keys) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      start_time = System.monotonic_time()
+
+      result =
+        case query({:get_many, keys}, timeout) do
+          {:ok, {{_index, _term}, query_result}, _} ->
+            query_result
+
+          {:timeout, _} ->
+            {:error, :timeout}
+
+          {:error, :noproc} ->
+            {:error, :cluster_not_ready}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :api, :get_many],
+        %{duration: duration},
+        %{result: result, batch_size: length(keys)}
+      )
+
+      result
+    end
+  end
+
+  @doc """
+  Deletes multiple keys from the cluster atomically.
+
+  Either all operations succeed or all fail together.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+
+  ## Examples
+      iex> Concord.delete_many(["key1", "key2"], token: "token")
+      {:ok, %{"key1" => :ok, "key2" => :ok}}
+  """
+  def delete_many(keys, opts \\ []) when is_list(keys) do
+    with :ok <- check_auth(opts),
+         :ok <- validate_batch_size(keys),
+         :ok <- validate_keys(keys) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      start_time = System.monotonic_time()
+
+      result =
+        case command({:delete_many, keys}, timeout) do
+          {:ok, {:ok, results}, _} ->
+            # Convert StateMachine results to map format
+            success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
+            {:ok, success_map}
+
+          {:ok, {:error, reason}, _} ->
+            {:error, reason}
+
+          {:timeout, _} ->
+            {:error, :timeout}
+
+          {:error, :noproc} ->
+            {:error, :cluster_not_ready}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :api, :delete_many],
+        %{duration: duration},
+        %{result: result, batch_size: length(keys)}
+      )
+
+      result
+    end
+  end
+
+  @doc """
+  Extends the TTL of multiple keys atomically.
+
+  Either all operations succeed or all fail together.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+
+  ## Examples
+      iex> Concord.touch_many([{"key1", 1800}, {"key2", 3600}], token: "token")
+      {:ok, %{"key1" => :ok, "key2" => :ok}}
+  """
+  def touch_many(operations, opts \\ []) when is_list(operations) do
+    with :ok <- check_auth(opts),
+         :ok <- validate_batch_size(operations),
+         :ok <- validate_touch_operations(operations) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      start_time = System.monotonic_time()
+
+      result =
+        case command({:touch_many, operations}, timeout) do
+          {:ok, {:ok, results}, _} ->
+            # Convert StateMachine results to map format
+            result_map = Map.new(results)
+            {:ok, result_map}
+
+          {:ok, {:error, reason}, _} ->
+            {:error, reason}
+
+          {:timeout, _} ->
+            {:error, :timeout}
+
+          {:error, :noproc} ->
+            {:error, :cluster_not_ready}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :api, :touch_many],
+        %{duration: duration},
+        %{result: result, batch_size: length(operations)}
+      )
+
+      result
+    end
+  end
+
   # Private helpers
 
   defp command(cmd, timeout) do
@@ -407,4 +635,73 @@ defmodule Concord do
   defp calculate_expires_at(ttl_seconds) when is_integer(ttl_seconds) and ttl_seconds > 0 do
     TTL.calculate_expiration(ttl_seconds)
   end
+
+  # Batch operation validation helpers
+
+  defp validate_batch_size(items) when is_list(items) do
+    max_batch_size = Application.get_env(:concord, :max_batch_size, 500)
+    if length(items) > max_batch_size do
+      {:error, :batch_too_large}
+    else
+      :ok
+    end
+  end
+
+  defp validate_batch_size(_), do: {:error, :invalid_batch_format}
+
+  defp validate_put_operations(operations) when is_list(operations) do
+    case Enum.find_value(operations, :ok, fn operation ->
+      validate_put_operation(operation)
+    end) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_put_operation({key, _value}) when is_binary(key) and byte_size(key) > 0 do
+    validate_key(key)
+  end
+
+  defp validate_put_operation({key, _value, ttl}) when is_binary(key) and byte_size(key) > 0 do
+    with :ok <- validate_key(key),
+         :ok <- TTL.validate_ttl(ttl) do
+      :ok
+    end
+  end
+
+  defp validate_put_operation({key, _value, expires_at}) when is_binary(key) and byte_size(key) > 0 do
+    if expires_at == nil or is_integer(expires_at) do
+      validate_key(key)
+    else
+      {:error, :invalid_expires_at}
+    end
+  end
+
+  defp validate_put_operation(_), do: {:error, :invalid_operation_format}
+
+  defp validate_keys(keys) when is_list(keys) do
+    case Enum.find_value(keys, :ok, fn key ->
+      validate_key(key)
+    end) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_keys(_), do: {:error, :invalid_keys_format}
+
+  defp validate_touch_operations(operations) when is_list(operations) do
+    case Enum.find_value(operations, :ok, fn operation ->
+      validate_touch_operation(operation)
+    end) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_touch_operation({key, ttl_seconds}) when is_binary(key) and byte_size(key) > 0 and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    :ok
+  end
+
+  defp validate_touch_operation(_), do: {:error, :invalid_touch_operation}
 end

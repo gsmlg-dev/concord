@@ -5,6 +5,7 @@ config :concord,
   cluster_name: :concord_cluster,
   data_dir: "./data",
   auth_enabled: false,
+  max_batch_size: 500,
   ttl: %{
     default_seconds: 86_400,  # 24 hours
     cleanup_interval_seconds: 300,  # 5 minutes
