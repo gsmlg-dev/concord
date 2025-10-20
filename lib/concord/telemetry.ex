@@ -11,10 +11,14 @@ defmodule Concord.Telemetry do
       [:concord, :api, :put],
       [:concord, :api, :get],
       [:concord, :api, :delete],
+      [:concord, :api, :touch],
+      [:concord, :api, :ttl],
+      [:concord, :api, :get_with_ttl],
       [:concord, :operation, :apply],
       [:concord, :state, :change],
       [:concord, :snapshot, :created],
-      [:concord, :snapshot, :installed]
+      [:concord, :snapshot, :installed],
+      [:concord, :ttl, :cleanup]
     ]
 
     :telemetry.attach_many(
@@ -69,6 +73,59 @@ defmodule Concord.Telemetry do
       node: metadata.node,
       size: measurements.size
     )
+  end
+
+  # TTL-specific telemetry events
+  def handle_event([:concord, :api, :touch], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "TTL touch #{metadata.key}: #{metadata.result} (#{duration_ms}ms)",
+      key: metadata.key,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
+  end
+
+  def handle_event([:concord, :api, :ttl], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "TTL check #{metadata.key}: #{metadata.result} (#{duration_ms}ms)",
+      key: metadata.key,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
+  end
+
+  def handle_event([:concord, :api, :get_with_ttl], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    Logger.debug(
+      "Get with TTL #{metadata.key}: #{metadata.result} (#{duration_ms}ms)",
+      key: metadata.key,
+      result: metadata.result,
+      duration_ms: duration_ms
+    )
+  end
+
+  def handle_event([:concord, :ttl, :cleanup], measurements, metadata, _config) do
+    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    if measurements.deleted_count > 0 do
+      Logger.info(
+        "TTL cleanup completed on #{metadata.node}: deleted #{measurements.deleted_count} keys (#{duration_ms}ms)",
+        node: metadata.node,
+        deleted_count: measurements.deleted_count,
+        duration_ms: duration_ms
+      )
+    else
+      Logger.debug(
+        "TTL cleanup completed on #{metadata.node}: no expired keys found (#{duration_ms}ms)",
+        node: metadata.node,
+        duration_ms: duration_ms
+      )
+    end
   end
 
   # Telemetry Poller for periodic metrics

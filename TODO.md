@@ -4,7 +4,7 @@
 
 Concord has successfully completed all Phase 3 requirements from the design specification. This document tracks what has been accomplished and outlines potential future enhancements.
 
-## ✅ Completed Features (Phase 3 - Production Ready)
+## ✅ Completed Features (Phase 3 - Production Ready + TTL)
 
 ### Core Functionality
 - [x] **Raft-based Consensus**: Strong consistency via `ra` library
@@ -12,6 +12,7 @@ Concord has successfully completed all Phase 3 requirements from the design spec
 - [x] **Node Discovery**: Automatic cluster formation via libcluster
 - [x] **Persistence**: Raft logs + state machine snapshots
 - [x] **Fault Tolerance**: Leader election and quorum-based operations
+- [x] **Key TTL Support**: Automatic expiration with configurable cleanup
 
 ### Phase 3: Production Readiness Features
 
@@ -61,11 +62,11 @@ Concord has successfully completed all Phase 3 requirements from the design spec
 ## 🚀 Potential Future Enhancements (Beyond Phase 3)
 
 ### High Priority Features
-1. **Key TTL (Time-To-Live)**
-   - [ ] Automatic key expiration for caching use cases
-   - [ ] Configurable TTL per key or globally
-   - [ ] Background cleanup process for expired keys
-   - [ ] Telemetry events for expiration
+1. **Key TTL (Time-To-Live)** ✅ **COMPLETED**
+   - [x] Automatic key expiration for caching use cases
+   - [x] Configurable TTL per key or globally
+   - [x] Background cleanup process for expired keys
+   - [x] Telemetry events for expiration
 
 2. **Bulk Operations**
    - [ ] `put_many/2` - Batch insert operations

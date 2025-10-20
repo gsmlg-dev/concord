@@ -7,7 +7,7 @@ defmodule Concord.Application do
   use Application
   require Logger
 
-  alias Concord.{Auth, StateMachine, Telemetry}
+  alias Concord.{Auth, StateMachine, Telemetry, TTL}
 
   @impl true
   def start(_type, _args) do
@@ -21,6 +21,8 @@ defmodule Concord.Application do
       {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
       # Start auth token manager
       Auth.TokenStore,
+      # Start TTL manager for periodic cleanup
+      {TTL, []},
       # Start the Concord cluster after a brief delay
       {Task, fn -> init_cluster() end}
     ]

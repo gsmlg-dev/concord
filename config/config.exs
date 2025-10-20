@@ -4,7 +4,12 @@ import Config
 config :concord,
   cluster_name: :concord_cluster,
   data_dir: "./data",
-  auth_enabled: false
+  auth_enabled: false,
+  ttl: %{
+    default_seconds: 86_400,  # 24 hours
+    cleanup_interval_seconds: 300,  # 5 minutes
+    enabled: true
+  }
 
 config :libcluster,
   topologies: [
