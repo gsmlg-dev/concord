@@ -11,6 +11,37 @@ defmodule Concord.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
       package: package(),
+      name: "Concord",
+      source_url: "https://github.com/gsmlg-dev/concord",
+      homepage_url: "https://github.com/gsmlg-dev/concord",
+      docs: [
+        main: "readme",
+        extras: [
+          "README.md",
+          "API_DESIGN.md",
+          "PERFORMANCE_SUMMARY.md",
+          "PERFORMANCE_ANALYSIS.md",
+          "CHANGELOG.md",
+          "LICENSE"
+        ],
+        api_reference: false,
+        groups_for_extras: [
+          "Getting Started": [
+            "README.md",
+            "LICENSE"
+          ],
+          "API Documentation": [
+            "API_DESIGN.md"
+          ],
+          "Performance": [
+            "PERFORMANCE_SUMMARY.md",
+            "PERFORMANCE_ANALYSIS.md"
+          ],
+          "Release Notes": [
+            "CHANGELOG.md"
+          ]
+        ]
+      ],
       dialyzer: [
         plt_add_apps: [:ex_unit, :mix, :iex],
         plt_file: {:no_warn, "plts/dialyzer.plt"},
@@ -35,11 +66,27 @@ defmodule Concord.MixProject do
   # Package metadata for Hex.pm
   defp package do
     [
-      description: "A distributed, strongly-consistent key-value store built on Raft",
+      description: "A high-performance embedded distributed key-value store for Elixir applications with 600K+ ops/sec and REST API",
       licenses: ["MIT"],
+      files: [
+        "lib",
+        "mix.exs",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+        "API_DESIGN.md",
+        "PERFORMANCE_SUMMARY.md",
+        "PERFORMANCE_ANALYSIS.md",
+        "openapi.json",
+        "run_benchmarks.exs",
+        "config",
+        "test"
+      ],
       links: %{
         "GitHub" => "https://github.com/gsmlg-dev/concord",
-        "Documentation" => "https://hexdocs.pm/concord"
+        "Documentation" => "https://hexdocs.pm/concord",
+        "Performance Benchmarks" => "https://github.com/gsmlg-dev/concord#performance-benchmarks",
+        "API Reference" => "https://hexdocs.pm/concord/api-reference.html"
       }
     ]
   end
