@@ -2,12 +2,12 @@ defmodule Concord.Application do
   @moduledoc """
   Application supervisor for Concord distributed key-value store.
   Starts and manages all the necessary processes including clustering,
-  telemetry, authentication, and the Raft consensus algorithm.
+  telemetry, authentication, HTTP API, and the Raft consensus algorithm.
   """
   use Application
   require Logger
 
-  alias Concord.{Auth, StateMachine, Telemetry, TTL}
+  alias Concord.{Auth, StateMachine, Telemetry, TTL, Web}
 
   @impl true
   def start(_type, _args) do
@@ -23,6 +23,8 @@ defmodule Concord.Application do
       Auth.TokenStore,
       # Start TTL manager for periodic cleanup
       {TTL, []},
+      # Start HTTP API web server
+      Web.Supervisor,
       # Start the Concord cluster after a brief delay
       {Task, fn -> init_cluster() end}
     ]

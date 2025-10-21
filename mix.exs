@@ -53,6 +53,9 @@ defmodule Concord.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.4"},
       {:plug_crypto, "~> 1.2"},
+      {:plug, "~> 1.15"},
+      {:bandit, "~> 1.5"},
+      {:plug_cowboy, "~> 2.6"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}

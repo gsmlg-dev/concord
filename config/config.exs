@@ -6,11 +6,14 @@ config :concord,
   data_dir: "./data",
   auth_enabled: false,
   max_batch_size: 500,
-  ttl: %{
+  ttl: [
     default_seconds: 86_400,  # 24 hours
     cleanup_interval_seconds: 300,  # 5 minutes
     enabled: true
-  }
+  ],
+  # HTTP API configuration
+  api_port: 4000,
+  api_ip: {127, 0, 0, 1}  # localhost
 
 config :libcluster,
   topologies: [

@@ -1,0 +1,1027 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Concord HTTP API",
+    "description": "A distributed, strongly-consistent key-value store built on Raft consensus algorithm. This REST API provides complete access to Concord's distributed KV operations, bulk processing, and TTL management capabilities.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Concord Development Team",
+      "url": "https://github.com/gsmlg-dev/concord"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4000",
+      "description": "Development server"
+    },
+    {
+      "url": "https://api.concord.example.com",
+      "description": "Production server"
+    }
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Check if the Concord API service is healthy and running. This endpoint does not require authentication.",
+        "tags": ["Health"],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "status": "healthy",
+                  "timestamp": "2025-10-21T12:47:27.231034Z",
+                  "service": "concord-api"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/kv": {
+      "get": {
+        "summary": "List All Keys",
+        "description": "Retrieve all keys stored in the cluster. Supports optional TTL information and pagination.",
+        "tags": ["Key-Value Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [
+          {
+            "name": "with_ttl",
+            "in": "query",
+            "description": "Include TTL information for each key",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of keys to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of keys retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeysListResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/{key}": {
+      "get": {
+        "summary": "Get Key Value",
+        "description": "Retrieve the value associated with a specific key. Optionally include TTL information.",
+        "tags": ["Key-Value Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The key to retrieve (max 1024 bytes)",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            }
+          },
+          {
+            "name": "with_ttl",
+            "in": "query",
+            "description": "Include TTL information in the response",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key value retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {"$ref": "#/components/schemas/GetValueResponse"},
+                    {"$ref": "#/components/schemas/GetValueWithTTLResponse"}
+                  ]
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      },
+      "put": {
+        "summary": "Store Key Value",
+        "description": "Store a key-value pair with optional TTL. Overwrites existing keys.",
+        "tags": ["Key-Value Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The key to store (max 1024 bytes)",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutValueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Key stored successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      },
+      "delete": {
+        "summary": "Delete Key",
+        "description": "Delete a key and its associated value from the store.",
+        "tags": ["Key-Value Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The key to delete (max 1024 bytes)",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/{key}/ttl": {
+      "get": {
+        "summary": "Get Key TTL",
+        "description": "Get the remaining time-to-live for a specific key.",
+        "tags": ["TTL Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The key to check TTL for (max 1024 bytes)",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "TTL retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTTLResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/{key}/touch": {
+      "post": {
+        "summary": "Extend Key TTL",
+        "description": "Extend the time-to-live for an existing key or set TTL for a key without one.",
+        "tags": ["TTL Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The key to touch (max 1024 bytes)",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TouchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "TTL extended successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/bulk": {
+      "post": {
+        "summary": "Bulk Store Keys",
+        "description": "Store multiple key-value pairs in a single request. Maximum 500 operations per batch.",
+        "tags": ["Bulk Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkPutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk operation completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkPutResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "413": {"$ref": "#/components/responses/PayloadTooLarge"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/bulk/get": {
+      "post": {
+        "summary": "Bulk Get Keys",
+        "description": "Retrieve multiple key values in a single request. Maximum 500 keys per request.",
+        "tags": ["Bulk Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkGetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk get operation completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkGetResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "413": {"$ref": "#/components/responses/PayloadTooLarge"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/bulk/delete": {
+      "post": {
+        "summary": "Bulk Delete Keys",
+        "description": "Delete multiple keys in a single request. Maximum 500 keys per request.",
+        "tags": ["Bulk Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk delete operation completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkDeleteResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "413": {"$ref": "#/components/responses/PayloadTooLarge"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/kv/bulk/touch": {
+      "post": {
+        "summary": "Bulk TTL Operations",
+        "description": "Extend TTL for multiple keys in a single request. Maximum 500 operations per request.",
+        "tags": ["Bulk Operations"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTouchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk touch operation completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTouchResponse"
+                }
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "413": {"$ref": "#/components/responses/PayloadTooLarge"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "summary": "Cluster Status",
+        "description": "Get comprehensive status information about the Concord cluster including nodes, leadership, and health metrics.",
+        "tags": ["Administration"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "responses": {
+          "200": {
+            "description": "Cluster status retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "503": {"$ref": "#/components/responses/ServiceUnavailable"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Concord authentication token"
+      },
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Concord API key for authentication"
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["healthy"],
+            "description": "Health status of the service"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of the health check"
+          },
+          "service": {
+            "type": "string",
+            "description": "Name of the service"
+          }
+        },
+        "required": ["status", "timestamp", "service"]
+      },
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"],
+            "description": "Operation status"
+          }
+        },
+        "required": ["status"]
+      },
+      "PutValueRequest": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "description": "The value to store (any JSON-serializable data)",
+            "type": ["string", "number", "boolean", "object", "array"]
+          },
+          "ttl": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional TTL in seconds. If not provided, uses default TTL."
+          }
+        },
+        "required": ["value"]
+      },
+      "GetValueResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "description": "The stored value"
+              }
+            },
+            "required": ["value"]
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "GetValueWithTTLResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "description": "The stored value"
+              },
+              "ttl": {
+                "type": "integer",
+                "description": "Remaining TTL in seconds"
+              }
+            },
+            "required": ["value", "ttl"]
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "GetTTLResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "ttl": {
+                "type": "integer",
+                "description": "Remaining TTL in seconds"
+              }
+            },
+            "required": ["ttl"]
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "TouchRequest": {
+        "type": "object",
+        "properties": {
+          "ttl": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "New TTL value in seconds"
+          }
+        },
+        "required": ["ttl"]
+      },
+      "KeysListResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "Key name"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "ttl": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": ["key"]
+                }
+              ]
+            }
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "BulkPutRequest": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "value": {
+                  "type": ["string", "number", "boolean", "object", "array"]
+                },
+                "ttl": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": ["key", "value"]
+            },
+            "minItems": 1,
+            "maxItems": 500
+          }
+        },
+        "required": ["operations"]
+      },
+      "BulkPutResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ok", "error"]
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": ["key", "status"]
+            }
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "BulkGetRequest": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "minItems": 1,
+            "maxItems": 500
+          },
+          "with_ttl": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": ["keys"]
+      },
+      "BulkGetResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "object",
+            "description": "Object where keys are the requested keys and values contain the operation results"
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "BulkDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "minItems": 1,
+            "maxItems": 500
+          }
+        },
+        "required": ["keys"]
+      },
+      "BulkDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ok", "error"]
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": ["key", "status"]
+            }
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "BulkTouchRequest": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "ttl": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": ["key", "ttl"]
+            },
+            "minItems": 1,
+            "maxItems": 500
+          }
+        },
+        "required": ["operations"]
+      },
+      "BulkTouchResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ok", "error"]
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": ["key", "status"]
+            }
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok"]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "cluster": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["leader", "follower", "candidate"]
+                        },
+                        "address": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "leader": {
+                    "type": "string"
+                  }
+                }
+              },
+              "metrics": {
+                "type": "object",
+                "description": "Various cluster metrics and statistics"
+              }
+            }
+          }
+        },
+        "required": ["status", "data"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["error"]
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Machine-readable error code"
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error message"
+              }
+            },
+            "required": ["code", "message"]
+          }
+        },
+        "required": ["status", "error"]
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Bad request - invalid parameters or data",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "examples": {
+              "invalid_key": {
+                "summary": "Invalid key format",
+                "value": {
+                  "status": "error",
+                  "error": {
+                    "code": "INVALID_KEY",
+                    "message": "Key cannot be empty and must be <= 1024 bytes"
+                  }
+                }
+              },
+              "invalid_json": {
+                "summary": "Malformed JSON",
+                "value": {
+                  "status": "error",
+                  "error": {
+                    "code": "INVALID_REQUEST",
+                    "message": "Malformed JSON in request body"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication required or invalid credentials",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "status": "error",
+              "error": {
+                "code": "UNAUTHORIZED",
+                "message": "Authentication required"
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Requested key not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "status": "error",
+              "error": {
+                "code": "NOT_FOUND",
+                "message": "Key not found"
+              }
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "Request exceeds batch size limits",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "status": "error",
+              "error": {
+                "code": "BATCH_TOO_LARGE",
+                "message": "Batch size exceeds 500 operations limit"
+              }
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Cluster is not available or ready",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "status": "error",
+              "error": {
+                "code": "CLUSTER_UNAVAILABLE",
+                "message": "Cluster is not ready"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health check and monitoring endpoints"
+    },
+    {
+      "name": "Key-Value Operations",
+      "description": "Core CRUD operations for key-value pairs"
+    },
+    {
+      "name": "TTL Operations",
+      "description": "Time-to-live management operations"
+    },
+    {
+      "name": "Bulk Operations",
+      "description": "Batch processing operations for efficiency"
+    },
+    {
+      "name": "Administration",
+      "description": "Cluster administration and monitoring"
+    }
+  ]
+}
