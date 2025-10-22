@@ -13,6 +13,13 @@ config :concord,
     cleanup_interval_seconds: 300,  # 5 minutes
     enabled: true
   ],
+  # Value compression configuration
+  compression: [
+    enabled: true,           # Enable automatic compression
+    algorithm: :zlib,        # :zlib or :gzip
+    threshold_bytes: 1024,   # Compress values larger than 1KB
+    level: 6                 # Compression level 0-9 (0=none, 9=max)
+  ],
   # HTTP API configuration
   api_port: 4000,
   api_ip: {127, 0, 0, 1},  # localhost

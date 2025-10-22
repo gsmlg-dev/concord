@@ -19,7 +19,7 @@ defmodule Concord do
 
   require Logger
 
-  alias Concord.{Auth, StateMachine, TTL}
+  alias Concord.{Auth, Compression, StateMachine, TTL}
 
   @timeout 5_000
   @cluster_name :concord_cluster
@@ -27,10 +27,15 @@ defmodule Concord do
   @doc """
   Stores a key-value pair in the cluster.
 
+  Values are automatically compressed if they exceed the configured size threshold
+  (default: 1KB). Compression is transparent and values are automatically
+  decompressed when retrieved.
+
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
   - `:ttl` - Time-to-live in seconds (default: nil for no expiration)
+  - `:compress` - Override automatic compression (true/false)
   """
   def put(key, value, opts \\ []) do
     with :ok <- check_auth(opts),
@@ -41,8 +46,12 @@ defmodule Concord do
       expires_at = calculate_expires_at(ttl_option)
       start_time = System.monotonic_time()
 
+      # Apply compression if enabled and value is large enough
+      compressed_value = maybe_compress(value, opts)
+      was_compressed = compressed_value != value
+
       result =
-        case command({:put, key, value, expires_at}, timeout) do
+        case command({:put, key, compressed_value, expires_at}, timeout) do
           {:ok, :ok, _} -> :ok
           {:ok, result, _} -> {:ok, result}
           {:timeout, _} -> {:error, :timeout}
@@ -55,7 +64,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :put],
         %{duration: duration},
-        %{result: result, has_ttl: ttl_option != nil}
+        %{result: result, has_ttl: ttl_option != nil, compressed: was_compressed}
       )
 
       result
@@ -95,15 +104,21 @@ defmodule Concord do
             {:error, reason}
         end
 
+      # Automatically decompress the result if needed
+      decompressed_result = case result do
+        {:ok, value} -> {:ok, Compression.decompress(value)}
+        other -> other
+      end
+
       duration = System.monotonic_time() - start_time
 
       :telemetry.execute(
         [:concord, :api, :get],
         %{duration: duration},
-        %{result: result, consistency: consistency}
+        %{result: decompressed_result, consistency: consistency}
       )
 
-      result
+      decompressed_result
     end
   end
 
@@ -679,6 +694,14 @@ defmodule Concord do
       _ ->
         # Fallback to local server if we can't get members
         server_id()
+    end
+  end
+
+  defp maybe_compress(value, opts) do
+    case Keyword.get(opts, :compress) do
+      true -> Compression.compress(value, force: true)
+      false -> value
+      nil -> Compression.compress(value)
     end
   end
 
