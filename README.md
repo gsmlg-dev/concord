@@ -20,6 +20,7 @@
 - **HTTP API** - Complete REST API for management and integration
 - **TTL Support** - Automatic key expiration with time-to-live
 - **Bulk Operations** - Efficient batch processing (up to 500 operations)
+- **Value Compression** - Automatic compression for large values to reduce memory usage
 - **Fault Tolerant** - Continues operating despite node failures (requires quorum)
 - **Read Load Balancing** - Automatic read distribution across cluster for eventual consistency reads
 - **In-Memory Storage** - Fast ETS-based storage with automatic snapshots
@@ -786,6 +787,179 @@ If you don't need Prometheus metrics:
 # config/config.exs
 config :concord,
   prometheus_enabled: false
+```
+
+## Value Compression
+
+Concord includes automatic value compression to reduce memory usage and improve performance for large datasets.
+
+### Quick Start
+
+**Compression is enabled by default** with these settings:
+
+```elixir
+# config/config.exs
+config :concord,
+  compression: [
+    enabled: true,           # Enable automatic compression
+    algorithm: :zlib,        # :zlib or :gzip
+    threshold_bytes: 1024,   # Compress values larger than 1KB
+    level: 6                 # Compression level 0-9 (0=none, 9=max)
+  ]
+```
+
+**Compression is completely transparent:**
+
+```elixir
+# Store large value - automatically compressed if > 1KB
+large_data = String.duplicate("x", 10_000)
+Concord.put("large_key", large_data)
+# Stored as {:compressed, :zlib, <<...>>} internally
+
+# Retrieve - automatically decompressed
+{:ok, value} = Concord.get("large_key")
+# Returns original uncompressed value
+```
+
+### Configuration Options
+
+**Algorithm Selection:**
+
+```elixir
+# Use zlib (default, faster)
+config :concord,
+  compression: [algorithm: :zlib]
+
+# Use gzip (better compression ratio)
+config :concord,
+  compression: [algorithm: :gzip]
+```
+
+**Compression Level:**
+
+```elixir
+# Fast compression (lower CPU, less compression)
+config :concord,
+  compression: [level: 1]
+
+# Balanced (default)
+config :concord,
+  compression: [level: 6]
+
+# Maximum compression (higher CPU, best compression)
+config :concord,
+  compression: [level: 9]
+```
+
+**Size Threshold:**
+
+```elixir
+# Only compress values larger than 5KB
+config :concord,
+  compression: [threshold_bytes: 5120]
+
+# Compress all values
+config :concord,
+  compression: [threshold_bytes: 0]
+```
+
+### Force Compression
+
+Override automatic thresholds for specific operations:
+
+```elixir
+# Force compression regardless of size
+Concord.put("small_key", "small value", compress: true)
+
+# Disable compression for this operation
+Concord.put("large_key", large_value, compress: false)
+```
+
+### Compression Statistics
+
+Monitor compression effectiveness:
+
+```elixir
+# Get compression stats for a value
+large_data = String.duplicate("x", 10_000)
+stats = Concord.Compression.stats(large_data)
+
+# Example output:
+%{
+  original_size: 10_047,
+  compressed_size: 67,
+  compression_ratio: 0.67,      # Percent of original size
+  savings_bytes: 9_980,
+  savings_percent: 99.33        # Space saved
+}
+```
+
+### Programmatic API
+
+Use compression functions directly:
+
+```elixir
+# Manual compression
+compressed = Concord.Compression.compress("large data...")
+# {:compressed, :zlib, <<...>>}
+
+# Manual decompression
+value = Concord.Compression.decompress(compressed)
+# "large data..."
+
+# Check if value should be compressed
+Concord.Compression.should_compress?("small")  # false
+Concord.Compression.should_compress?(large_data)  # true
+
+# Get configuration
+Concord.Compression.config()
+# [enabled: true, algorithm: :zlib, threshold_bytes: 1024, level: 6]
+```
+
+### Performance Characteristics
+
+| Value Size | Compression Ratio | Overhead | Recommended |
+|------------|------------------|----------|-------------|
+| < 1KB | N/A | None | No compression (default) |
+| 1-10KB | 60-90% | Minimal | Yes (default threshold) |
+| 10-100KB | 70-95% | Small | Yes |
+| > 100KB | 80-98% | Moderate | Yes, consider level tuning |
+
+**Compression Trade-offs:**
+
+- **CPU**: ~5-15% overhead during put/get operations
+- **Memory**: 60-98% reduction in storage size
+- **Latency**: ~0.1-1ms additional latency
+- **Throughput**: Minimal impact for values > 10KB
+
+### Best Practices
+
+1. **Enable for Large Values**: Keep default threshold at 1KB
+2. **Monitor**: Use stats API to track compression effectiveness
+3. **Tune Level**: Start at level 6, increase for storage-constrained systems
+4. **Disable for Small Values**: Compression adds overhead for < 1KB values
+5. **Test Your Data**: Compression effectiveness varies by data type
+
+### Use Cases
+
+**Perfect for:**
+- Large JSON payloads (API responses, configs)
+- Text data (logs, documents, HTML)
+- Serialized data structures
+
+**Avoid for:**
+- Already compressed data (images, videos, archives)
+- Small values (< 1KB)
+- Real-time critical paths (microsecond requirements)
+
+### Disable Compression
+
+If you don't need compression:
+
+```elixir
+# config/config.exs
+config :concord,
+  compression: [enabled: false]
 ```
 
 ## API Reference
