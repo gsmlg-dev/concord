@@ -68,15 +68,20 @@ defmodule Concord do
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
+  - `:consistency` - Read consistency level (default: :leader)
+    - `:eventual` - Fastest, may return stale data (reads from any node)
+    - `:leader` - Balanced, reads from leader node
+    - `:strong` - Linearizable reads with heartbeat verification (slowest)
   """
   def get(key, opts \\ []) do
     with :ok <- check_auth(opts),
          :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
+      consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
 
       result =
-        case query({:get, key}, timeout) do
+        case query({:get, key}, timeout, consistency) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -95,7 +100,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :get],
         %{duration: duration},
-        %{result: result}
+        %{result: result, consistency: consistency}
       )
 
       result
@@ -143,12 +148,14 @@ defmodule Concord do
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
+  - `:consistency` - Read consistency level (default: :leader)
   """
   def get_all(opts \\ []) do
     with :ok <- check_auth(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
+      consistency = Keyword.get(opts, :consistency, default_consistency())
 
-      case query(:get_all, timeout) do
+      case query(:get_all, timeout, consistency) do
         {:ok, {{_index, _term}, query_result}, _} -> query_result
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -159,13 +166,18 @@ defmodule Concord do
 
   @doc """
   Returns cluster status information.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:consistency` - Read consistency level (default: :leader)
   """
   def status(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
+    consistency = Keyword.get(opts, :consistency, default_consistency())
     server_id = server_id()
 
     with {:ok, overview, _} <- :ra.member_overview(server_id, timeout),
-         {:ok, {{_index, _term}, query_result}, _} <- query(:stats, timeout) do
+         {:ok, {{_index, _term}, query_result}, _} <- query(:stats, timeout, consistency) do
       {:ok,
        %{
          cluster: overview,
@@ -253,6 +265,7 @@ defmodule Concord do
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
+  - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
       iex> Concord.ttl("cache:user:123", token: "token")
@@ -262,10 +275,11 @@ defmodule Concord do
     with :ok <- check_auth(opts),
          :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
+      consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
 
       result =
-        case query({:ttl, key}, timeout) do
+        case query({:ttl, key}, timeout, consistency) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -284,7 +298,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :ttl],
         %{duration: duration},
-        %{result: result, key: key}
+        %{result: result, key: key, consistency: consistency}
       )
 
       result
@@ -297,6 +311,7 @@ defmodule Concord do
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
+  - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
       iex> Concord.get_with_ttl("cache:user:123", token: "token")
@@ -306,10 +321,11 @@ defmodule Concord do
     with :ok <- check_auth(opts),
          :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
+      consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
 
       result =
-        case query({:get_with_ttl, key}, timeout) do
+        case query({:get_with_ttl, key}, timeout, consistency) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -328,7 +344,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :get_with_ttl],
         %{duration: duration},
-        %{result: result, key: key}
+        %{result: result, key: key, consistency: consistency}
       )
 
       result
@@ -342,6 +358,7 @@ defmodule Concord do
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
+  - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
       iex> Concord.get_all_with_ttl(token: "token")
@@ -350,8 +367,9 @@ defmodule Concord do
   def get_all_with_ttl(opts \\ []) do
     with :ok <- check_auth(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
+      consistency = Keyword.get(opts, :consistency, default_consistency())
 
-      case query(:get_all_with_ttl, timeout) do
+      case query(:get_all_with_ttl, timeout, consistency) do
         {:ok, {{_index, _term}, query_result}, _} -> query_result
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -445,6 +463,7 @@ defmodule Concord do
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:token` - Authentication token (required if auth is enabled)
+  - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
       iex> Concord.get_many(["key1", "key2"], token: "token")
@@ -455,10 +474,11 @@ defmodule Concord do
          :ok <- validate_batch_size(keys),
          :ok <- validate_keys(keys) do
       timeout = Keyword.get(opts, :timeout, @timeout)
+      consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
 
       result =
-        case query({:get_many, keys}, timeout) do
+        case query({:get_many, keys}, timeout, consistency) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -477,7 +497,7 @@ defmodule Concord do
       :telemetry.execute(
         [:concord, :api, :get_many],
         %{duration: duration},
-        %{result: result, batch_size: length(keys)}
+        %{result: result, batch_size: length(keys), consistency: consistency}
       )
 
       result
@@ -594,8 +614,45 @@ defmodule Concord do
     :ra.process_command(server_id(), cmd, timeout)
   end
 
-  defp query(query, timeout) do
-    :ra.local_query(server_id(), fun(query), timeout)
+  defp query(query, timeout, consistency) do
+    query_fun = fun(query)
+
+    result = case consistency do
+      :eventual ->
+        # Use local_query for eventual consistency (fastest, may be stale)
+        target_server = select_read_replica()
+        :ra.local_query(target_server, query_fun, timeout)
+
+      :leader ->
+        # Use leader_query for balanced consistency
+        :ra.leader_query(server_id(), query_fun, timeout)
+
+      :strong ->
+        # Use consistent_query for linearizable reads (slowest)
+        :ra.consistent_query(server_id(), query_fun, timeout)
+
+      _ ->
+        # Default to leader query for unknown consistency levels
+        :ra.leader_query(server_id(), query_fun, timeout)
+    end
+
+    # Normalize the result format:
+    # - local_query returns: {:ok, {{index, term}, result}, leader_id}
+    # - leader_query returns: {:ok, {{index, term}, result}, leader_id} or {:ok, result, not_known}
+    # - consistent_query returns: {:ok, result, leader_id}
+    case result do
+      {:ok, {{_index, _term}, query_result}, leader_id} ->
+        # Standard format from local_query or leader_query
+        {:ok, {{0, 0}, query_result}, leader_id}
+
+      {:ok, query_result, leader_id} ->
+        # Format from consistent_query or leader_query when leader unknown
+        {:ok, {{0, 0}, query_result}, leader_id}
+
+      other ->
+        # Pass through errors and timeouts
+        other
+    end
   end
 
   defp fun(query) do
@@ -606,6 +663,23 @@ defmodule Concord do
 
   defp server_id do
     {@cluster_name, node()}
+  end
+
+  defp default_consistency do
+    Application.get_env(:concord, :default_read_consistency, :leader)
+  end
+
+  defp select_read_replica do
+    # Get cluster members for load balancing eventual consistency reads
+    case :ra.members(server_id()) do
+      {:ok, members, _leader} when is_list(members) and length(members) > 0 ->
+        # Randomly select a member for load balancing
+        Enum.random(members)
+
+      _ ->
+        # Fallback to local server if we can't get members
+        server_id()
+    end
   end
 
   defp check_auth(opts) do

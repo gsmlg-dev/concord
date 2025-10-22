@@ -6,6 +6,8 @@ config :concord,
   data_dir: "./data",
   auth_enabled: false,
   max_batch_size: 500,
+  # Default read consistency level: :eventual, :leader, or :strong
+  default_read_consistency: :leader,
   ttl: [
     default_seconds: 86_400,  # 24 hours
     cleanup_interval_seconds: 300,  # 5 minutes

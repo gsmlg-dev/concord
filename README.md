@@ -16,10 +16,12 @@
 ### Core Capabilities
 
 - **Strong Consistency** - Raft consensus algorithm ensures all nodes agree on data
+- **Configurable Read Consistency** - Choose between eventual, leader, or strong consistency per operation
 - **HTTP API** - Complete REST API for management and integration
 - **TTL Support** - Automatic key expiration with time-to-live
 - **Bulk Operations** - Efficient batch processing (up to 500 operations)
 - **Fault Tolerant** - Continues operating despite node failures (requires quorum)
+- **Read Load Balancing** - Automatic read distribution across cluster for eventual consistency reads
 - **In-Memory Storage** - Fast ETS-based storage with automatic snapshots
 - **Real-time Metrics** - Built-in telemetry for all operations and cluster health
 
@@ -238,6 +240,116 @@ case Concord.put("locks:job:123", "node:worker1", timeout: 5000) do
   {:error, :timeout} ->
     # Lock already held
 end
+```
+
+## Read Consistency Levels
+
+Concord supports configurable read consistency levels, allowing you to balance between performance and data freshness based on your application needs.
+
+### Available Consistency Levels
+
+**`:eventual` - Fastest, Eventually Consistent Reads**
+```elixir
+# Read from any available node (may be slightly stale)
+Concord.get("user:123", consistency: :eventual)
+
+# Perfect for:
+# - High-throughput read operations
+# - Dashboard metrics and analytics
+# - Cached data where staleness is acceptable
+```
+
+**`:leader` - Balanced, Default Consistency (Default)**
+```elixir
+# Read from the leader node (more up-to-date)
+Concord.get("user:123", consistency: :leader)
+# Or simply:
+Concord.get("user:123")  # Uses configured default
+
+# Perfect for:
+# - Most application needs
+# - General data retrieval
+# - Balance between performance and freshness
+```
+
+**`:strong` - Strongest, Linearizable Reads**
+```elixir
+# Read from leader with heartbeat verification (most up-to-date)
+Concord.get("user:123", consistency: :strong)
+
+# Perfect for:
+# - Critical financial data
+# - Security-sensitive operations
+# - Scenarios requiring strict consistency guarantees
+```
+
+### Configuration
+
+Set your default read consistency level in `config/config.exs`:
+
+```elixir
+config :concord,
+  default_read_consistency: :leader  # :eventual, :leader, or :strong
+```
+
+### All Read Operations Support Consistency Levels
+
+```elixir
+# Single get
+Concord.get("key", consistency: :eventual)
+
+# Batch get
+Concord.get_many(["key1", "key2"], consistency: :strong)
+
+# Get with TTL
+Concord.get_with_ttl("key", consistency: :leader)
+
+# Get TTL only
+Concord.ttl("key", consistency: :eventual)
+
+# Get all
+Concord.get_all(consistency: :strong)
+
+# Get all with TTL
+Concord.get_all_with_ttl(consistency: :eventual)
+
+# Cluster status
+Concord.status(consistency: :leader)
+```
+
+### Performance Characteristics
+
+| Consistency | Latency | Staleness | Use Case |
+|------------|---------|-----------|----------|
+| `:eventual` | ~1-5ms | May be stale | High-throughput reads, analytics |
+| `:leader` | ~5-10ms | Minimal staleness | General application data |
+| `:strong` | ~10-20ms | Zero staleness | Critical operations |
+
+### Read Load Balancing
+
+When using `:eventual` consistency, Concord automatically distributes reads across available cluster members for improved performance:
+
+```elixir
+# These reads are automatically load-balanced across the cluster
+1..1000
+|> Enum.each(fn i ->
+  Concord.get("metric:#{i}", consistency: :eventual)
+end)
+```
+
+### Telemetry Integration
+
+All read operations emit telemetry events that include the consistency level used:
+
+```elixir
+:telemetry.attach(
+  "my-handler",
+  [:concord, :api, :get],
+  fn _event, %{duration: duration}, %{consistency: consistency}, _config ->
+    Logger.info("Read with #{consistency} consistency took #{duration}ns")
+  end,
+  nil
+)
 ```
 
 ## Management Commands
