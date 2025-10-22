@@ -385,6 +385,210 @@ mix concord.cluster token create
 mix concord.cluster token revoke <token>
 ```
 
+## Backup and Restore
+
+Concord provides comprehensive backup and restore capabilities for data safety and disaster recovery.
+
+### Quick Start
+
+**Create a backup:**
+
+```bash
+# Create backup in default directory (./backups)
+mix concord.backup create
+
+# Create backup in custom directory
+mix concord.backup create --path /mnt/backups
+
+# Output:
+# Creating backup...
+# ✓ Backup created successfully!
+#   Path: ./backups/concord_backup_20251023T143052.backup
+#   Size: 2.45 MB
+```
+
+**List available backups:**
+
+```bash
+mix concord.backup list
+
+# Output:
+# Found 3 backup(s):
+#
+# Backup: concord_backup_20251023T143052.backup
+#   Created: 2025-10-23 14:30:52Z
+#   Entries: 15420
+#   Size: 2.45 MB
+#   Node: node1@127.0.0.1
+#   Version: 0.1.0
+```
+
+**Restore from backup:**
+
+```bash
+# Interactive restore (asks for confirmation)
+mix concord.backup restore ./backups/concord_backup_20251023T143052.backup
+
+# Force restore (skip confirmation)
+mix concord.backup restore ./backups/concord_backup_20251023T143052.backup --force
+
+# Output:
+# ⚠️  WARNING: This will overwrite all data in the cluster!
+# Are you sure you want to continue? (yes/no): yes
+#
+# Restoring from backup: ./backups/concord_backup_20251023T143052.backup
+# ✓ Backup restored successfully!
+```
+
+**Verify backup integrity:**
+
+```bash
+mix concord.backup verify ./backups/concord_backup_20251023T143052.backup
+
+# Output:
+# Verifying backup: ./backups/concord_backup_20251023T143052.backup
+# ✓ Backup is valid
+```
+
+**Clean up old backups:**
+
+```bash
+# Keep only the 5 most recent backups
+mix concord.backup cleanup --keep-count 5
+
+# Keep backups from last 7 days
+mix concord.backup cleanup --keep-days 7
+
+# Output:
+# Cleaning up backups in: ./backups
+#   Keep count: 5
+#   Keep days: 30
+# ✓ Deleted 8 old backup(s)
+```
+
+### Programmatic Usage
+
+```elixir
+# Create backup
+{:ok, backup_path} = Concord.Backup.create(path: "/mnt/backups")
+IO.puts("Backup saved to: #{backup_path}")
+
+# List backups
+{:ok, backups} = Concord.Backup.list("/mnt/backups")
+Enum.each(backups, fn backup ->
+  IO.puts("#{backup.path} - #{backup.entry_count} entries")
+end)
+
+# Restore from backup
+:ok = Concord.Backup.restore("/mnt/backups/concord_backup_20251023.backup")
+
+# Verify backup
+case Concord.Backup.verify("/path/to/backup.backup") do
+  {:ok, :valid} -> IO.puts("Backup is valid")
+  {:ok, :invalid} -> IO.puts("Backup is corrupted")
+  {:error, reason} -> IO.puts("Error: #{inspect(reason)}")
+end
+
+# Cleanup old backups
+{:ok, deleted_count} = Concord.Backup.cleanup(
+  path: "/mnt/backups",
+  keep_count: 10,
+  keep_days: 30
+)
+IO.puts("Deleted #{deleted_count} old backups")
+```
+
+### Backup Format
+
+Backups are stored as compressed Erlang term files (`.backup`) containing:
+
+- **Metadata**: Timestamp, cluster info, entry count, checksum
+- **Snapshot Data**: Full copy of all key-value pairs
+- **Integrity Check**: SHA-256 checksum for verification
+
+**Features:**
+- Compressed storage for efficient disk usage
+- Atomic snapshots via Ra consensus
+- Integrity verification with checksums
+- Metadata tracking for audit trails
+- Compatible across cluster nodes
+
+### Automated Backups
+
+For production deployments, schedule automated backups using cron:
+
+```bash
+# Add to crontab: backup every hour
+0 * * * * cd /app && mix concord.backup create --path /mnt/backups
+
+# Add to crontab: cleanup old backups daily
+0 2 * * * cd /app && mix concord.backup cleanup --keep-count 24 --keep-days 7
+```
+
+Or use a GenServer for in-app scheduling:
+
+```elixir
+defmodule MyApp.BackupScheduler do
+  use GenServer
+
+  def start_link(_opts) do
+    GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
+  end
+
+  def init(state) do
+    # Schedule backup every hour
+    schedule_backup()
+    {:ok, state}
+  end
+
+  def handle_info(:backup, state) do
+    case Concord.Backup.create(path: "/mnt/backups") do
+      {:ok, path} ->
+        Logger.info("Backup created: #{path}")
+
+        # Cleanup old backups
+        Concord.Backup.cleanup(path: "/mnt/backups", keep_count: 24)
+
+      {:error, reason} ->
+        Logger.error("Backup failed: #{inspect(reason)}")
+    end
+
+    schedule_backup()
+    {:noreply, state}
+  end
+
+  defp schedule_backup do
+    # Schedule next backup in 1 hour
+    Process.send_after(self(), :backup, :timer.hours(1))
+  end
+end
+```
+
+### Best Practices
+
+1. **Regular Backups**: Schedule automated backups hourly or daily
+2. **Off-site Storage**: Copy backups to remote storage (S3, GCS, etc.)
+3. **Test Restores**: Periodically test backup restoration
+4. **Retention Policy**: Keep multiple backup versions
+5. **Monitor**: Set up alerts for backup failures
+6. **Verify**: Always verify backups after creation
+
+### Disaster Recovery
+
+**Complete disaster recovery procedure:**
+
+```bash
+# 1. Stop the application (if running)
+# 2. Restore from backup
+mix concord.backup restore /mnt/backups/latest.backup --force
+
+# 3. Verify data
+mix concord.cluster status
+
+# 4. Start the application
+mix run --no-halt
+```
+
 ## Telemetry Integration
 
 Concord emits comprehensive telemetry events for monitoring:
