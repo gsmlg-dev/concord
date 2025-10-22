@@ -15,7 +15,10 @@ config :concord,
   ],
   # HTTP API configuration
   api_port: 4000,
-  api_ip: {127, 0, 0, 1}  # localhost
+  api_ip: {127, 0, 0, 1},  # localhost
+  # Prometheus metrics configuration
+  prometheus_enabled: true,
+  prometheus_port: 9568
 
 config :libcluster,
   topologies: [

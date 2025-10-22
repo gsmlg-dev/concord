@@ -7,13 +7,14 @@ defmodule Concord.Application do
   use Application
   require Logger
 
-  alias Concord.{Auth, StateMachine, Telemetry, TTL, Web}
+  alias Concord.{Auth, Prometheus, StateMachine, Telemetry, TTL, Web}
 
   @impl true
   def start(_type, _args) do
     # Attach telemetry handlers
     Telemetry.setup()
 
+    # Build children list conditionally
     children = [
       # Start telemetry poller for periodic metrics
       {Telemetry.Poller, []},
@@ -29,8 +30,19 @@ defmodule Concord.Application do
       {Task, fn -> init_cluster() end}
     ]
 
+    # Add Prometheus exporter if enabled
+    children = if prometheus_enabled?() do
+      children ++ [Prometheus.child_spec([])]
+    else
+      children
+    end
+
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp prometheus_enabled? do
+    Application.get_env(:concord, :prometheus_enabled, true)
   end
 
   defp topologies do

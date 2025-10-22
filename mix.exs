@@ -98,6 +98,7 @@ defmodule Concord.MixProject do
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 0.6"},
       {:telemetry_poller, "~> 1.0"},
+      {:telemetry_metrics_prometheus, "~> 1.1"},
       {:jason, "~> 1.4"},
       {:plug_crypto, "~> 1.2"},
       {:plug, "~> 1.15"},

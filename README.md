@@ -439,13 +439,149 @@ defmodule MyApp.ConcordMetrics do
 
   def handle_event([:concord, :state, :change], _, %{status: status, node: node}, _) do
     MyMetrics.gauge("concord.node.status", 1, tags: [node: node, status: status])
-    
+
     if status == :leader do
       Logger.warn("New leader elected: #{node}")
       # Alert your team!
     end
   end
 end
+```
+
+## Prometheus Integration
+
+Concord includes built-in Prometheus metrics export for production monitoring.
+
+### Quick Start
+
+**1. Configure Prometheus (enabled by default):**
+
+```elixir
+# config/config.exs
+config :concord,
+  prometheus_enabled: true,  # Enable/disable Prometheus exporter
+  prometheus_port: 9568      # Metrics endpoint port
+```
+
+**2. Access metrics endpoint:**
+
+```bash
+# Metrics are automatically exposed at:
+curl http://localhost:9568/metrics
+
+# Sample output:
+# # HELP concord_api_get_duration_milliseconds Duration of GET operations
+# # TYPE concord_api_get_duration_milliseconds summary
+# concord_api_get_duration_milliseconds{result="ok",consistency="leader",quantile="0.5"} 2.3
+# concord_api_get_duration_milliseconds{result="ok",consistency="leader",quantile="0.9"} 3.8
+# concord_api_get_duration_milliseconds{result="ok",consistency="leader",quantile="0.99"} 5.2
+#
+# # HELP concord_cluster_size Number of entries in the store
+# # TYPE concord_cluster_size gauge
+# concord_cluster_size 15420
+```
+
+### Metrics Exposed
+
+**API Operation Metrics:**
+- `concord_api_put_duration_milliseconds` - PUT operation latency (summary)
+- `concord_api_get_duration_milliseconds` - GET operation latency with consistency level
+- `concord_api_delete_duration_milliseconds` - DELETE operation latency
+- `concord_api_*_count_total` - Operation throughput counters
+
+**Cluster Health Metrics:**
+- `concord_cluster_size` - Total keys in store
+- `concord_cluster_memory` - Memory usage in bytes
+- `concord_cluster_member_count` - Number of cluster members
+- `concord_cluster_commit_index` - Current Raft commit index
+- `concord_cluster_is_leader` - Leader status (1=leader, 0=follower)
+
+**Raft Operation Metrics:**
+- `concord_operation_apply_duration_milliseconds` - State machine operation latency
+- `concord_operation_apply_count_total` - State machine operation count
+
+**Snapshot Metrics:**
+- `concord_snapshot_created_size` - Last snapshot size
+- `concord_snapshot_installed_size` - Installed snapshot size
+
+### Prometheus Configuration
+
+Add Concord to your Prometheus scrape config:
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'concord'
+    static_configs:
+      - targets: ['localhost:9568']
+        labels:
+          app: 'concord'
+          env: 'production'
+    scrape_interval: 15s
+```
+
+### Grafana Dashboard
+
+Import the included Grafana dashboard for instant visualization:
+
+```bash
+# Import the dashboard template
+cat grafana-dashboard.json | curl -X POST \
+  -H "Content-Type: application/json" \
+  -d @- \
+  http://admin:admin@localhost:3000/api/dashboards/db
+```
+
+**Dashboard Features:**
+- Real-time API operation latency graphs
+- Operations per second (throughput)
+- Cluster health overview (keys, memory, members)
+- Leader status indicator
+- Raft commit index progression
+
+### Example: Prometheus Alerts
+
+```yaml
+# prometheus-alerts.yml
+groups:
+  - name: concord
+    rules:
+      - alert: ConcordHighLatency
+        expr: concord_api_get_duration_milliseconds{quantile="0.99"} > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Concord GET operations are slow"
+          description: "P99 latency is {{ $value }}ms"
+
+      - alert: ConcordNoLeader
+        expr: sum(concord_cluster_is_leader) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Concord cluster has no leader"
+          description: "Cluster is unavailable"
+
+      - alert: ConcordHighMemory
+        expr: concord_cluster_memory > 1073741824  # 1GB
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Concord memory usage is high"
+          description: "Memory usage: {{ $value | humanize }}B"
+```
+
+### Disable Prometheus (Optional)
+
+If you don't need Prometheus metrics:
+
+```elixir
+# config/config.exs
+config :concord,
+  prometheus_enabled: false
 ```
 
 ## API Reference
