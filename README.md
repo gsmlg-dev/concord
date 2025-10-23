@@ -1,4 +1,4 @@
-# Concord [![Build Status](https://github.com/your-org/concord/workflows/CI/badge.svg)](https://github.com/your-org/concord/actions) [![Hex.pm](https://img.shields.io/hexpm/v/concord.svg)](https://hex.pm/packages/concord) [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://hexdocs.pm/concord/) [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+# Concord [![Build Status](https://github.com/gsmlg-dev/concord/workflows/CI/badge.svg)](https://github.com/gsmlg-dev/concord/actions) [![Hex.pm](https://img.shields.io/hexpm/v/concord.svg)](https://hex.pm/packages/concord) [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://hexdocs.pm/concord/) [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 > A distributed, strongly-consistent embedded key-value store built in Elixir using the Raft consensus algorithm.
 
@@ -3105,8 +3105,8 @@ iex --name node@host --cookie secret -S mix
 - **Check logs:** `tail -f /var/log/concord/concord.log`
 - **Cluster status:** `mix concord.cluster status`
 - **Node connectivity:** `epmd -names`
-- **Community:** [GitHub Discussions](https://github.com/your-org/concord/discussions)
-- **Issues:** [GitHub Issues](https://github.com/your-org/concord/issues)
+- **Community:** [GitHub Discussions](https://github.com/gsmlg-dev/concord/discussions)
+- **Issues:** [GitHub Issues](https://github.com/gsmlg-dev/concord/issues)
 
 ## 🎯 Use Case Guide
 
