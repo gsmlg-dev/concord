@@ -9,6 +9,9 @@ defmodule Concord.Web.Router do
   use Plug.Router
   require Logger
 
+  # OpenTelemetry trace context propagation
+  plug(Concord.Web.TracingPlug)
+
   plug(Plug.Parsers,
     parsers: [:json],
     json_decoder: Jason,

@@ -25,7 +25,23 @@ config :concord,
   api_ip: {127, 0, 0, 1},  # localhost
   # Prometheus metrics configuration
   prometheus_enabled: true,
-  prometheus_port: 9568
+  prometheus_port: 9568,
+  # OpenTelemetry distributed tracing configuration
+  tracing_enabled: false,  # Enable distributed tracing
+  tracing_exporter: :stdout  # :stdout, :otlp, or :none
+
+# OpenTelemetry configuration
+config :opentelemetry,
+  # Span processor configuration
+  span_processor: :batch,
+  # Traces exporter - stdout for development, otlp for production
+  traces_exporter: {:otel_exporter_stdout, []}
+
+config :opentelemetry_exporter,
+  # OTLP exporter configuration (when using :otlp)
+  otlp_protocol: :grpc,
+  otlp_endpoint: "http://localhost:4317",
+  otlp_headers: []
 
 config :libcluster,
   topologies: [

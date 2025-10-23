@@ -14,6 +14,11 @@ defmodule Concord.Application do
     # Attach telemetry handlers
     Telemetry.setup()
 
+    # Attach OpenTelemetry telemetry bridge if tracing is enabled
+    if Application.get_env(:concord, :tracing_enabled, false) do
+      Concord.Tracing.TelemetryBridge.attach()
+    end
+
     # Build children list conditionally
     children = [
       # Start telemetry poller for periodic metrics

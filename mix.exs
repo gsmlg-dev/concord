@@ -104,6 +104,11 @@ defmodule Concord.MixProject do
       {:plug, "~> 1.15"},
       {:bandit, "~> 1.5"},
       {:plug_cowboy, "~> 2.6"},
+      # OpenTelemetry distributed tracing
+      {:opentelemetry_api, "~> 1.3"},
+      {:opentelemetry, "~> 1.4"},
+      {:opentelemetry_exporter, "~> 1.7"},
+      {:opentelemetry_telemetry, "~> 1.1"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}
