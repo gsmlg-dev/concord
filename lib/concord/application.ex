@@ -19,6 +19,11 @@ defmodule Concord.Application do
       Concord.Tracing.TelemetryBridge.attach()
     end
 
+    # Attach audit log telemetry handler if enabled
+    if audit_log_enabled?() do
+      Concord.AuditLog.TelemetryHandler.attach()
+    end
+
     # Build children list conditionally
     children = [
       # Start telemetry poller for periodic metrics
@@ -42,12 +47,24 @@ defmodule Concord.Application do
       children
     end
 
+    # Add Audit Log GenServer if enabled
+    children = if audit_log_enabled?() do
+      children ++ [Concord.AuditLog]
+    else
+      children
+    end
+
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)
   end
 
   defp prometheus_enabled? do
     Application.get_env(:concord, :prometheus_enabled, true)
+  end
+
+  defp audit_log_enabled? do
+    Application.get_env(:concord, :audit_log, [])
+    |> Keyword.get(:enabled, false)
   end
 
   defp topologies do

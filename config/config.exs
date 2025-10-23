@@ -28,7 +28,16 @@ config :concord,
   prometheus_port: 9568,
   # OpenTelemetry distributed tracing configuration
   tracing_enabled: false,  # Enable distributed tracing
-  tracing_exporter: :stdout  # :stdout, :otlp, or :none
+  tracing_exporter: :stdout,  # :stdout, :otlp, or :none
+  # Audit logging configuration
+  audit_log: [
+    enabled: false,              # Enable comprehensive audit logging
+    log_dir: "./audit_logs",    # Directory for audit log files
+    rotation_size_mb: 100,      # Rotate logs at 100MB
+    retention_days: 90,          # Keep logs for 90 days
+    log_reads: false,            # Don't log read operations
+    sensitive_keys: false        # Don't log actual key values (only hashes)
+  ]
 
 # OpenTelemetry configuration
 config :opentelemetry,

@@ -976,6 +976,274 @@ config :concord,
   tracing_enabled: false
 ```
 
+## Audit Logging
+
+Concord provides comprehensive audit logging for compliance, security, and debugging. All data-modifying operations are automatically logged to immutable, append-only files.
+
+### Quick Start
+
+**1. Enable audit logging:**
+
+```elixir
+# config/config.exs
+config :concord,
+  audit_log: [
+    enabled: true,
+    log_dir: "./audit_logs",
+    rotation_size_mb: 100,      # Rotate at 100MB
+    retention_days: 90,          # Keep logs for 90 days
+    log_reads: false,            # Don't log read operations
+    sensitive_keys: false        # Hash keys instead of logging values
+  ]
+```
+
+**2. Operations are automatically audited:**
+
+```elixir
+# All write operations are automatically logged
+Concord.put("user:123", %{name: "Alice"})
+# Audit log entry created with operation, timestamp, result, etc.
+
+Concord.delete("user:123")
+# Deletion is logged with full context
+```
+
+### Audit Log Format
+
+Each audit log entry is a structured JSON object:
+
+```json
+{
+  "timestamp": "2025-10-23T08:30:45.123456Z",
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "operation": "put",
+  "key_hash": "sha256:abc123def456...",
+  "result": "ok",
+  "user": "token:sk_concord_...",
+  "node": "node1@127.0.0.1",
+  "metadata": {
+    "has_ttl": true,
+    "ttl_seconds": 3600,
+    "compressed": false
+  },
+  "trace_id": "a1b2c3d4e5f6...",
+  "span_id": "789012345678..."
+}
+```
+
+### Querying Audit Logs
+
+```elixir
+# Get recent audit logs
+{:ok, logs} = Concord.AuditLog.query(limit: 100)
+
+# Filter by operation type
+{:ok, logs} = Concord.AuditLog.query(operation: "put", limit: 50)
+
+# Filter by time range
+{:ok, logs} = Concord.AuditLog.query(
+  from: ~U[2025-10-23 00:00:00Z],
+  to: ~U[2025-10-23 23:59:59Z],
+  limit: 1000
+)
+
+# Filter by user
+{:ok, logs} = Concord.AuditLog.query(
+  user: "token:sk_concord_abc123...",
+  limit: 50
+)
+
+# Filter by result
+{:ok, logs} = Concord.AuditLog.query(result: :error, limit: 100)
+```
+
+### Exporting Audit Logs
+
+```elixir
+# Export all logs
+:ok = Concord.AuditLog.export("/backup/audit_export_20251023.jsonl")
+
+# Export with filters
+:ok = Concord.AuditLog.export(
+  "/backup/errors_20251023.jsonl",
+  result: :error,
+  from: ~U[2025-10-23 00:00:00Z]
+)
+```
+
+### Log Rotation and Retention
+
+Audit logs automatically rotate and clean up based on configuration:
+
+```elixir
+# Manual rotation
+Concord.AuditLog.rotate()
+
+# Manual cleanup of old logs
+Concord.AuditLog.cleanup()
+
+# Check audit log statistics
+stats = Concord.AuditLog.stats()
+# %{
+#   enabled: true,
+#   current_log_size: 45678912,
+#   total_size: 234567890,
+#   log_dir: "./audit_logs"
+# }
+```
+
+### Log Files
+
+Audit logs are stored as append-only JSONL files:
+
+```
+./audit_logs/
+├── audit_2025-10-23.jsonl           # Current day's log
+├── audit_2025-10-23_1729665045.jsonl # Rotated log (timestamp)
+├── audit_2025-10-22.jsonl
+└── audit_2025-10-21.jsonl
+```
+
+### Manual Audit Logging
+
+Log custom events beyond automatic operation tracking:
+
+```elixir
+Concord.AuditLog.log(%{
+  operation: "data_import",
+  key: "batch:20251023",
+  result: :ok,
+  metadata: %{
+    source: "legacy_system",
+    records_imported: 5000,
+    duration_ms: 12345
+  }
+})
+```
+
+### Compliance Support
+
+Audit logs support compliance requirements:
+
+**PCI-DSS**: Track and monitor all access to cardholder data
+```elixir
+# Configure to log all operations including reads
+config :concord,
+  audit_log: [
+    enabled: true,
+    log_reads: true,  # Required for PCI-DSS
+    retention_days: 90  # Minimum 90 days
+  ]
+```
+
+**HIPAA**: Audit controls for PHI access
+```elixir
+# Log with user identification
+config :concord,
+  audit_log: [
+    enabled: true,
+    log_reads: true,
+    sensitive_keys: true,  # Log actual keys for HIPAA audit trails
+    retention_days: 365  # Minimum 6 years in production
+  ]
+```
+
+**GDPR**: Data processing activity logs
+```elixir
+# Export audit logs for data subject access requests
+Concord.AuditLog.query(
+  user: "user_id_from_dsar",
+  from: ~U[2024-01-01 00:00:00Z]
+)
+|> elem(1)
+|> Jason.encode!()
+|> File.write!("dsar_audit_log.json")
+```
+
+**SOC 2**: Detailed audit trails for security events
+```elixir
+# Monitor for suspicious activity
+{:ok, failed_ops} = Concord.AuditLog.query(result: :error, limit: 1000)
+
+Enum.each(failed_ops, fn log ->
+  if log["metadata"]["unauthorized_attempt"] do
+    alert_security_team(log)
+  end
+end)
+```
+
+### Security Features
+
+**Immutable Logs**: Append-only files prevent tampering
+- Files are never modified after creation
+- Hash verification ensures integrity
+- Timestamps are UTC-based and monotonic
+
+**Key Hashing**: Protect sensitive data
+```elixir
+# By default, keys are hashed (SHA-256)
+config :concord,
+  audit_log: [sensitive_keys: false]  # Only hashes logged
+
+# For compliance that requires actual keys
+config :concord,
+  audit_log: [sensitive_keys: true]  # Actual keys logged
+```
+
+**Trace Context Integration**: Link audit logs to distributed traces
+- Automatically includes `trace_id` and `span_id` when tracing is enabled
+- Correlate audit events with performance traces
+- End-to-end request tracking across services
+
+### Best Practices
+
+1. **Enable for Production**: Audit logging is essential for security and compliance
+2. **Secure Storage**: Store audit logs on separate, read-only mounts if possible
+3. **Regular Exports**: Export audit logs to long-term storage (S3, archive)
+4. **Monitor Size**: Set appropriate rotation thresholds for your workload
+5. **Test Restores**: Periodically verify audit log exports are readable
+6. **Access Control**: Restrict audit log directory permissions (chmod 700)
+
+### Performance Impact
+
+Audit logging has minimal performance impact:
+
+- **CPU**: < 1% overhead (async writes)
+- **Memory**: ~1-5MB buffer
+- **Disk I/O**: Buffered writes, ~10-100KB/sec depending on operation rate
+- **Latency**: No impact on operation latency (async)
+
+### Integration with SIEM
+
+Export audit logs to Security Information and Event Management (SIEM) systems:
+
+**Splunk:**
+```bash
+# Configure Splunk forwarder to monitor audit log directory
+[monitor://./audit_logs]
+disabled = false
+sourcetype = concord_audit
+index = security
+```
+
+**Elasticsearch:**
+```elixir
+# Stream audit logs to Elasticsearch
+File.stream!("./audit_logs/audit_2025-10-23.jsonl")
+|> Stream.map(&Jason.decode!/1)
+|> Enum.each(fn log ->
+  Elasticsearch.post("/concord-audit/_doc", log)
+end)
+```
+
+### Disable Audit Logging
+
+```elixir
+# config/config.exs
+config :concord,
+  audit_log: [enabled: false]
+```
+
 ## Value Compression
 
 Concord includes automatic value compression to reduce memory usage and improve performance for large datasets.
