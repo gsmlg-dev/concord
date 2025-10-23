@@ -109,6 +109,8 @@ defmodule Concord.MixProject do
       {:opentelemetry, "~> 1.4"},
       {:opentelemetry_exporter, "~> 1.7"},
       {:opentelemetry_telemetry, "~> 1.1"},
+      # Event streaming with GenStage
+      {:gen_stage, "~> 1.2"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}

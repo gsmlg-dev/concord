@@ -24,6 +24,11 @@ defmodule Concord.Application do
       Concord.AuditLog.TelemetryHandler.attach()
     end
 
+    # Attach event stream telemetry handler if enabled
+    if event_stream_enabled?() do
+      Concord.EventStream.TelemetryHandler.attach()
+    end
+
     # Build children list conditionally
     children = [
       # Start telemetry poller for periodic metrics
@@ -54,6 +59,13 @@ defmodule Concord.Application do
       children
     end
 
+    # Add Event Stream GenStage producer if enabled
+    children = if event_stream_enabled?() do
+      children ++ [Concord.EventStream]
+    else
+      children
+    end
+
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)
   end
@@ -64,6 +76,11 @@ defmodule Concord.Application do
 
   defp audit_log_enabled? do
     Application.get_env(:concord, :audit_log, [])
+    |> Keyword.get(:enabled, false)
+  end
+
+  defp event_stream_enabled? do
+    Application.get_env(:concord, :event_stream, [])
     |> Keyword.get(:enabled, false)
   end
 

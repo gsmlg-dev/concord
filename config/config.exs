@@ -37,6 +37,11 @@ config :concord,
     retention_days: 90,          # Keep logs for 90 days
     log_reads: false,            # Don't log read operations
     sensitive_keys: false        # Don't log actual key values (only hashes)
+  ],
+  # Event streaming configuration (Change Data Capture)
+  event_stream: [
+    enabled: false,              # Enable real-time event streaming
+    buffer_size: 10_000         # Max events to buffer before back-pressure
   ]
 
 # OpenTelemetry configuration
