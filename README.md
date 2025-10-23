@@ -1726,6 +1726,262 @@ Concord provides a powerful query language for filtering and searching keys with
 )
 ```
 
+## Conditional Updates
+
+Concord provides atomic conditional update operations for implementing advanced patterns like compare-and-swap (CAS), distributed locks, and optimistic concurrency control.
+
+### Compare-and-Swap with Expected Value
+
+Update or delete a key only if its current value matches an expected value:
+
+```elixir
+# Initialize counter
+:ok = Concord.put("counter", 0)
+
+# Read current value
+{:ok, current} = Concord.get("counter")
+
+# Update only if value hasn't changed (CAS operation)
+case Concord.put_if("counter", current + 1, expected: current) do
+  :ok ->
+    # Successfully incremented
+    IO.puts("Counter updated to #{current + 1}")
+
+  {:error, :condition_failed} ->
+    # Value changed by another process, retry
+    IO.puts("Conflict detected, retrying...")
+
+  {:error, :not_found} ->
+    # Key was deleted or expired
+    IO.puts("Key no longer exists")
+end
+
+# Conditional delete
+:ok = Concord.put("session", "user-123")
+:ok = Concord.delete_if("session", expected: "user-123")  # Only deletes if value matches
+```
+
+### Predicate-Based Conditions
+
+Use custom functions for complex conditional logic:
+
+```elixir
+# Version-based updates (optimistic locking)
+:ok = Concord.put("config", %{version: 1, settings: %{enabled: true}})
+
+new_config = %{version: 2, settings: %{enabled: false}}
+
+:ok = Concord.put_if(
+  "config",
+  new_config,
+  condition: fn current -> current.version < new_config.version end
+)
+
+# Conditional delete based on age
+:ok = Concord.put("temp_file", %{created_at: ~U[2024-01-01 00:00:00Z], size: 100})
+
+cutoff = ~U[2025-01-01 00:00:00Z]
+:ok = Concord.delete_if(
+  "temp_file",
+  condition: fn file -> DateTime.compare(file.created_at, cutoff) == :lt end
+)
+
+# Price threshold updates
+:ok = Concord.put("product", %{price: 100, discount: 0})
+
+:ok = Concord.put_if(
+  "product",
+  %{price: 80, discount: 20},
+  condition: fn p -> p.price >= 80 end
+)
+```
+
+### Distributed Lock Implementation
+
+```elixir
+defmodule DistributedLock do
+  @lock_key "my_critical_resource"
+  @lock_ttl 30  # seconds
+
+  def acquire(owner_id) do
+    # Try to create lock with owner ID
+    # If key already exists, this will fail
+    case Concord.get(@lock_key) do
+      {:error, :not_found} ->
+        # Lock is free, try to acquire
+        Concord.put(@lock_key, owner_id, ttl: @lock_ttl)
+        {:ok, :acquired}
+
+      {:ok, ^owner_id} ->
+        # We already own the lock
+        {:ok, :already_owned}
+
+      {:ok, _other_owner} ->
+        {:error, :locked}
+    end
+  end
+
+  def release(owner_id) do
+    # Only release if we own the lock
+    case Concord.delete_if(@lock_key, expected: owner_id) do
+      :ok -> {:ok, :released}
+      {:error, :condition_failed} -> {:error, :not_owner}
+      {:error, :not_found} -> {:error, :not_locked}
+    end
+  end
+
+  def with_lock(owner_id, fun) do
+    case acquire(owner_id) do
+      {:ok, _} ->
+        try do
+          fun.()
+        after
+          release(owner_id)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+end
+
+# Usage
+DistributedLock.with_lock("process-1", fn ->
+  # Critical section - only one process can execute this at a time
+  IO.puts("Processing critical operation...")
+end)
+```
+
+### Optimistic Concurrency Control
+
+```elixir
+defmodule BankAccount do
+  def transfer(from_account, to_account, amount) do
+    # Read current balances
+    {:ok, from_balance} = Concord.get(from_account)
+    {:ok, to_balance} = Concord.get(to_account)
+
+    # Check sufficient funds
+    if from_balance >= amount do
+      # Attempt atomic transfer using CAS
+      with :ok <- Concord.put_if(from_account, from_balance - amount, expected: from_balance),
+           :ok <- Concord.put_if(to_account, to_balance + amount, expected: to_balance) do
+        {:ok, :transferred}
+      else
+        {:error, :condition_failed} ->
+          # Concurrent modification detected, retry
+          transfer(from_account, to_account, amount)
+
+        error ->
+          error
+      end
+    else
+      {:error, :insufficient_funds}
+    end
+  end
+end
+```
+
+### API Options
+
+Both `put_if/3` and `delete_if/2` support these options:
+
+**Condition Options** (required, mutually exclusive):
+- `:expected` - Exact value to match (uses `==` comparison)
+- `:condition` - Function that receives current value and returns boolean
+
+**Additional Options** (for `put_if/3` only):
+- `:ttl` - TTL in seconds for the new value if condition succeeds
+- `:timeout` - Operation timeout in milliseconds (default: 5000)
+
+**Return Values:**
+- `:ok` - Condition met, operation succeeded
+- `{:error, :condition_failed}` - Current value doesn't match condition
+- `{:error, :not_found}` - Key doesn't exist or has expired
+- `{:error, :missing_condition}` - Neither `:expected` nor `:condition` provided
+- `{:error, :conflicting_conditions}` - Both `:expected` and `:condition` provided
+- `{:error, :invalid_key}` - Invalid key format
+- `{:error, :timeout}` - Operation timed out
+- `{:error, :cluster_not_ready}` - Cluster not initialized
+
+### TTL Interaction
+
+Conditional operations correctly handle expired keys:
+
+```elixir
+# Set key with short TTL
+:ok = Concord.put("temp", "value", ttl: 1)
+
+# Wait for expiration
+Process.sleep(2000)
+
+# Conditional operations fail on expired keys
+{:error, :not_found} = Concord.put_if("temp", "new", expected: "value")
+{:error, :not_found} = Concord.delete_if("temp", expected: "value")
+```
+
+### Use Cases
+
+**1. Rate Limiting**
+```elixir
+def check_rate_limit(user_id, max_requests) do
+  key = "rate_limit:#{user_id}"
+
+  case Concord.get(key) do
+    {:ok, count} when count >= max_requests ->
+      {:error, :rate_limited}
+
+    {:ok, count} ->
+      # Increment if value hasn't changed
+      case Concord.put_if(key, count + 1, expected: count, ttl: 60) do
+        :ok -> {:ok, :allowed}
+        {:error, :condition_failed} -> check_rate_limit(user_id, max_requests)
+      end
+
+    {:error, :not_found} ->
+      Concord.put(key, 1, ttl: 60)
+      {:ok, :allowed}
+  end
+end
+```
+
+**2. Leader Election**
+```elixir
+def elect_leader(node_id) do
+  case Concord.get("cluster_leader") do
+    {:error, :not_found} ->
+      # No leader, try to become leader
+      Concord.put("cluster_leader", node_id, ttl: 30)
+
+    {:ok, ^node_id} ->
+      # Already leader, extend lease
+      Concord.put("cluster_leader", node_id, ttl: 30)
+
+    {:ok, _other_node} ->
+      # Another node is leader
+      {:error, :not_leader}
+  end
+end
+```
+
+**3. Cache Invalidation**
+```elixir
+def update_with_version(key, new_value) do
+  case Concord.get(key) do
+    {:ok, %{version: v, data: _}} ->
+      new_versioned = %{version: v + 1, data: new_value}
+      Concord.put_if(
+        key,
+        new_versioned,
+        condition: fn current -> current.version == v end
+      )
+
+    {:error, :not_found} ->
+      Concord.put(key, %{version: 1, data: new_value})
+  end
+end
+```
+
 ## Value Compression
 
 Concord includes automatic value compression to reduce memory usage and improve performance for large datasets.

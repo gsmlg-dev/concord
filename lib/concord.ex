@@ -157,6 +157,124 @@ defmodule Concord do
   end
 
   @doc """
+  Conditionally updates a key only if it matches the expected value (compare-and-swap).
+
+  This provides atomic conditional updates, useful for implementing locks, counters,
+  and other concurrent data structures.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+  - `:ttl` - Time-to-live in seconds for the new value
+  - `:compress` - Override automatic compression (true/false)
+
+  ## Examples
+
+      # Only update if current value matches
+      Concord.put_if("counter", 1, expected: 0)
+      # => :ok
+
+      # Fails if value doesn't match
+      Concord.put_if("counter", 2, expected: 0)
+      # => {:error, :condition_failed}
+
+      # Conditional update with predicate
+      Concord.put_if("config", new_config,
+        condition: fn old_value -> old_value.version < new_config.version end
+      )
+  """
+  def put_if(key, value, opts) do
+    with :ok <- check_auth(opts),
+         :ok <- validate_key(key),
+         :ok <- validate_ttl_option(opts),
+         :ok <- validate_condition_opts(opts) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      ttl_option = Keyword.get(opts, :ttl)
+      expires_at = calculate_expires_at(ttl_option)
+      compressed_value = maybe_compress(value, opts)
+
+      expected = Keyword.get(opts, :expected)
+      condition_fn = Keyword.get(opts, :condition)
+
+      start_time = System.monotonic_time()
+
+      result =
+        case command({:put_if, key, compressed_value, expires_at, expected, condition_fn}, timeout) do
+          {:ok, :ok, _} -> :ok
+          {:ok, {:error, :condition_failed}, _} -> {:error, :condition_failed}
+          {:ok, {:error, :not_found}, _} -> {:error, :not_found}
+          {:timeout, _} -> {:error, :timeout}
+          {:error, :noproc} -> {:error, :cluster_not_ready}
+          {:error, reason} -> {:error, reason}
+        end
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :api, :put_if],
+        %{duration: duration},
+        %{result: result, has_condition: condition_fn != nil, has_expected: expected != nil}
+      )
+
+      result
+    end
+  end
+
+  @doc """
+  Conditionally deletes a key only if it matches the expected value.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:token` - Authentication token (required if auth is enabled)
+
+  ## Examples
+
+      # Only delete if current value matches
+      Concord.delete_if("lock", expected: "my_lock_id")
+      # => :ok
+
+      # Fails if value doesn't match
+      Concord.delete_if("lock", expected: "different_id")
+      # => {:error, :condition_failed}
+
+      # Delete with predicate
+      Concord.delete_if("temp:file",
+        condition: fn value -> value.created_at < cutoff_time end
+      )
+  """
+  def delete_if(key, opts) do
+    with :ok <- check_auth(opts),
+         :ok <- validate_key(key),
+         :ok <- validate_condition_opts(opts) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      expected = Keyword.get(opts, :expected)
+      condition_fn = Keyword.get(opts, :condition)
+
+      start_time = System.monotonic_time()
+
+      result =
+        case command({:delete_if, key, expected, condition_fn}, timeout) do
+          {:ok, :ok, _} -> :ok
+          {:ok, {:error, :condition_failed}, _} -> {:error, :condition_failed}
+          {:ok, {:error, :not_found}, _} -> {:error, :not_found}
+          {:timeout, _} -> {:error, :timeout}
+          {:error, :noproc} -> {:error, :cluster_not_ready}
+          {:error, reason} -> {:error, reason}
+        end
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :api, :delete_if],
+        %{duration: duration},
+        %{result: result, has_condition: condition_fn != nil, has_expected: expected != nil}
+      )
+
+      result
+    end
+  end
+
+  @doc """
   Returns all key-value pairs in the store.
   Use sparingly on large datasets.
 
@@ -801,4 +919,23 @@ defmodule Concord do
   end
 
   defp validate_touch_operation(_), do: {:error, :invalid_touch_operation}
+
+  defp validate_condition_opts(opts) do
+    expected = Keyword.get(opts, :expected)
+    condition_fn = Keyword.get(opts, :condition)
+
+    cond do
+      expected == nil and condition_fn == nil ->
+        {:error, :missing_condition}
+
+      expected != nil and condition_fn != nil ->
+        {:error, :conflicting_conditions}
+
+      is_function(condition_fn, 1) or expected != nil ->
+        :ok
+
+      true ->
+        {:error, :invalid_condition}
+    end
+  end
 end

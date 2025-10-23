@@ -75,6 +75,105 @@ defmodule Concord.StateMachine do
     {{:concord_kv, data}, :ok, []}
   end
 
+  def apply_command(meta, {:put_if, key, value, expires_at, expected, condition_fn}, {:concord_kv, data}) do
+    start_time = System.monotonic_time()
+
+    result = case :ets.lookup(:concord_store, key) do
+      [{^key, stored_data}] ->
+        case extract_value(stored_data) do
+          {current_value, current_expires_at} ->
+            if is_expired?(current_expires_at) do
+              {:error, :not_found}
+            else
+              # Check condition
+              condition_met = cond do
+                expected != nil -> Concord.Compression.decompress(current_value) == expected
+                condition_fn != nil -> condition_fn.(Concord.Compression.decompress(current_value))
+                true -> false
+              end
+
+              if condition_met do
+                formatted_value = format_value(value, expires_at)
+                :ets.insert(:concord_store, {key, formatted_value})
+                :ok
+              else
+                {:error, :condition_failed}
+              end
+            end
+
+          _ ->
+            {:error, :invalid_stored_format}
+        end
+
+      [] ->
+        {:error, :not_found}
+    end
+
+    duration = System.monotonic_time() - start_time
+
+    :telemetry.execute(
+      [:concord, :operation, :apply],
+      %{duration: duration},
+      %{
+        operation: :put_if,
+        key: key,
+        index: Map.get(meta, :index),
+        result: result
+      }
+    )
+
+    {{:concord_kv, data}, result, []}
+  end
+
+  def apply_command(meta, {:delete_if, key, expected, condition_fn}, {:concord_kv, data}) do
+    start_time = System.monotonic_time()
+
+    result = case :ets.lookup(:concord_store, key) do
+      [{^key, stored_data}] ->
+        case extract_value(stored_data) do
+          {current_value, current_expires_at} ->
+            if is_expired?(current_expires_at) do
+              {:error, :not_found}
+            else
+              # Check condition
+              condition_met = cond do
+                expected != nil -> Concord.Compression.decompress(current_value) == expected
+                condition_fn != nil -> condition_fn.(Concord.Compression.decompress(current_value))
+                true -> false
+              end
+
+              if condition_met do
+                :ets.delete(:concord_store, key)
+                :ok
+              else
+                {:error, :condition_failed}
+              end
+            end
+
+          _ ->
+            {:error, :invalid_stored_format}
+        end
+
+      [] ->
+        {:error, :not_found}
+    end
+
+    duration = System.monotonic_time() - start_time
+
+    :telemetry.execute(
+      [:concord, :operation, :apply],
+      %{duration: duration},
+      %{
+        operation: :delete_if,
+        key: key,
+        index: Map.get(meta, :index),
+        result: result
+      }
+    )
+
+    {{:concord_kv, data}, result, []}
+  end
+
   def apply_command(meta, {:touch, key, additional_ttl_seconds}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
 
