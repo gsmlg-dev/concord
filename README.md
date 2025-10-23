@@ -1641,6 +1641,91 @@ defmodule MyApp.ConcordBroadway do
 end
 ```
 
+## Query Language
+
+Concord provides a powerful query language for filtering and searching keys with pattern matching, range queries, and value-based filtering.
+
+### Key Matching
+
+```elixir
+# Prefix matching
+{:ok, keys} = Concord.Query.keys(prefix: "user:")
+# => ["user:1", "user:2", "user:100"]
+
+# Suffix matching
+{:ok, keys} = Concord.Query.keys(suffix: ":admin")
+
+# Contains substring
+{:ok, keys} = Concord.Query.keys(contains: "2024-02")
+
+# Regex pattern
+{:ok, keys} = Concord.Query.keys(pattern: ~r/user:\d{3}/)
+# => ["user:100"]
+```
+
+### Range Queries
+
+```elixir
+# Lexicographic range (inclusive)
+{:ok, keys} = Concord.Query.keys(range: {"user:100", "user:200"})
+
+# Date range queries
+{:ok, keys} = Concord.Query.keys(range: {"order:2024-01-01", "order:2024-12-31"})
+```
+
+### Value Filtering
+
+```elixir
+# Get key-value pairs with filter
+{:ok, pairs} = Concord.Query.where(
+  prefix: "product:",
+  filter: fn {_k, v} -> v.price > 100 end
+)
+# => [{"product:2", %{price: 150}}, {"product:3", %{price: 199}}]
+
+# Complex predicates
+{:ok, pairs} = Concord.Query.where(
+  prefix: "user:",
+  filter: fn {_k, v} -> v.age >= 30 and v.role == "admin" end
+)
+```
+
+### Pagination
+
+```elixir
+# Limit results
+{:ok, keys} = Concord.Query.keys(prefix: "user:", limit: 50)
+
+# Skip and limit
+{:ok, keys} = Concord.Query.keys(prefix: "user:", offset: 100, limit: 50)
+```
+
+### Count and Delete
+
+```elixir
+# Count matching keys
+{:ok, count} = Concord.Query.count(prefix: "temp:")
+# => {:ok, 42}
+
+# Delete all matching keys
+{:ok, deleted_count} = Concord.Query.delete_where(prefix: "temp:")
+# => {:ok, 42}
+
+# Delete with range
+{:ok, count} = Concord.Query.delete_where(range: {"old:2020-01-01", "old:2020-12-31"})
+```
+
+### Combined Filters
+
+```elixir
+# Multiple filters are ANDed together
+{:ok, keys} = Concord.Query.keys(
+  prefix: "user:",
+  pattern: ~r/\d{3}/,
+  limit: 10
+)
+```
+
 ## Value Compression
 
 Concord includes automatic value compression to reduce memory usage and improve performance for large datasets.

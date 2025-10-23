@@ -1,0 +1,9 @@
+#{id => {concord_cluster,nonode@nohost},
+  machine => {module,'Elixir.Concord.StateMachine',#{}},
+  cluster_name => concord_cluster,uid => <<"concord_cluster_nonode_nohost">>,
+  initial_members => [{concord_cluster,nonode@nohost}],
+  log_init_args =>
+      #{data_dir => <<"./data/test_nonode@nohost">>,
+        uid => <<"concord_cluster_nonode_nohost">>},
+  broadcast_time => 100,tick_timeout => 1000,
+  install_snap_rpc_timeout => 120000,await_condition_timeout => 30000}.
