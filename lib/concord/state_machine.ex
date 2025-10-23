@@ -30,7 +30,8 @@ defmodule Concord.StateMachine do
     # Create the ETS table with a known name
     _table = :ets.new(:concord_store, [:set, :public, :named_table])
     # Return simple state similar to ra_machine_simple
-    {:concord_kv, %{}}
+    # data map will store index definitions: %{index_name => extractor_function}
+    {:concord_kv, %{indexes: %{}}}
   end
 
   def apply_command(meta, {:put, key, value}, {:concord_kv, data}) do
@@ -40,8 +41,36 @@ defmodule Concord.StateMachine do
 
   def apply_command(meta, {:put, key, value, expires_at}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
+
+    # Get old value if it exists (for index updates)
+    old_value = case :ets.lookup(:concord_store, key) do
+      [{^key, stored_data}] ->
+        case extract_value(stored_data) do
+          {val, _expires} -> Concord.Compression.decompress(val)
+          _ -> nil
+        end
+      [] -> nil
+    end
+
+    # Insert new value
     formatted_value = format_value(value, expires_at)
     :ets.insert(:concord_store, {key, formatted_value})
+
+    # Update indexes
+    indexes = Map.get(data, :indexes, %{})
+    decompressed_value = Concord.Compression.decompress(value)
+
+    Enum.each(indexes, fn {index_name, extractor} ->
+      table_name = Concord.Index.index_table_name(index_name)
+
+      # Remove old value from index if it exists
+      if old_value != nil do
+        Concord.Index.remove_from_index(table_name, key, old_value, extractor)
+      end
+
+      # Add new value to index
+      Concord.Index.index_value(table_name, key, decompressed_value, extractor)
+    end)
 
     # Emit telemetry
     duration = System.monotonic_time() - start_time
@@ -62,7 +91,29 @@ defmodule Concord.StateMachine do
 
   def apply_command(meta, {:delete, key}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
+
+    # Get value before deleting (for index updates)
+    old_value = case :ets.lookup(:concord_store, key) do
+      [{^key, stored_data}] ->
+        case extract_value(stored_data) do
+          {val, _expires} -> Concord.Compression.decompress(val)
+          _ -> nil
+        end
+      [] -> nil
+    end
+
+    # Delete from main store
     :ets.delete(:concord_store, key)
+
+    # Remove from indexes
+    if old_value != nil do
+      indexes = Map.get(data, :indexes, %{})
+
+      Enum.each(indexes, fn {index_name, extractor} ->
+        table_name = Concord.Index.index_table_name(index_name)
+        Concord.Index.remove_from_index(table_name, key, old_value, extractor)
+      end)
+    end
 
     duration = System.monotonic_time() - start_time
 
@@ -731,6 +782,85 @@ defmodule Concord.StateMachine do
     end)
   end
 
+  # Secondary Index Commands
+
+  def apply_command(_meta, {:create_index, name, extractor}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    if Map.has_key?(indexes, name) do
+      {{:concord_kv, data}, {:error, :index_exists}, []}
+    else
+      # Create ETS table for this index
+      table_name = Concord.Index.index_table_name(name)
+      :ets.new(table_name, [:set, :public, :named_table])
+
+      # Store index definition
+      new_indexes = Map.put(indexes, name, extractor)
+      new_data = Map.put(data, :indexes, new_indexes)
+
+      {{:concord_kv, new_data}, :ok, []}
+    end
+  end
+
+  def apply_command(_meta, {:drop_index, name}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    if Map.has_key?(indexes, name) do
+      # Delete ETS table
+      table_name = Concord.Index.index_table_name(name)
+
+      if :ets.whereis(table_name) != :undefined do
+        :ets.delete(table_name)
+      end
+
+      # Remove index definition
+      new_indexes = Map.delete(indexes, name)
+      new_data = Map.put(data, :indexes, new_indexes)
+
+      {{:concord_kv, new_data}, :ok, []}
+    else
+      {{:concord_kv, data}, {:error, :not_found}, []}
+    end
+  end
+
+  # Secondary Index Queries
+
+  def query({:index_lookup, name, value}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    if Map.has_key?(indexes, name) do
+      table_name = Concord.Index.index_table_name(name)
+
+      keys = if :ets.whereis(table_name) != :undefined do
+        case :ets.lookup(table_name, value) do
+          [{^value, key_list}] -> key_list
+          [] -> []
+        end
+      else
+        []
+      end
+
+      {:ok, keys}
+    else
+      {:ok, {:error, :not_found}}
+    end
+  end
+
+  def query(:list_indexes, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+    index_names = Map.keys(indexes)
+    {:ok, index_names}
+  end
+
+  def query({:get_index_extractor, name}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    case Map.get(indexes, name) do
+      nil -> {:ok, {:error, :not_found}}
+      extractor -> {:ok, extractor}
+    end
+  end
+
   @impl :ra_machine
-  def version, do: 1
+  def version, do: 2
 end
