@@ -5,7 +5,7 @@ defmodule Concord.Web.APIControllerTest do
 
   # Setup test environment
   setup_all do
-    # Start a minimal Concord cluster for testing
+    # Start the application to get the web server running
     Application.ensure_all_started(:concord)
 
     # Create a test token
@@ -15,10 +15,16 @@ defmodule Concord.Web.APIControllerTest do
   end
 
   setup %{token: token} do
-    # Clean up ETS between tests - check if table exists first
-    if :ets.whereis(:concord_store) != :undefined do
-      :ets.delete_all_objects(:concord_store)
-    end
+    # Start test cluster for each test
+    :ok = Concord.TestHelper.start_test_cluster()
+
+    # Clean up on test exit
+    on_exit(fn ->
+      # Clean up any test data
+      if :ets.whereis(:concord_store) != :undefined do
+        :ets.delete_all_objects(:concord_store)
+      end
+    end)
 
     %{token: token}
   end
@@ -40,9 +46,17 @@ defmodule Concord.Web.APIControllerTest do
 
   describe "PUT /api/v1/kv/:key" do
     test "stores a key-value pair successfully", %{token: token} do
-      conn = conn(:put, "/api/v1/kv/test-key", %{"value" => "test-value"})
+      params = %{"value" => "test-value"}
+      conn = conn(:put, "/kv/test-key")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> put_req_header("content-type", "application/json")
+      |> Map.put(:body_params, params)
+      |> Map.put(:params, params)
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
+
+      if conn.status != 200 do
+        IO.puts("DEBUG: Status=#{conn.status}, Body=#{conn.resp_body}")
+      end
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -52,9 +66,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "stores a key-value pair with TTL", %{token: token} do
-      conn = conn(:put, "/api/v1/kv/ttl-key", %{"value" => "ttl-value", "ttl" => 3600})
+      conn = conn(:put, "/kv/ttl-key")
+      |> Map.put(:body_params, %{"value" => "ttl-value", "ttl" => 3600})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -64,8 +79,9 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "requires authentication" do
-      conn = conn(:put, "/api/v1/kv/test-key", %{"value" => "test-value"})
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      conn = conn(:put, "/kv/test-key")
+      |> Map.put(:body_params, %{"value" => "test-value"})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 401
@@ -76,9 +92,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects invalid key", %{token: token} do
-      conn = conn(:put, "/api/v1/kv/", %{"value" => "test-value"})
+      conn = conn(:put, "/kv/")
+      |> Map.put(:body_params, %{"value" => "test-value"})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -88,9 +105,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects missing value", %{token: token} do
-      conn = conn(:put, "/api/v1/kv/test-key", %{})
+      conn = conn(:put, "/kv/test-key")
+      |> Map.put(:body_params, %{})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -100,9 +118,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects invalid TTL", %{token: token} do
-      conn = conn(:put, "/api/v1/kv/test-key", %{"value" => "test-value", "ttl" => -1})
+      conn = conn(:put, "/kv/test-key")
+      |> Map.put(:body_params, %{"value" => "test-value", "ttl" => -1})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -115,9 +134,10 @@ defmodule Concord.Web.APIControllerTest do
       # Create API key from token
       api_key = "api_" <> token
 
-      conn = conn(:put, "/api/v1/kv/api-key-test", %{"value" => "api-value"})
+      conn = conn(:put, "/kv/api-key-test")
+      |> Map.put(:body_params, %{"value" => "api-value"})
       |> put_req_header("x-api-key", api_key)
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -132,9 +152,9 @@ defmodule Concord.Web.APIControllerTest do
       # First store a value
       :ets.insert(:concord_store, {"test-get", "test-value"})
 
-      conn = conn(:get, "/api/v1/kv/test-get")
+      conn = conn(:get, "/kv/test-get")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -149,9 +169,9 @@ defmodule Concord.Web.APIControllerTest do
       expiration = System.system_time(:second) + 3600
       :ets.insert(:concord_store, {"ttl-get", {"ttl-value", expiration}})
 
-      conn = conn(:get, "/api/v1/kv/ttl-get?with_ttl=true")
+      conn = conn(:get, "/kv/ttl-get?with_ttl=true")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -164,9 +184,9 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "returns 404 for non-existent key", %{token: token} do
-      conn = conn(:get, "/api/v1/kv/non-existent")
+      conn = conn(:get, "/kv/non-existent")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 404
@@ -181,9 +201,9 @@ defmodule Concord.Web.APIControllerTest do
       # First store a value
       :ets.insert(:concord_store, {"delete-test", "delete-value"})
 
-      conn = conn(:delete, "/api/v1/kv/delete-test")
+      conn = conn(:delete, "/kv/delete-test")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -196,9 +216,9 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "returns 404 for non-existent key", %{token: token} do
-      conn = conn(:delete, "/api/v1/kv/non-existent")
+      conn = conn(:delete, "/kv/non-existent")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 404
@@ -213,9 +233,9 @@ defmodule Concord.Web.APIControllerTest do
       expiration = System.system_time(:second) + 3600
       :ets.insert(:concord_store, {"ttl-key", {"value", expiration}})
 
-      conn = conn(:get, "/api/v1/kv/ttl-key/ttl")
+      conn = conn(:get, "/kv/ttl-key/ttl")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -229,9 +249,9 @@ defmodule Concord.Web.APIControllerTest do
     test "returns error for key without TTL", %{token: token} do
       :ets.insert(:concord_store, {"no-ttl-key", "value"})
 
-      conn = conn(:get, "/api/v1/kv/no-ttl-key/ttl")
+      conn = conn(:get, "/kv/no-ttl-key/ttl")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -243,9 +263,10 @@ defmodule Concord.Web.APIControllerTest do
       expiration = System.system_time(:second) + 100
       :ets.insert(:concord_store, {"touch-key", {"value", expiration}})
 
-      conn = conn(:post, "/api/v1/kv/touch-key/touch", %{"ttl" => 7200})
+      conn = conn(:post, "/kv/touch-key/touch")
+      |> Map.put(:body_params, %{"ttl" => 7200})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -255,9 +276,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects invalid TTL", %{token: token} do
-      conn = conn(:post, "/api/v1/kv/touch-key/touch", %{"ttl" => -1})
+      conn = conn(:post, "/kv/touch-key/touch")
+      |> Map.put(:body_params, %{"ttl" => -1})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -275,9 +297,10 @@ defmodule Concord.Web.APIControllerTest do
         %{"key" => "bulk3", "value" => 123}
       ]
 
-      conn = conn(:post, "/api/v1/kv/bulk", %{"operations" => operations})
+      conn = conn(:post, "/kv/bulk")
+      |> Map.put(:body_params, %{"operations" => operations})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -296,9 +319,10 @@ defmodule Concord.Web.APIControllerTest do
       # Create 501 operations (limit is 500)
       operations = for i <- 1..501, do: %{"key" => "key#{i}", "value" => "value#{i}"}
 
-      conn = conn(:post, "/api/v1/kv/bulk", %{"operations" => operations})
+      conn = conn(:post, "/kv/bulk")
+      |> Map.put(:body_params, %{"operations" => operations})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 413
@@ -308,9 +332,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects empty operations", %{token: token} do
-      conn = conn(:post, "/api/v1/kv/bulk", %{"operations" => []})
+      conn = conn(:post, "/kv/bulk")
+      |> Map.put(:body_params, %{"operations" => []})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -329,9 +354,10 @@ defmodule Concord.Web.APIControllerTest do
 
       keys = ["get1", "get2", "get3", "nonexistent"]
 
-      conn = conn(:post, "/api/v1/kv/bulk/get", %{"keys" => keys})
+      conn = conn(:post, "/kv/bulk/get")
+      |> Map.put(:body_params, %{"keys" => keys})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -356,9 +382,10 @@ defmodule Concord.Web.APIControllerTest do
 
       keys = ["ttl-get1"]
 
-      conn = conn(:post, "/api/v1/kv/bulk/get", %{"keys" => keys, "with_ttl" => true})
+      conn = conn(:post, "/kv/bulk/get")
+      |> Map.put(:body_params, %{"keys" => keys, "with_ttl" => true})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -379,9 +406,10 @@ defmodule Concord.Web.APIControllerTest do
 
       keys = ["del1", "del2", "nonexistent"]
 
-      conn = conn(:post, "/api/v1/kv/bulk/delete", %{"keys" => keys})
+      conn = conn(:post, "/kv/bulk/delete")
+      |> Map.put(:body_params, %{"keys" => keys})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -415,9 +443,10 @@ defmodule Concord.Web.APIControllerTest do
         %{"key" => "touch2", "ttl" => 3600}
       ]
 
-      conn = conn(:post, "/api/v1/kv/bulk/touch", %{"operations" => operations})
+      conn = conn(:post, "/kv/bulk/touch")
+      |> Map.put(:body_params, %{"operations" => operations})
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -441,9 +470,9 @@ defmodule Concord.Web.APIControllerTest do
       :ets.insert(:concord_store, {"list2", "value2"})
       :ets.insert(:concord_store, {"list3", "value3"})
 
-      conn = conn(:get, "/api/v1/kv")
+      conn = conn(:get, "/kv")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -463,9 +492,9 @@ defmodule Concord.Web.APIControllerTest do
       :ets.insert(:concord_store, {"with_ttl", {"value", expiration}})
       :ets.insert(:concord_store, {"without_ttl", "value"})
 
-      conn = conn(:get, "/api/v1/kv?with_ttl=true")
+      conn = conn(:get, "/kv?with_ttl=true")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -493,9 +522,9 @@ defmodule Concord.Web.APIControllerTest do
         :ets.insert(:concord_store, {"key#{i}", "value#{i}"})
       end
 
-      conn = conn(:get, "/api/v1/kv?limit=5")
+      conn = conn(:get, "/kv?limit=5")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -510,9 +539,9 @@ defmodule Concord.Web.APIControllerTest do
 
   describe "GET /api/v1/status" do
     test "returns cluster status", %{token: token} do
-      conn = conn(:get, "/api/v1/status")
+      conn = conn(:get, "/status")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 200
@@ -553,9 +582,9 @@ defmodule Concord.Web.APIControllerTest do
 
   describe "error handling" do
     test "returns 404 for unknown endpoints", %{token: token} do
-      conn = conn(:get, "/api/v1/unknown")
+      conn = conn(:get, "/unknown")
       |> put_req_header("authorization", "Bearer #{token}")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 404
@@ -565,10 +594,10 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "handles malformed JSON gracefully", %{token: token} do
-      conn = conn(:post, "/api/v1/kv/bulk", "invalid json")
+      conn = conn(:post, "/kv/bulk", "invalid json")
       |> put_req_header("authorization", "Bearer #{token}")
       |> put_req_header("content-type", "application/json")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 400
@@ -578,8 +607,8 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects missing authorization header" do
-      conn = conn(:get, "/api/v1/kv/test")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      conn = conn(:get, "/kv/test")
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 401
@@ -589,9 +618,9 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "rejects invalid authorization header" do
-      conn = conn(:get, "/api/v1/kv/test")
+      conn = conn(:get, "/kv/test")
       |> put_req_header("authorization", "Invalid token")
-      |> Concord.Web.AuthenticatedRouter.call(%{})
+      |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
       assert conn.status == 401

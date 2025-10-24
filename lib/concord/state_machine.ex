@@ -441,6 +441,47 @@ defmodule Concord.StateMachine do
     end
   end
 
+  # Secondary Index Commands
+
+  def apply_command(_meta, {:create_index, name, extractor}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    if Map.has_key?(indexes, name) do
+      {{:concord_kv, data}, {:error, :index_exists}, []}
+    else
+      # Create ETS table for this index
+      table_name = Concord.Index.index_table_name(name)
+      :ets.new(table_name, [:set, :public, :named_table])
+
+      # Store index definition
+      new_indexes = Map.put(indexes, name, extractor)
+      new_data = Map.put(data, :indexes, new_indexes)
+
+      {{:concord_kv, new_data}, :ok, []}
+    end
+  end
+
+  def apply_command(_meta, {:drop_index, name}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    if Map.has_key?(indexes, name) do
+      # Delete ETS table
+      table_name = Concord.Index.index_table_name(name)
+
+      if :ets.whereis(table_name) != :undefined do
+        :ets.delete(table_name)
+      end
+
+      # Remove index definition
+      new_indexes = Map.delete(indexes, name)
+      new_data = Map.put(data, :indexes, new_indexes)
+
+      {{:concord_kv, new_data}, :ok, []}
+    else
+      {{:concord_kv, data}, {:error, :not_found}, []}
+    end
+  end
+
   # Catch-all for unknown commands (e.g., internal ra commands)
   def apply_command(meta, command, {:concord_kv, data}) do
     # Log the unknown command for debugging
@@ -780,47 +821,6 @@ defmodule Concord.StateMachine do
           {key, {:error, :not_found}}
       end
     end)
-  end
-
-  # Secondary Index Commands
-
-  def apply_command(_meta, {:create_index, name, extractor}, {:concord_kv, data}) do
-    indexes = Map.get(data, :indexes, %{})
-
-    if Map.has_key?(indexes, name) do
-      {{:concord_kv, data}, {:error, :index_exists}, []}
-    else
-      # Create ETS table for this index
-      table_name = Concord.Index.index_table_name(name)
-      :ets.new(table_name, [:set, :public, :named_table])
-
-      # Store index definition
-      new_indexes = Map.put(indexes, name, extractor)
-      new_data = Map.put(data, :indexes, new_indexes)
-
-      {{:concord_kv, new_data}, :ok, []}
-    end
-  end
-
-  def apply_command(_meta, {:drop_index, name}, {:concord_kv, data}) do
-    indexes = Map.get(data, :indexes, %{})
-
-    if Map.has_key?(indexes, name) do
-      # Delete ETS table
-      table_name = Concord.Index.index_table_name(name)
-
-      if :ets.whereis(table_name) != :undefined do
-        :ets.delete(table_name)
-      end
-
-      # Remove index definition
-      new_indexes = Map.delete(indexes, name)
-      new_data = Map.put(data, :indexes, new_indexes)
-
-      {{:concord_kv, new_data}, :ok, []}
-    else
-      {{:concord_kv, data}, {:error, :not_found}, []}
-    end
   end
 
   # Secondary Index Queries

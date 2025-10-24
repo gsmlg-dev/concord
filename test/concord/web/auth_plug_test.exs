@@ -5,7 +5,18 @@ defmodule Concord.Web.AuthPlugTest do
 
   setup_all do
     Application.ensure_all_started(:concord)
+
+    # Enable auth for these tests
+    original_auth = Application.get_env(:concord, :auth_enabled)
+    Application.put_env(:concord, :auth_enabled, true)
+
     {:ok, token} = Concord.Auth.create_token([:read, :write])
+
+    on_exit(fn ->
+      # Restore original auth setting
+      Application.put_env(:concord, :auth_enabled, original_auth)
+    end)
+
     %{token: token}
   end
 
@@ -20,13 +31,11 @@ defmodule Concord.Web.AuthPlugTest do
     end
 
     test "accepts valid API key", %{token: token} do
-      api_key = "api_" <> token
-
       conn = conn(:get, "/test")
-      |> put_req_header("x-api-key", api_key)
+      |> put_req_header("x-api-key", token)
       |> Concord.Web.AuthPlug.call(%{})
 
-      assert conn.assigns[:auth_token] == api_key
+      assert conn.assigns[:auth_token] == token
       refute conn.halted
     end
 

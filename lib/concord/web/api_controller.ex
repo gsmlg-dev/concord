@@ -260,21 +260,26 @@ defmodule Concord.Web.APIController do
   # Private helper functions
 
   defp read_and_parse_body(conn) do
-    case read_body(conn) do
-      {:ok, body, _conn} when is_binary(body) ->
-        case Jason.decode(body) do
-          {:ok, data} -> {:ok, data}
-          {:error, _} -> {:error, :invalid_json}
-        end
+    # Check if body params are already parsed (e.g., by Plug.Parsers or in tests)
+    if conn.body_params != %Plug.Conn.Unfetched{} do
+      {:ok, conn.body_params}
+    else
+      case read_body(conn) do
+        {:ok, body, _conn} when is_binary(body) ->
+          case Jason.decode(body) do
+            {:ok, data} -> {:ok, data}
+            {:error, _} -> {:error, :invalid_json}
+          end
 
-      {:ok, _body, _conn} ->
-        {:error, :invalid_body}
+        {:ok, _body, _conn} ->
+          {:error, :invalid_body}
 
-      {:more, _data, _conn} ->
-        {:error, :body_too_large}
+        {:more, _data, _conn} ->
+          {:error, :body_too_large}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
