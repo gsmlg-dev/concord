@@ -126,7 +126,18 @@ defmodule Concord.Web.APIController do
   def put_bulk(conn) do
     with {:ok, body} <- read_and_parse_body(conn),
          {:ok, operations} <- validate_bulk_operations(body) do
-      case Concord.put_many(operations, token_opts(conn)) do
+      # Transform API format %{key, value, ttl?} to internal format {key, value, ttl?}
+      transformed_ops = Enum.map(operations, fn op ->
+        key = Map.fetch!(op, "key")
+        value = Map.fetch!(op, "value")
+
+        case Map.get(op, "ttl") do
+          nil -> {key, value}
+          ttl -> {key, value, ttl}
+        end
+      end)
+
+      case Concord.put_many(transformed_ops, token_opts(conn)) do
         {:ok, results} ->
           send_success_response(conn, 200, %{
             "status" => "ok",

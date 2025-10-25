@@ -309,12 +309,16 @@ defmodule Concord.Web.APIControllerTest do
 
       response = Jason.decode!(conn.resp_body)
       assert response["status"] == "ok"
-      assert length(response["data"]) == 3
+
+      # Response data is a map of key => status
+      results = response["data"]
+      assert is_map(results)
+      assert map_size(results) == 3
 
       # Check that all operations succeeded
-      for result <- response["data"] do
-        assert result["status"] == "ok"
-      end
+      assert results["bulk1"] == "ok"
+      assert results["bulk2"] == "ok"
+      assert results["bulk3"] == "ok"
     end
 
     test "rejects batch size too large", %{token: token} do

@@ -99,13 +99,13 @@ defmodule Concord.TTLIntegrationTest do
       # Touch to extend TTL
       assert Concord.touch(key, extension) == :ok
 
-      # Wait for original TTL to expire
-      Process.sleep((initial_ttl + 1) * 1000)
+      # Wait for original TTL to expire (but less than extension)
+      Process.sleep(initial_ttl * 1000)
 
       # Should still be available due to extension
       assert Concord.get(key) == {:ok, value}
 
-      # Check remaining TTL
+      # Check remaining TTL - should have ~1 second left
       {:ok, remaining_ttl} = Concord.ttl(key)
       assert is_integer(remaining_ttl)
       assert remaining_ttl > 0
