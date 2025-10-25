@@ -151,7 +151,7 @@ defmodule Concord.Web.APIControllerTest do
   describe "GET /api/v1/kv/:key" do
     test "retrieves a stored value", %{token: token} do
       # First store a value
-      :ets.insert(:concord_store, {"test-get", "test-value"})
+      :ets.insert(:concord_store, {"test-get", %{value: "test-value", expires_at: nil}})
 
       conn = conn(:get, "/kv/test-get")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -168,7 +168,7 @@ defmodule Concord.Web.APIControllerTest do
     test "retrieves value with TTL information", %{token: token} do
       # Store a value with expiration
       expiration = System.system_time(:second) + 3600
-      :ets.insert(:concord_store, {"ttl-get", {"ttl-value", expiration}})
+      :ets.insert(:concord_store, {"ttl-get", %{value: "ttl-value", expires_at: expiration}})
 
       conn = conn(:get, "/kv/ttl-get?with_ttl=true")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -200,7 +200,7 @@ defmodule Concord.Web.APIControllerTest do
   describe "DELETE /api/v1/kv/:key" do
     test "deletes a stored key", %{token: token} do
       # First store a value
-      :ets.insert(:concord_store, {"delete-test", "delete-value"})
+      :ets.insert(:concord_store, {"delete-test", %{value: "delete-value", expires_at: nil}})
 
       conn = conn(:delete, "/kv/delete-test")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -233,7 +233,7 @@ defmodule Concord.Web.APIControllerTest do
   describe "GET /api/v1/kv/:key/ttl" do
     test "gets TTL for a key with expiration", %{token: token} do
       expiration = System.system_time(:second) + 3600
-      :ets.insert(:concord_store, {"ttl-key", {"value", expiration}})
+      :ets.insert(:concord_store, {"ttl-key", %{value: "value", expires_at: expiration}})
 
       conn = conn(:get, "/kv/ttl-key/ttl")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -249,7 +249,7 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "returns error for key without TTL", %{token: token} do
-      :ets.insert(:concord_store, {"no-ttl-key", "value"})
+      :ets.insert(:concord_store, {"no-ttl-key", %{value: "value", expires_at: nil}})
 
       conn = conn(:get, "/kv/no-ttl-key/ttl")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -263,7 +263,7 @@ defmodule Concord.Web.APIControllerTest do
   describe "POST /api/v1/kv/:key/touch" do
     test "extends TTL for existing key", %{token: token} do
       expiration = System.system_time(:second) + 100
-      :ets.insert(:concord_store, {"touch-key", {"value", expiration}})
+      :ets.insert(:concord_store, {"touch-key", %{value: "value", expires_at: expiration}})
 
       conn = conn(:post, "/kv/touch-key/touch")
       |> Map.put(:body_params, %{"ttl" => 7200})
@@ -353,10 +353,10 @@ defmodule Concord.Web.APIControllerTest do
 
   describe "POST /api/v1/kv/bulk/get" do
     test "retrieves multiple keys", %{token: token} do
-      # Pre-populate some data
-      :ets.insert(:concord_store, {"get1", "value1"})
-      :ets.insert(:concord_store, {"get2", "value2"})
-      :ets.insert(:concord_store, {"get3", "value3"})
+      # Pre-populate some data in proper format
+      :ets.insert(:concord_store, {"get1", %{value: "value1", expires_at: nil}})
+      :ets.insert(:concord_store, {"get2", %{value: "value2", expires_at: nil}})
+      :ets.insert(:concord_store, {"get3", %{value: "value3", expires_at: nil}})
 
       keys = ["get1", "get2", "get3", "nonexistent"]
 
@@ -382,9 +382,9 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "retrieves multiple keys with TTL", %{token: token} do
-      # Pre-populate data with TTL
+      # Pre-populate data with TTL in proper format
       expiration = System.system_time(:second) + 3600
-      :ets.insert(:concord_store, {"ttl-get1", {"value1", expiration}})
+      :ets.insert(:concord_store, {"ttl-get1", %{value: "value1", expires_at: expiration}})
 
       keys = ["ttl-get1"]
 
@@ -406,9 +406,9 @@ defmodule Concord.Web.APIControllerTest do
 
   describe "POST /api/v1/kv/bulk/delete" do
     test "deletes multiple keys", %{token: token} do
-      # Pre-populate some data
-      :ets.insert(:concord_store, {"del1", "value1"})
-      :ets.insert(:concord_store, {"del2", "value2"})
+      # Pre-populate some data in proper format
+      :ets.insert(:concord_store, {"del1", %{value: "value1", expires_at: nil}})
+      :ets.insert(:concord_store, {"del2", %{value: "value2", expires_at: nil}})
 
       keys = ["del1", "del2", "nonexistent"]
 
@@ -441,8 +441,8 @@ defmodule Concord.Web.APIControllerTest do
     test "touches multiple keys", %{token: token} do
       # Pre-populate data with TTL
       expiration = System.system_time(:second) + 100
-      :ets.insert(:concord_store, {"touch1", {"value1", expiration}})
-      :ets.insert(:concord_store, {"touch2", {"value2", expiration}})
+      :ets.insert(:concord_store, {"touch1", %{value: "value1", expires_at: expiration}})
+      :ets.insert(:concord_store, {"touch2", %{value: "value2", expires_at: expiration}})
 
       operations = [
         %{"key" => "touch1", "ttl" => 7200},
@@ -471,9 +471,9 @@ defmodule Concord.Web.APIControllerTest do
   describe "GET /api/v1/kv" do
     test "lists all keys", %{token: token} do
       # Pre-populate some data
-      :ets.insert(:concord_store, {"list1", "value1"})
-      :ets.insert(:concord_store, {"list2", "value2"})
-      :ets.insert(:concord_store, {"list3", "value3"})
+      :ets.insert(:concord_store, {"list1", %{value: "value1", expires_at: nil}})
+      :ets.insert(:concord_store, {"list2", %{value: "value2", expires_at: nil}})
+      :ets.insert(:concord_store, {"list3", %{value: "value3", expires_at: nil}})
 
       conn = conn(:get, "/kv")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -497,8 +497,8 @@ defmodule Concord.Web.APIControllerTest do
     test "lists all keys with TTL", %{token: token} do
       # Pre-populate data with and without TTL
       expiration = System.system_time(:second) + 3600
-      :ets.insert(:concord_store, {"with_ttl", {"value", expiration}})
-      :ets.insert(:concord_store, {"without_ttl", "value"})
+      :ets.insert(:concord_store, {"with_ttl", %{value: "value", expires_at: expiration}})
+      :ets.insert(:concord_store, {"without_ttl", %{value: "value", expires_at: nil}})
 
       conn = conn(:get, "/kv?with_ttl=true")
       |> put_req_header("authorization", "Bearer #{token}")
@@ -532,9 +532,9 @@ defmodule Concord.Web.APIControllerTest do
     end
 
     test "respects limit parameter", %{token: token} do
-      # Pre-populate many keys
+      # Pre-populate many keys in proper format
       for i <- 1..10 do
-        :ets.insert(:concord_store, {"key#{i}", "value#{i}"})
+        :ets.insert(:concord_store, {"key#{i}", %{value: "value#{i}", expires_at: nil}})
       end
 
       conn = conn(:get, "/kv?limit=5")
