@@ -450,10 +450,6 @@ defmodule Concord.Web.APIControllerTest do
       |> put_req_header("authorization", "Bearer #{token}")
       |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
-      if conn.status != 200 do
-        IO.puts("DEBUG touch_bulk: Status=#{conn.status}, Body=#{conn.resp_body}")
-      end
-
       assert conn.state == :sent
       assert conn.status == 200
 
@@ -461,11 +457,10 @@ defmodule Concord.Web.APIControllerTest do
       assert response["status"] == "ok"
 
       results = response["data"]
-      assert length(results) == 2
-
-      for result <- results do
-        assert result["status"] == "ok"
-      end
+      assert is_map(results)
+      assert map_size(results) == 2
+      assert results["touch1"] == "ok"
+      assert results["touch2"] == "ok"
     end
   end
 

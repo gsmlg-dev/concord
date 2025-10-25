@@ -188,7 +188,12 @@ defmodule Concord.Web.APIController do
   def touch_bulk(conn) do
     with {:ok, body} <- read_and_parse_body(conn),
          {:ok, operations} <- validate_bulk_touch_operations(body) do
-      case Concord.touch_many(operations, token_opts(conn)) do
+      # Transform API format %{key, ttl} to internal format {key, ttl}
+      transformed_ops = Enum.map(operations, fn %{"key" => key, "ttl" => ttl} ->
+        {key, ttl}
+      end)
+
+      case Concord.touch_many(transformed_ops, token_opts(conn)) do
         {:ok, results} ->
           send_success_response(conn, 200, %{
             "status" => "ok",
@@ -389,10 +394,19 @@ defmodule Concord.Web.APIController do
     end
   end
 
-  defp validate_touch_operation(%{"key" => key, "ttl" => ttl}) when is_binary(key) and is_integer(ttl) and ttl > 0 do
-    case validate_key(key) do
-      {:ok, _} -> :ok
-      error -> error
+  defp validate_touch_operation(%{"key" => key, "ttl" => ttl} = op) when is_binary(key) do
+    cond do
+      not is_integer(ttl) ->
+        {:error, :invalid_ttl}
+
+      ttl <= 0 ->
+        {:error, :invalid_ttl}
+
+      true ->
+        case validate_key(key) do
+          {:ok, _} -> :ok
+          error -> error
+        end
     end
   end
   defp validate_touch_operation(_), do: {:error, :invalid_touch_operation}

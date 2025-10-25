@@ -26,16 +26,7 @@ defmodule Concord.Web.AuthenticatedRouter do
     Concord.Web.APIController.delete(conn, key)
   end
 
-  # TTL operations
-  post "/kv/:key/touch" do
-    Concord.Web.APIController.touch(conn, key)
-  end
-
-  get "/kv/:key/ttl" do
-    Concord.Web.APIController.ttl(conn, key)
-  end
-
-  # Bulk operations
+  # Bulk operations (must come before parameterized routes to match correctly)
   post "/kv/bulk" do
     Concord.Web.APIController.put_bulk(conn)
   end
@@ -55,6 +46,15 @@ defmodule Concord.Web.AuthenticatedRouter do
   # Administrative operations
   get "/kv" do
     Concord.Web.APIController.get_all(conn)
+  end
+
+  # TTL operations (parameterized routes come after specific routes)
+  post "/kv/:key/touch" do
+    Concord.Web.APIController.touch(conn, key)
+  end
+
+  get "/kv/:key/ttl" do
+    Concord.Web.APIController.ttl(conn, key)
   end
 
   get "/status" do
