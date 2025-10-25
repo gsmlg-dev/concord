@@ -222,10 +222,11 @@ defmodule Concord.Web.APIControllerTest do
       |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
-      assert conn.status == 404
+      # DELETE is idempotent - returns 200 even if key doesn't exist
+      assert conn.status == 200
 
       response = Jason.decode!(conn.resp_body)
-      assert response["error"]["code"] == "NOT_FOUND"
+      assert response["status"] == "ok"
     end
   end
 
@@ -485,10 +486,13 @@ defmodule Concord.Web.APIControllerTest do
       response = Jason.decode!(conn.resp_body)
       assert response["status"] == "ok"
 
-      keys = response["data"]
-      assert "list1" in keys
-      assert "list2" in keys
-      assert "list3" in keys
+      data = response["data"]
+      assert Map.has_key?(data, "list1")
+      assert Map.has_key?(data, "list2")
+      assert Map.has_key?(data, "list3")
+      assert data["list1"] == "value1"
+      assert data["list2"] == "value2"
+      assert data["list3"] == "value3"
     end
 
     test "lists all keys with TTL", %{token: token} do
@@ -508,17 +512,24 @@ defmodule Concord.Web.APIControllerTest do
       assert response["status"] == "ok"
 
       data = response["data"]
-      # Should contain both keys, with different TTL information
-      keys_with_ttl = Enum.map(data, fn item ->
-        if is_map(item) do
-          item.key
-        else
-          item
-        end
-      end)
+      # Data is a map of key => %{value: ..., ttl: ...}
+      assert is_map(data)
+      assert map_size(data) == 2
 
-      assert "with_ttl" in keys_with_ttl
-      assert "without_ttl" in keys_with_ttl
+      # Verify both keys exist
+      assert Map.has_key?(data, "with_ttl")
+      assert Map.has_key?(data, "without_ttl")
+
+      # Verify TTL information for key with TTL
+      with_ttl_info = data["with_ttl"]
+      assert is_integer(with_ttl_info["ttl"])
+      assert with_ttl_info["ttl"] > 0
+      assert with_ttl_info["value"] == "value"
+
+      # Verify TTL information for key without TTL
+      without_ttl_info = data["without_ttl"]
+      assert without_ttl_info["ttl"] == nil
+      assert without_ttl_info["value"] == "value"
     end
 
     test "respects limit parameter", %{token: token} do
@@ -537,8 +548,10 @@ defmodule Concord.Web.APIControllerTest do
       response = Jason.decode!(conn.resp_body)
       assert response["status"] == "ok"
 
-      keys = response["data"]
-      assert length(keys) <= 5
+      data = response["data"]
+      # Data is a map of key-value pairs
+      assert is_map(data)
+      assert map_size(data) <= 5
     end
   end
 

@@ -16,6 +16,7 @@ defmodule Concord.StateMachine do
   end
 
   defp extract_value(%{value: value, expires_at: expires_at}), do: {value, expires_at}
+  defp extract_value({value, expires_at}) when is_integer(expires_at), do: {value, expires_at}  # Legacy tuple format
   defp extract_value(value), do: {value, nil}  # Backward compatibility
 
   defp is_expired?(nil), do: false  # No expiration
