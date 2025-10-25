@@ -344,12 +344,14 @@ defmodule Concord.AuditLog do
   end
 
   defp generate_event_id do
-    UUID.uuid4()
-  rescue
-    _ ->
+    # Use UUID if available, otherwise fall back to crypto
+    if Code.ensure_loaded?(UUID) do
+      apply(UUID, :uuid4, [])
+    else
       # Fallback if UUID library not available
       :crypto.strong_rand_bytes(16)
       |> Base.encode16(case: :lower)
+    end
   end
 
   defp hash_key(nil), do: nil
