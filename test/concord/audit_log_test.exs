@@ -11,11 +11,12 @@ defmodule Concord.AuditLogTest do
     end
 
     test "log/1 handles disabled audit logging gracefully" do
-      result = Concord.AuditLog.log(%{
-        operation: "put",
-        key: "test_key",
-        result: :ok
-      })
+      result =
+        Concord.AuditLog.log(%{
+          operation: "put",
+          key: "test_key",
+          result: :ok
+        })
 
       assert result == :ok
     end

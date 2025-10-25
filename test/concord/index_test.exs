@@ -132,9 +132,10 @@ defmodule Concord.IndexTest do
     end
 
     test "handles conditional indexing (nil skips)" do
-      :ok = Concord.Index.create("active_users", fn user ->
-        if user.active, do: user.id, else: nil
-      end)
+      :ok =
+        Concord.Index.create("active_users", fn user ->
+          if user.active, do: user.id, else: nil
+        end)
 
       :ok = Concord.put("user:1", %{id: 1, active: true})
       :ok = Concord.put("user:2", %{id: 2, active: false})
@@ -144,7 +145,8 @@ defmodule Concord.IndexTest do
       assert keys == ["user:1"]
 
       {:ok, keys} = Concord.Index.lookup("active_users", 2)
-      assert keys == []  # user:2 is not indexed because active=false
+      # user:2 is not indexed because active=false
+      assert keys == []
     end
   end
 
@@ -268,7 +270,8 @@ defmodule Concord.IndexTest do
       {:ok, admin_keys} = Concord.Index.lookup("users_by_role", "admin")
       {:ok, admins} = Concord.get_many(admin_keys)
 
-      admin_names = admins
+      admin_names =
+        admins
         |> Enum.map(fn {_k, {:ok, user}} -> user.name end)
         |> Enum.sort()
 
@@ -279,9 +282,10 @@ defmodule Concord.IndexTest do
   describe "error handling" do
     test "handles extractor exceptions gracefully" do
       # Extractor that might raise
-      :ok = Concord.Index.create("bad_index", fn value ->
-        if is_map(value), do: value.field, else: raise "oops"
-      end)
+      :ok =
+        Concord.Index.create("bad_index", fn value ->
+          if is_map(value), do: value.field, else: raise("oops")
+        end)
 
       # Should not crash when extractor fails
       :ok = Concord.put("key:1", "not_a_map")

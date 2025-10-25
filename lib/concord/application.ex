@@ -46,25 +46,28 @@ defmodule Concord.Application do
     ]
 
     # Add Prometheus exporter if enabled
-    children = if prometheus_enabled?() do
-      children ++ [Prometheus.child_spec([])]
-    else
-      children
-    end
+    children =
+      if prometheus_enabled?() do
+        children ++ [Prometheus.child_spec([])]
+      else
+        children
+      end
 
     # Add Audit Log GenServer if enabled
-    children = if audit_log_enabled?() do
-      children ++ [Concord.AuditLog]
-    else
-      children
-    end
+    children =
+      if audit_log_enabled?() do
+        children ++ [Concord.AuditLog]
+      else
+        children
+      end
 
     # Add Event Stream GenStage producer if enabled
-    children = if event_stream_enabled?() do
-      children ++ [Concord.EventStream]
-    else
-      children
-    end
+    children =
+      if event_stream_enabled?() do
+        children ++ [Concord.EventStream]
+      else
+        children
+      end
 
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)

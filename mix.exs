@@ -33,7 +33,7 @@ defmodule Concord.MixProject do
           "API Documentation": [
             "API_DESIGN.md"
           ],
-          "Performance": [
+          Performance: [
             "PERFORMANCE_SUMMARY.md",
             "PERFORMANCE_ANALYSIS.md"
           ],
@@ -66,7 +66,8 @@ defmodule Concord.MixProject do
   # Package metadata for Hex.pm
   defp package do
     [
-      description: "A high-performance embedded distributed key-value store for Elixir applications with 600K+ ops/sec and REST API",
+      description:
+        "A high-performance embedded distributed key-value store for Elixir applications with 600K+ ops/sec and REST API",
       licenses: ["MIT"],
       files: [
         "lib",

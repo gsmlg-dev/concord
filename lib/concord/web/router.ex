@@ -25,11 +25,14 @@ defmodule Concord.Web.Router do
   get "/api/v1/health" do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(200, Jason.encode!(%{
-      "status" => "healthy",
-      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "service" => "concord-api"
-    }))
+    |> send_resp(
+      200,
+      Jason.encode!(%{
+        "status" => "healthy",
+        "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "service" => "concord-api"
+      })
+    )
   end
 
   # OpenAPI specification endpoint
@@ -43,7 +46,7 @@ defmodule Concord.Web.Router do
   end
 
   # Authenticated API endpoints
-  forward "/api/v1", to: Concord.Web.AuthenticatedRouter
+  forward("/api/v1", to: Concord.Web.AuthenticatedRouter)
 
   # Private helper functions
 
@@ -59,13 +62,16 @@ defmodule Concord.Web.Router do
       {:error, _} ->
         conn
         |> put_resp_content_type("application/json")
-        |> send_resp(500, Jason.encode!(%{
-          "status" => "error",
-          "error" => %{
-            "code" => "SPEC_NOT_FOUND",
-            "message" => "OpenAPI specification not found"
-          }
-        }))
+        |> send_resp(
+          500,
+          Jason.encode!(%{
+            "status" => "error",
+            "error" => %{
+              "code" => "SPEC_NOT_FOUND",
+              "message" => "OpenAPI specification not found"
+            }
+          })
+        )
     end
   end
 
@@ -117,12 +123,15 @@ defmodule Concord.Web.Router do
   match _ do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(404, Jason.encode!(%{
-      "status" => "error",
-      "error" => %{
-        "code" => "NOT_FOUND",
-        "message" => "API endpoint not found"
-      }
-    }))
+    |> send_resp(
+      404,
+      Jason.encode!(%{
+        "status" => "error",
+        "error" => %{
+          "code" => "NOT_FOUND",
+          "message" => "API endpoint not found"
+        }
+      })
+    )
   end
 end

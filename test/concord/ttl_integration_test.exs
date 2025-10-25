@@ -15,7 +15,8 @@ defmodule Concord.TTLIntegrationTest do
     test "put with TTL option expires after specified time" do
       key = "ttl_test_key"
       value = "ttl_test_value"
-      ttl_seconds = 2  # Short TTL for testing
+      # Short TTL for testing
+      ttl_seconds = 2
 
       # Put with TTL
       assert Concord.put(key, value, ttl: ttl_seconds) == :ok

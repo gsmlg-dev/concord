@@ -136,16 +136,19 @@ defmodule Concord.Compression do
     compressed_size = :erlang.external_size(compressed)
 
     savings_bytes = original_size - compressed_size
-    savings_percent = if original_size > 0 do
-      (savings_bytes / original_size) * 100
-    else
-      0
-    end
+
+    savings_percent =
+      if original_size > 0 do
+        savings_bytes / original_size * 100
+      else
+        0
+      end
 
     %{
       original_size: original_size,
       compressed_size: compressed_size,
-      compression_ratio: if(original_size > 0, do: compressed_size / original_size * 100, else: 0),
+      compression_ratio:
+        if(original_size > 0, do: compressed_size / original_size * 100, else: 0),
       savings_bytes: max(0, savings_bytes),
       savings_percent: max(0, savings_percent)
     }
@@ -156,12 +159,12 @@ defmodule Concord.Compression do
   """
   @spec config() :: keyword()
   def config do
-    Application.get_env(:concord, :compression, [
+    Application.get_env(:concord, :compression,
       enabled: true,
       algorithm: :zlib,
       threshold_bytes: 1024,
       level: 6
-    ])
+    )
   end
 
   # Private functions
@@ -174,42 +177,44 @@ defmodule Concord.Compression do
     binary = :erlang.term_to_binary(value)
 
     # Compress based on algorithm
-    compressed = case algorithm do
-      :zlib ->
-        :zlib.compress(binary)
+    compressed =
+      case algorithm do
+        :zlib ->
+          :zlib.compress(binary)
 
-      :gzip ->
-        z = :zlib.open()
-        :zlib.deflateInit(z, level, :deflated, 16 + 15, 8, :default)
-        compressed_data = :zlib.deflate(z, binary, :finish)
-        :zlib.deflateEnd(z)
-        :zlib.close(z)
-        IO.iodata_to_binary(compressed_data)
+        :gzip ->
+          z = :zlib.open()
+          :zlib.deflateInit(z, level, :deflated, 16 + 15, 8, :default)
+          compressed_data = :zlib.deflate(z, binary, :finish)
+          :zlib.deflateEnd(z)
+          :zlib.close(z)
+          IO.iodata_to_binary(compressed_data)
 
-      _ ->
-        binary
-    end
+        _ ->
+          binary
+      end
 
     {:compressed, algorithm, compressed}
   end
 
   defp do_decompress(compressed_binary, algorithm) do
     # Decompress based on algorithm
-    decompressed = case algorithm do
-      :zlib ->
-        :zlib.uncompress(compressed_binary)
+    decompressed =
+      case algorithm do
+        :zlib ->
+          :zlib.uncompress(compressed_binary)
 
-      :gzip ->
-        z = :zlib.open()
-        :zlib.inflateInit(z, 16 + 15)
-        decompressed_data = :zlib.inflate(z, compressed_binary)
-        :zlib.inflateEnd(z)
-        :zlib.close(z)
-        IO.iodata_to_binary(decompressed_data)
+        :gzip ->
+          z = :zlib.open()
+          :zlib.inflateInit(z, 16 + 15)
+          decompressed_data = :zlib.inflate(z, compressed_binary)
+          :zlib.inflateEnd(z)
+          :zlib.close(z)
+          IO.iodata_to_binary(decompressed_data)
 
-      _ ->
-        compressed_binary
-    end
+        _ ->
+          compressed_binary
+      end
 
     # Deserialize back to term
     :erlang.binary_to_term(decompressed)

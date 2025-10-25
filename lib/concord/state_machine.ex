@@ -16,10 +16,14 @@ defmodule Concord.StateMachine do
   end
 
   defp extract_value(%{value: value, expires_at: expires_at}), do: {value, expires_at}
-  defp extract_value({value, expires_at}) when is_integer(expires_at), do: {value, expires_at}  # Legacy tuple format
-  defp extract_value(value), do: {value, nil}  # Backward compatibility
+  # Legacy tuple format
+  defp extract_value({value, expires_at}) when is_integer(expires_at), do: {value, expires_at}
+  # Backward compatibility
+  defp extract_value(value), do: {value, nil}
 
-  defp is_expired?(nil), do: false  # No expiration
+  # No expiration
+  defp is_expired?(nil), do: false
+
   defp is_expired?(expires_at) do
     System.system_time(:second) > expires_at
   end
@@ -44,14 +48,17 @@ defmodule Concord.StateMachine do
     start_time = System.monotonic_time()
 
     # Get old value if it exists (for index updates)
-    old_value = case :ets.lookup(:concord_store, key) do
-      [{^key, stored_data}] ->
-        case extract_value(stored_data) do
-          {val, _expires} -> Concord.Compression.decompress(val)
-          _ -> nil
-        end
-      [] -> nil
-    end
+    old_value =
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {val, _expires} -> Concord.Compression.decompress(val)
+            _ -> nil
+          end
+
+        [] ->
+          nil
+      end
 
     # Insert new value
     formatted_value = format_value(value, expires_at)
@@ -94,14 +101,17 @@ defmodule Concord.StateMachine do
     start_time = System.monotonic_time()
 
     # Get value before deleting (for index updates)
-    old_value = case :ets.lookup(:concord_store, key) do
-      [{^key, stored_data}] ->
-        case extract_value(stored_data) do
-          {val, _expires} -> Concord.Compression.decompress(val)
-          _ -> nil
-        end
-      [] -> nil
-    end
+    old_value =
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {val, _expires} -> Concord.Compression.decompress(val)
+            _ -> nil
+          end
+
+        [] ->
+          nil
+      end
 
     # Delete from main store
     :ets.delete(:concord_store, key)
@@ -127,39 +137,50 @@ defmodule Concord.StateMachine do
     {{:concord_kv, data}, :ok, []}
   end
 
-  def apply_command(meta, {:put_if, key, value, expires_at, expected, condition_fn}, {:concord_kv, data}) do
+  def apply_command(
+        meta,
+        {:put_if, key, value, expires_at, expected, condition_fn},
+        {:concord_kv, data}
+      ) do
     start_time = System.monotonic_time()
 
-    result = case :ets.lookup(:concord_store, key) do
-      [{^key, stored_data}] ->
-        case extract_value(stored_data) do
-          {current_value, current_expires_at} ->
-            if is_expired?(current_expires_at) do
-              {:error, :not_found}
-            else
-              # Check condition
-              condition_met = cond do
-                expected != nil -> Concord.Compression.decompress(current_value) == expected
-                condition_fn != nil -> condition_fn.(Concord.Compression.decompress(current_value))
-                true -> false
-              end
-
-              if condition_met do
-                formatted_value = format_value(value, expires_at)
-                :ets.insert(:concord_store, {key, formatted_value})
-                :ok
+    result =
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {current_value, current_expires_at} ->
+              if is_expired?(current_expires_at) do
+                {:error, :not_found}
               else
-                {:error, :condition_failed}
+                # Check condition
+                condition_met =
+                  cond do
+                    expected != nil ->
+                      Concord.Compression.decompress(current_value) == expected
+
+                    condition_fn != nil ->
+                      condition_fn.(Concord.Compression.decompress(current_value))
+
+                    true ->
+                      false
+                  end
+
+                if condition_met do
+                  formatted_value = format_value(value, expires_at)
+                  :ets.insert(:concord_store, {key, formatted_value})
+                  :ok
+                else
+                  {:error, :condition_failed}
+                end
               end
-            end
 
-          _ ->
-            {:error, :invalid_stored_format}
-        end
+            _ ->
+              {:error, :invalid_stored_format}
+          end
 
-      [] ->
-        {:error, :not_found}
-    end
+        [] ->
+          {:error, :not_found}
+      end
 
     duration = System.monotonic_time() - start_time
 
@@ -180,35 +201,42 @@ defmodule Concord.StateMachine do
   def apply_command(meta, {:delete_if, key, expected, condition_fn}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
 
-    result = case :ets.lookup(:concord_store, key) do
-      [{^key, stored_data}] ->
-        case extract_value(stored_data) do
-          {current_value, current_expires_at} ->
-            if is_expired?(current_expires_at) do
-              {:error, :not_found}
-            else
-              # Check condition
-              condition_met = cond do
-                expected != nil -> Concord.Compression.decompress(current_value) == expected
-                condition_fn != nil -> condition_fn.(Concord.Compression.decompress(current_value))
-                true -> false
-              end
-
-              if condition_met do
-                :ets.delete(:concord_store, key)
-                :ok
+    result =
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {current_value, current_expires_at} ->
+              if is_expired?(current_expires_at) do
+                {:error, :not_found}
               else
-                {:error, :condition_failed}
+                # Check condition
+                condition_met =
+                  cond do
+                    expected != nil ->
+                      Concord.Compression.decompress(current_value) == expected
+
+                    condition_fn != nil ->
+                      condition_fn.(Concord.Compression.decompress(current_value))
+
+                    true ->
+                      false
+                  end
+
+                if condition_met do
+                  :ets.delete(:concord_store, key)
+                  :ok
+                else
+                  {:error, :condition_failed}
+                end
               end
-            end
 
-          _ ->
-            {:error, :invalid_stored_format}
-        end
+            _ ->
+              {:error, :invalid_stored_format}
+          end
 
-      [] ->
-        {:error, :not_found}
-    end
+        [] ->
+          {:error, :not_found}
+      end
 
     duration = System.monotonic_time() - start_time
 
@@ -229,22 +257,23 @@ defmodule Concord.StateMachine do
   def apply_command(meta, {:touch, key, additional_ttl_seconds}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
 
-    result = case :ets.lookup(:concord_store, key) do
-      [{^key, stored_data}] ->
-        case extract_value(stored_data) do
-          {value, _current_expires_at} ->
-            new_expires_at = current_timestamp() + additional_ttl_seconds
-            new_stored_data = format_value(value, new_expires_at)
-            :ets.insert(:concord_store, {key, new_stored_data})
-            :ok
+    result =
+      case :ets.lookup(:concord_store, key) do
+        [{^key, stored_data}] ->
+          case extract_value(stored_data) do
+            {value, _current_expires_at} ->
+              new_expires_at = current_timestamp() + additional_ttl_seconds
+              new_stored_data = format_value(value, new_expires_at)
+              :ets.insert(:concord_store, {key, new_stored_data})
+              :ok
 
-          _ ->
-            {:error, :invalid_stored_format}
-        end
+            _ ->
+              {:error, :invalid_stored_format}
+          end
 
-      [] ->
-        {:error, :not_found}
-    end
+        [] ->
+          {:error, :not_found}
+      end
 
     duration = System.monotonic_time() - start_time
 
@@ -268,24 +297,28 @@ defmodule Concord.StateMachine do
     # Get all keys and check expiration manually (ETS select doesn't support map patterns)
     all_keys = :ets.select(:concord_store, [{{:"$1", :"$2"}, [], [:"$1"]}])
 
-    expired_keys = Enum.filter(all_keys, fn key ->
-      case :ets.lookup(:concord_store, key) do
-        [{^key, stored_data}] ->
-          case extract_value(stored_data) do
-            {_value, expires_at} -> is_expired?(expires_at)
-            _ -> false
-          end
-        [] -> false
-      end
-    end)
+    expired_keys =
+      Enum.filter(all_keys, fn key ->
+        case :ets.lookup(:concord_store, key) do
+          [{^key, stored_data}] ->
+            case extract_value(stored_data) do
+              {_value, expires_at} -> is_expired?(expires_at)
+              _ -> false
+            end
+
+          [] ->
+            false
+        end
+      end)
 
     # Delete expired keys in batch
-    deleted_count = Enum.reduce(expired_keys, 0, fn key, acc ->
-      case :ets.delete(:concord_store, key) do
-        true -> acc + 1
-        false -> acc
-      end
-    end)
+    deleted_count =
+      Enum.reduce(expired_keys, 0, fn key, acc ->
+        case :ets.delete(:concord_store, key) do
+          true -> acc + 1
+          false -> acc
+        end
+      end)
 
     duration = System.monotonic_time() - start_time
 
@@ -303,7 +336,8 @@ defmodule Concord.StateMachine do
     {{:concord_kv, data}, {:ok, deleted_count}, []}
   end
 
-  def apply_command(meta, {:put_many, operations}, {:concord_kv, data}) when is_list(operations) do
+  def apply_command(meta, {:put_many, operations}, {:concord_kv, data})
+      when is_list(operations) do
     start_time = System.monotonic_time()
 
     # Pre-validate all operations
@@ -347,25 +381,26 @@ defmodule Concord.StateMachine do
   def apply_command(meta, {:get_many, keys}, {:concord_kv, data}) when is_list(keys) do
     start_time = System.monotonic_time()
 
-    results = Enum.map(keys, fn key ->
-      case :ets.lookup(:concord_store, key) do
-        [{^key, stored_data}] ->
-          case extract_value(stored_data) do
-            {value, expires_at} ->
-              if is_expired?(expires_at) do
-                {key, {:error, :not_found}}
-              else
-                {key, {:ok, value}}
-              end
+    results =
+      Enum.map(keys, fn key ->
+        case :ets.lookup(:concord_store, key) do
+          [{^key, stored_data}] ->
+            case extract_value(stored_data) do
+              {value, expires_at} ->
+                if is_expired?(expires_at) do
+                  {key, {:error, :not_found}}
+                else
+                  {key, {:ok, value}}
+                end
 
-            _ ->
-              {key, {:error, :invalid_stored_format}}
-          end
+              _ ->
+                {key, {:error, :invalid_stored_format}}
+            end
 
-        [] ->
-          {key, {:error, :not_found}}
-      end
-    end)
+          [] ->
+            {key, {:error, :not_found}}
+        end
+      end)
 
     duration = System.monotonic_time() - start_time
 
@@ -411,7 +446,8 @@ defmodule Concord.StateMachine do
     end
   end
 
-  def apply_command(meta, {:touch_many, operations}, {:concord_kv, data}) when is_list(operations) do
+  def apply_command(meta, {:touch_many, operations}, {:concord_kv, data})
+      when is_list(operations) do
     start_time = System.monotonic_time()
 
     # Pre-validate all operations
@@ -541,11 +577,13 @@ defmodule Concord.StateMachine do
             if is_expired?(expires_at) do
               {:error, :not_found}
             else
-              remaining_ttl = if expires_at do
-                max(0, expires_at - current_timestamp())
-              else
-                nil
-              end
+              remaining_ttl =
+                if expires_at do
+                  max(0, expires_at - current_timestamp())
+                else
+                  nil
+                end
+
               {:ok, {value, remaining_ttl}}
             end
 
@@ -562,19 +600,20 @@ defmodule Concord.StateMachine do
     all = :ets.tab2list(:concord_store)
 
     # Filter out expired keys and extract values
-    valid_entries = Enum.reduce(all, [], fn {key, stored_data}, acc ->
-      case extract_value(stored_data) do
-        {value, expires_at} ->
-          if not is_expired?(expires_at) do
-            [{key, value} | acc]
-          else
-            acc
-          end
+    valid_entries =
+      Enum.reduce(all, [], fn {key, stored_data}, acc ->
+        case extract_value(stored_data) do
+          {value, expires_at} ->
+            if not is_expired?(expires_at) do
+              [{key, value} | acc]
+            else
+              acc
+            end
 
-        _ ->
-          acc
-      end
-    end)
+          _ ->
+            acc
+        end
+      end)
 
     {:ok, Map.new(valid_entries)}
   end
@@ -583,24 +622,27 @@ defmodule Concord.StateMachine do
     all = :ets.tab2list(:concord_store)
 
     # Filter out expired keys and include TTL info
-    valid_entries = Enum.reduce(all, [], fn {key, stored_data}, acc ->
-      case extract_value(stored_data) do
-        {value, expires_at} ->
-          if not is_expired?(expires_at) do
-            remaining_ttl = if expires_at do
-              max(0, expires_at - current_timestamp())
-            else
-              nil
-            end
-            [{key, %{value: value, ttl: remaining_ttl}} | acc]
-          else
-            acc
-          end
+    valid_entries =
+      Enum.reduce(all, [], fn {key, stored_data}, acc ->
+        case extract_value(stored_data) do
+          {value, expires_at} ->
+            if not is_expired?(expires_at) do
+              remaining_ttl =
+                if expires_at do
+                  max(0, expires_at - current_timestamp())
+                else
+                  nil
+                end
 
-        _ ->
-          acc
-      end
-    end)
+              [{key, %{value: value, ttl: remaining_ttl}} | acc]
+            else
+              acc
+            end
+
+          _ ->
+            acc
+        end
+      end)
 
     {:ok, Map.new(valid_entries)}
   end
@@ -613,11 +655,13 @@ defmodule Concord.StateMachine do
             if is_expired?(expires_at) do
               {:error, :not_found}
             else
-              remaining_ttl = if expires_at do
-                max(0, expires_at - current_timestamp())
-              else
-                nil
-              end
+              remaining_ttl =
+                if expires_at do
+                  max(0, expires_at - current_timestamp())
+                else
+                  nil
+                end
+
               {:ok, remaining_ttl}
             end
 
@@ -631,25 +675,26 @@ defmodule Concord.StateMachine do
   end
 
   def query({:get_many, keys}, {:concord_kv, _data}) when is_list(keys) do
-    results = Enum.map(keys, fn key ->
-      case :ets.lookup(:concord_store, key) do
-        [{^key, stored_data}] ->
-          case extract_value(stored_data) do
-            {value, expires_at} ->
-              if is_expired?(expires_at) do
-                {key, {:error, :not_found}}
-              else
-                {key, {:ok, value}}
-              end
+    results =
+      Enum.map(keys, fn key ->
+        case :ets.lookup(:concord_store, key) do
+          [{^key, stored_data}] ->
+            case extract_value(stored_data) do
+              {value, expires_at} ->
+                if is_expired?(expires_at) do
+                  {key, {:error, :not_found}}
+                else
+                  {key, {:ok, value}}
+                end
 
-            _ ->
-              {key, {:error, :invalid_stored_format}}
-          end
+              _ ->
+                {key, {:error, :invalid_stored_format}}
+            end
 
-        [] ->
-          {key, {:error, :not_found}}
-      end
-    end)
+          [] ->
+            {key, {:error, :not_found}}
+        end
+      end)
 
     {:ok, Map.new(results)}
   end
@@ -662,6 +707,43 @@ defmodule Concord.StateMachine do
        size: Keyword.get(info, :size, 0),
        memory: Keyword.get(info, :memory, 0)
      }}
+  end
+
+  def query({:index_lookup, name, value}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    if Map.has_key?(indexes, name) do
+      table_name = Concord.Index.index_table_name(name)
+
+      keys =
+        if :ets.whereis(table_name) != :undefined do
+          case :ets.lookup(table_name, value) do
+            [{^value, key_list}] -> key_list
+            [] -> []
+          end
+        else
+          []
+        end
+
+      {:ok, keys}
+    else
+      {:ok, {:error, :not_found}}
+    end
+  end
+
+  def query(:list_indexes, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+    index_names = Map.keys(indexes)
+    {:ok, index_names}
+  end
+
+  def query({:get_index_extractor, name}, {:concord_kv, data}) do
+    indexes = Map.get(data, :indexes, %{})
+
+    case Map.get(indexes, name) do
+      nil -> {:ok, {:error, :not_found}}
+      extractor -> {:ok, extractor}
+    end
   end
 
   @impl :ra_machine
@@ -701,11 +783,11 @@ defmodule Concord.StateMachine do
     else
       # Validate each operation
       case Enum.find_value(operations, fn operation ->
-        case validate_put_operation(operation) do
-          :ok -> nil
-          error -> error
-        end
-      end) do
+             case validate_put_operation(operation) do
+               :ok -> nil
+               error -> error
+             end
+           end) do
         nil -> :ok
         {:error, reason} -> {:error, reason}
       end
@@ -737,6 +819,7 @@ defmodule Concord.StateMachine do
       case operation do
         {key, value, expires_at} ->
           formatted_value = format_value(value, expires_at)
+
           case :ets.insert(:concord_store, {key, formatted_value}) do
             true -> {key, :ok}
             _ -> {key, {:error, :insert_failed}}
@@ -758,8 +841,8 @@ defmodule Concord.StateMachine do
     else
       # Validate each key
       case Enum.find(keys, fn key ->
-        not (is_binary(key) and byte_size(key) > 0)
-      end) do
+             not (is_binary(key) and byte_size(key) > 0)
+           end) do
         nil -> :ok
         _ -> {:error, :invalid_key}
       end
@@ -782,18 +865,19 @@ defmodule Concord.StateMachine do
     else
       # Validate each operation
       case Enum.find_value(operations, fn operation ->
-        case validate_touch_operation(operation) do
-          :ok -> nil
-          error -> error
-        end
-      end) do
+             case validate_touch_operation(operation) do
+               :ok -> nil
+               error -> error
+             end
+           end) do
         nil -> :ok
         {:error, reason} -> {:error, reason}
       end
     end
   end
 
-  defp validate_touch_operation({key, ttl_seconds}) when is_binary(key) and byte_size(key) > 0 and is_integer(ttl_seconds) and ttl_seconds > 0 do
+  defp validate_touch_operation({key, ttl_seconds})
+       when is_binary(key) and byte_size(key) > 0 and is_integer(ttl_seconds) and ttl_seconds > 0 do
     :ok
   end
 
@@ -809,6 +893,7 @@ defmodule Concord.StateMachine do
             {value, _current_expires_at} ->
               new_expires_at = current_timestamp() + ttl_seconds
               new_stored_data = format_value(value, new_expires_at)
+
               case :ets.insert(:concord_store, {key, new_stored_data}) do
                 true -> {key, :ok}
                 _ -> {key, {:error, :touch_failed}}
@@ -822,44 +907,6 @@ defmodule Concord.StateMachine do
           {key, {:error, :not_found}}
       end
     end)
-  end
-
-  # Secondary Index Queries
-
-  def query({:index_lookup, name, value}, {:concord_kv, data}) do
-    indexes = Map.get(data, :indexes, %{})
-
-    if Map.has_key?(indexes, name) do
-      table_name = Concord.Index.index_table_name(name)
-
-      keys = if :ets.whereis(table_name) != :undefined do
-        case :ets.lookup(table_name, value) do
-          [{^value, key_list}] -> key_list
-          [] -> []
-        end
-      else
-        []
-      end
-
-      {:ok, keys}
-    else
-      {:ok, {:error, :not_found}}
-    end
-  end
-
-  def query(:list_indexes, {:concord_kv, data}) do
-    indexes = Map.get(data, :indexes, %{})
-    index_names = Map.keys(indexes)
-    {:ok, index_names}
-  end
-
-  def query({:get_index_extractor, name}, {:concord_kv, data}) do
-    indexes = Map.get(data, :indexes, %{})
-
-    case Map.get(indexes, name) do
-      nil -> {:ok, {:error, :not_found}}
-      extractor -> {:ok, extractor}
-    end
   end
 
   @impl :ra_machine

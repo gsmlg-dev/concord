@@ -29,7 +29,8 @@ defmodule Concord.TTL do
   @doc """
   Updates the cleanup interval.
   """
-  def update_cleanup_interval(interval_seconds) when is_integer(interval_seconds) and interval_seconds > 0 do
+  def update_cleanup_interval(interval_seconds)
+      when is_integer(interval_seconds) and interval_seconds > 0 do
     GenServer.call(__MODULE__, {:update_cleanup_interval, interval_seconds})
   end
 
@@ -64,7 +65,10 @@ defmodule Concord.TTL do
   def init(_opts) do
     # Get configuration from application environment
     ttl_config = Application.get_env(:concord, :ttl, [])
-    cleanup_interval = Keyword.get(ttl_config, :cleanup_interval_seconds, default_cleanup_interval()) * 1000
+
+    cleanup_interval =
+      Keyword.get(ttl_config, :cleanup_interval_seconds, default_cleanup_interval()) * 1000
+
     default_ttl = Keyword.get(ttl_config, :default_seconds, default_ttl())
 
     state = %__MODULE__{
@@ -144,7 +148,9 @@ defmodule Concord.TTL do
         )
 
         if deleted_count > 0 do
-          Logger.info("TTL cleanup completed: deleted #{deleted_count} expired keys in #{duration_ms}ms")
+          Logger.info(
+            "TTL cleanup completed: deleted #{deleted_count} expired keys in #{duration_ms}ms"
+          )
         end
 
         {:ok, deleted_count}
@@ -169,11 +175,13 @@ defmodule Concord.TTL do
 
   defp default_cleanup_interval do
     Application.get_env(:concord, :ttl, [])
-    |> Keyword.get(:cleanup_interval_seconds, 300)  # 5 minutes default
+    # 5 minutes default
+    |> Keyword.get(:cleanup_interval_seconds, 300)
   end
 
   defp default_ttl do
     Application.get_env(:concord, :ttl, [])
-    |> Keyword.get(:default_seconds, 86_400)  # 24 hours default
+    # 24 hours default
+    |> Keyword.get(:default_seconds, 86_400)
   end
 end

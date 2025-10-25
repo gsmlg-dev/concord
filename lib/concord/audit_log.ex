@@ -127,6 +127,7 @@ defmodule Concord.AuditLog do
     if enabled?() do
       GenServer.cast(__MODULE__, {:log, event})
     end
+
     :ok
   end
 
@@ -224,10 +225,11 @@ defmodule Concord.AuditLog do
       file = File.open!(log_file, [:append, :utf8])
 
       # Get current file size
-      current_size = case File.stat(log_file) do
-        {:ok, %{size: size}} -> size
-        _ -> 0
-      end
+      current_size =
+        case File.stat(log_file) do
+          {:ok, %{size: size}} -> size
+          _ -> 0
+        end
 
       Logger.info("Concord audit logging started: #{log_file}")
 
@@ -263,11 +265,12 @@ defmodule Concord.AuditLog do
     new_size = state.current_size + json_size
 
     # Check if rotation needed
-    state = if should_rotate?(new_size, state.config) do
-      rotate_log(state)
-    else
-      %{state | current_size: new_size}
-    end
+    state =
+      if should_rotate?(new_size, state.config) do
+        rotate_log(state)
+      else
+        %{state | current_size: new_size}
+      end
 
     {:noreply, state}
   end
@@ -350,11 +353,13 @@ defmodule Concord.AuditLog do
   end
 
   defp hash_key(nil), do: nil
+
   defp hash_key(key) when is_binary(key) do
     :crypto.hash(:sha256, key)
     |> Base.encode16(case: :lower)
     |> then(&("sha256:" <> &1))
   end
+
   defp hash_key(key), do: hash_key(inspect(key))
 
   defp get_trace_id do
@@ -439,19 +444,25 @@ defmodule Concord.AuditLog do
     user_match = is_nil(user) or log["user"] == user
     result_match = is_nil(result) or log["result"] == to_string(result)
 
-    time_match = case {from_time, to_time} do
-      {nil, nil} -> true
-      {from, nil} ->
-        log_time = parse_timestamp(log["timestamp"])
-        DateTime.compare(log_time, from) in [:gt, :eq]
-      {nil, to} ->
-        log_time = parse_timestamp(log["timestamp"])
-        DateTime.compare(log_time, to) in [:lt, :eq]
-      {from, to} ->
-        log_time = parse_timestamp(log["timestamp"])
-        DateTime.compare(log_time, from) in [:gt, :eq] and
-        DateTime.compare(log_time, to) in [:lt, :eq]
-    end
+    time_match =
+      case {from_time, to_time} do
+        {nil, nil} ->
+          true
+
+        {from, nil} ->
+          log_time = parse_timestamp(log["timestamp"])
+          DateTime.compare(log_time, from) in [:gt, :eq]
+
+        {nil, to} ->
+          log_time = parse_timestamp(log["timestamp"])
+          DateTime.compare(log_time, to) in [:lt, :eq]
+
+        {from, to} ->
+          log_time = parse_timestamp(log["timestamp"])
+
+          DateTime.compare(log_time, from) in [:gt, :eq] and
+            DateTime.compare(log_time, to) in [:lt, :eq]
+      end
 
     operation_match and user_match and result_match and time_match
   end
@@ -493,7 +504,8 @@ defmodule Concord.AuditLog do
             Logger.info("Deleted old audit log: #{file}")
           end
 
-        _ -> :ok
+        _ ->
+          :ok
       end
     end)
   rescue

@@ -13,7 +13,8 @@ defmodule Concord.TTLTest do
       expected_expiration = System.system_time(:second) + ttl_seconds
       result = TTL.calculate_expiration(ttl_seconds)
 
-      assert abs(result - expected_expiration) <= 1  # Allow 1 second variance
+      # Allow 1 second variance
+      assert abs(result - expected_expiration) <= 1
     end
 
     test "calculate_expiration/1 handles nil and infinity" do
@@ -39,7 +40,8 @@ defmodule Concord.TTLTest do
       assert is_integer(config.cleanup_interval)
       assert config.cleanup_interval > 0
       # Default TTL can be nil or a positive integer
-      assert is_nil(config.default_ttl) or (is_integer(config.default_ttl) and config.default_ttl > 0)
+      assert is_nil(config.default_ttl) or
+               (is_integer(config.default_ttl) and config.default_ttl > 0)
     end
 
     test "update_cleanup_interval/1 updates the interval" do
@@ -70,7 +72,8 @@ defmodule Concord.TTLTest do
       meta = %{index: 1}
       expires_at = System.system_time(:second) + 3600
 
-      {new_state, result, _effects} = StateMachine.apply(meta, {:put, "test_key", "test_value", expires_at}, state)
+      {new_state, result, _effects} =
+        StateMachine.apply(meta, {:put, "test_key", "test_value", expires_at}, state)
 
       assert result == :ok
       assert new_state == state
@@ -79,7 +82,8 @@ defmodule Concord.TTLTest do
     test "apply/3 handles backward compatibility put without TTL", %{state: state} do
       meta = %{index: 1}
 
-      {new_state, result, _effects} = StateMachine.apply(meta, {:put, "test_key", "test_value"}, state)
+      {new_state, result, _effects} =
+        StateMachine.apply(meta, {:put, "test_key", "test_value"}, state)
 
       assert result == :ok
       assert new_state == state
@@ -102,7 +106,8 @@ defmodule Concord.TTLTest do
     test "apply/3 handles touch on non-existent key", %{state: state} do
       meta = %{index: 1}
 
-      {new_state, result, _effects} = StateMachine.apply(meta, {:touch, "non_existent", 1800}, state)
+      {new_state, result, _effects} =
+        StateMachine.apply(meta, {:touch, "non_existent", 1800}, state)
 
       assert result == {:error, :not_found}
       assert new_state == state
@@ -114,8 +119,14 @@ defmodule Concord.TTLTest do
 
       # Insert a key with future expiration directly into ETS
       :ets.insert(:concord_store, {"valid_key", %{value: "valid_value", expires_at: future_time}})
-      :ets.insert(:concord_store, {"expired_key", %{value: "expired_value", expires_at: System.system_time(:second) - 1}})
-      :ets.insert(:concord_store, {"old_format_key", "old_value"})  # Backward compatibility
+
+      :ets.insert(
+        :concord_store,
+        {"expired_key", %{value: "expired_value", expires_at: System.system_time(:second) - 1}}
+      )
+
+      # Backward compatibility
+      :ets.insert(:concord_store, {"old_format_key", "old_value"})
 
       # Should find valid key
       assert StateMachine.query({:get, "valid_key"}, state) == {:ok, "valid_value"}
@@ -163,7 +174,12 @@ defmodule Concord.TTLTest do
       expires_at = System.system_time(:second) + 3600
 
       :ets.insert(:concord_store, {"valid_key", %{value: "valid_value", expires_at: expires_at}})
-      :ets.insert(:concord_store, {"expired_key", %{value: "expired_value", expires_at: System.system_time(:second) - 1}})
+
+      :ets.insert(
+        :concord_store,
+        {"expired_key", %{value: "expired_value", expires_at: System.system_time(:second) - 1}}
+      )
+
       :ets.insert(:concord_store, {"old_key", "old_value"})
 
       {:ok, all_data} = StateMachine.query(:get_all, state)
@@ -198,9 +214,21 @@ defmodule Concord.TTLTest do
       current_time = System.system_time(:second)
 
       # Insert test data
-      :ets.insert(:concord_store, {"valid_key", %{value: "valid", expires_at: current_time + 3600}})
-      :ets.insert(:concord_store, {"expired_key1", %{value: "expired1", expires_at: current_time - 100}})
-      :ets.insert(:concord_store, {"expired_key2", %{value: "expired2", expires_at: current_time - 200}})
+      :ets.insert(
+        :concord_store,
+        {"valid_key", %{value: "valid", expires_at: current_time + 3600}}
+      )
+
+      :ets.insert(
+        :concord_store,
+        {"expired_key1", %{value: "expired1", expires_at: current_time - 100}}
+      )
+
+      :ets.insert(
+        :concord_store,
+        {"expired_key2", %{value: "expired2", expires_at: current_time - 200}}
+      )
+
       :ets.insert(:concord_store, {"old_key", "old_value"})
 
       # Run cleanup

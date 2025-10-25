@@ -105,10 +105,11 @@ defmodule Concord do
         end
 
       # Automatically decompress the result if needed
-      decompressed_result = case result do
-        {:ok, value} -> {:ok, Compression.decompress(value)}
-        other -> other
-      end
+      decompressed_result =
+        case result do
+          {:ok, value} -> {:ok, Compression.decompress(value)}
+          other -> other
+        end
 
       duration = System.monotonic_time() - start_time
 
@@ -199,7 +200,10 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case command({:put_if, key, compressed_value, expires_at, expected, condition_fn}, timeout) do
+        case command(
+               {:put_if, key, compressed_value, expires_at, expected, condition_fn},
+               timeout
+             ) do
           {:ok, :ok, _} -> :ok
           {:ok, {:error, :condition_failed}, _} -> {:error, :condition_failed}
           {:ok, {:error, :not_found}, _} -> {:error, :not_found}
@@ -347,7 +351,8 @@ defmodule Concord do
       iex> Concord.put_with_ttl("cache:user:123", %{data: "value"}, 3600, token: "token")
       :ok
   """
-  def put_with_ttl(key, value, ttl_seconds, opts \\ []) when is_integer(ttl_seconds) and ttl_seconds > 0 do
+  def put_with_ttl(key, value, ttl_seconds, opts \\ [])
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
     put(key, value, Keyword.put(opts, :ttl, ttl_seconds))
   end
 
@@ -362,7 +367,8 @@ defmodule Concord do
       iex> Concord.touch("cache:user:123", 1800, token: "token")
       :ok
   """
-  def touch(key, additional_ttl_seconds, opts \\ []) when is_integer(additional_ttl_seconds) and additional_ttl_seconds > 0 do
+  def touch(key, additional_ttl_seconds, opts \\ [])
+      when is_integer(additional_ttl_seconds) and additional_ttl_seconds > 0 do
     with :ok <- check_auth(opts),
          :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
@@ -532,11 +538,12 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       # Convert operations to expected format for StateMachine
-      formatted_operations = Enum.map(operations, fn
-        {key, value} -> {key, value, nil}
-        {key, value, ttl} when is_integer(ttl) -> {key, value, calculate_expires_at(ttl)}
-        {key, value, expires_at} -> {key, value, expires_at}
-      end)
+      formatted_operations =
+        Enum.map(operations, fn
+          {key, value} -> {key, value, nil}
+          {key, value, ttl} when is_integer(ttl) -> {key, value, calculate_expires_at(ttl)}
+          {key, value, expires_at} -> {key, value, expires_at}
+        end)
 
       result =
         case command({:put_many, formatted_operations}, timeout) do
@@ -581,11 +588,13 @@ defmodule Concord do
       iex> Concord.put_many_with_ttl([{"key1", "value1"}, {"key2", "value2"}], 3600, token: "token")
       {:ok, %{"key1" => :ok, "key2" => :ok}}
   """
-  def put_many_with_ttl(operations, ttl_seconds, opts \\ []) when is_list(operations) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+  def put_many_with_ttl(operations, ttl_seconds, opts \\ [])
+      when is_list(operations) and is_integer(ttl_seconds) and ttl_seconds > 0 do
     # Add TTL to each operation
-    operations_with_ttl = Enum.map(operations, fn {key, value} ->
-      {key, value, ttl_seconds}
-    end)
+    operations_with_ttl =
+      Enum.map(operations, fn {key, value} ->
+        {key, value, ttl_seconds}
+      end)
 
     put_many(operations_with_ttl, opts)
   end
@@ -750,24 +759,25 @@ defmodule Concord do
   defp query(query, timeout, consistency) do
     query_fun = fun(query)
 
-    result = case consistency do
-      :eventual ->
-        # Use local_query for eventual consistency (fastest, may be stale)
-        target_server = select_read_replica()
-        :ra.local_query(target_server, query_fun, timeout)
+    result =
+      case consistency do
+        :eventual ->
+          # Use local_query for eventual consistency (fastest, may be stale)
+          target_server = select_read_replica()
+          :ra.local_query(target_server, query_fun, timeout)
 
-      :leader ->
-        # Use leader_query for balanced consistency
-        :ra.leader_query(server_id(), query_fun, timeout)
+        :leader ->
+          # Use leader_query for balanced consistency
+          :ra.leader_query(server_id(), query_fun, timeout)
 
-      :strong ->
-        # Use consistent_query for linearizable reads (slowest)
-        :ra.consistent_query(server_id(), query_fun, timeout)
+        :strong ->
+          # Use consistent_query for linearizable reads (slowest)
+          :ra.consistent_query(server_id(), query_fun, timeout)
 
-      _ ->
-        # Default to leader query for unknown consistency levels
-        :ra.leader_query(server_id(), query_fun, timeout)
-    end
+        _ ->
+          # Default to leader query for unknown consistency levels
+          :ra.leader_query(server_id(), query_fun, timeout)
+      end
 
     # Normalize the result format:
     # - local_query returns: {:ok, {{index, term}, result}, leader_id}
@@ -847,6 +857,7 @@ defmodule Concord do
 
   defp calculate_expires_at(nil), do: nil
   defp calculate_expires_at(:infinity), do: nil
+
   defp calculate_expires_at(ttl_seconds) when is_integer(ttl_seconds) and ttl_seconds > 0 do
     TTL.calculate_expiration(ttl_seconds)
   end
@@ -855,6 +866,7 @@ defmodule Concord do
 
   defp validate_batch_size(items) when is_list(items) do
     max_batch_size = Application.get_env(:concord, :max_batch_size, 500)
+
     if length(items) > max_batch_size do
       {:error, :batch_too_large}
     else
@@ -866,8 +878,8 @@ defmodule Concord do
 
   defp validate_put_operations(operations) when is_list(operations) do
     case Enum.find_value(operations, :ok, fn operation ->
-      validate_put_operation(operation)
-    end) do
+           validate_put_operation(operation)
+         end) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -884,7 +896,8 @@ defmodule Concord do
     end
   end
 
-  defp validate_put_operation({key, _value, expires_at}) when is_binary(key) and byte_size(key) > 0 do
+  defp validate_put_operation({key, _value, expires_at})
+       when is_binary(key) and byte_size(key) > 0 do
     if expires_at == nil or is_integer(expires_at) do
       validate_key(key)
     else
@@ -896,8 +909,8 @@ defmodule Concord do
 
   defp validate_keys(keys) when is_list(keys) do
     case Enum.find_value(keys, :ok, fn key ->
-      validate_key(key)
-    end) do
+           validate_key(key)
+         end) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -907,14 +920,15 @@ defmodule Concord do
 
   defp validate_touch_operations(operations) when is_list(operations) do
     case Enum.find_value(operations, :ok, fn operation ->
-      validate_touch_operation(operation)
-    end) do
+           validate_touch_operation(operation)
+         end) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp validate_touch_operation({key, ttl_seconds}) when is_binary(key) and byte_size(key) > 0 and is_integer(ttl_seconds) and ttl_seconds > 0 do
+  defp validate_touch_operation({key, ttl_seconds})
+       when is_binary(key) and byte_size(key) > 0 and is_integer(ttl_seconds) and ttl_seconds > 0 do
     :ok
   end
 

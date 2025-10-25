@@ -10,9 +10,10 @@ defmodule Concord.TracingTest do
     end
 
     test "with_span/2 executes block when tracing disabled" do
-      result = Concord.Tracing.with_span "test_span" do
-        :ok
-      end
+      result =
+        Concord.Tracing.with_span "test_span" do
+          :ok
+        end
 
       assert result == :ok
     end

@@ -7,7 +7,9 @@ defmodule Concord.EventStreamTest do
 
   setup do
     # Enable event streaming for tests
-    original_enabled = Application.get_env(:concord, :event_stream, []) |> Keyword.get(:enabled, false)
+    original_enabled =
+      Application.get_env(:concord, :event_stream, []) |> Keyword.get(:enabled, false)
+
     Application.put_env(:concord, :event_stream, enabled: true, buffer_size: 100)
 
     # Ensure EventStream is started

@@ -17,25 +17,31 @@ defmodule Concord.Web.HealthController do
       {:ok, health_data} ->
         conn
         |> put_resp_content_type("application/json")
-        |> send_resp(200, Jason.encode!(%{
-          "status" => "healthy",
-          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "cluster" => health_data
-        }))
+        |> send_resp(
+          200,
+          Jason.encode!(%{
+            "status" => "healthy",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+            "cluster" => health_data
+          })
+        )
 
       {:error, reason} ->
         Logger.warning("Health check failed: #{inspect(reason)}")
 
         conn
         |> put_resp_content_type("application/json")
-        |> send_resp(503, Jason.encode!(%{
-          "status" => "unhealthy",
-          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "error" => %{
-            "code" => "CLUSTER_UNAVAILABLE",
-            "message" => "Cluster not available"
-          }
-        }))
+        |> send_resp(
+          503,
+          Jason.encode!(%{
+            "status" => "unhealthy",
+            "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+            "error" => %{
+              "code" => "CLUSTER_UNAVAILABLE",
+              "message" => "Cluster not available"
+            }
+          })
+        )
     end
   end
 
@@ -48,12 +54,13 @@ defmodule Concord.Web.HealthController do
           has_leader = cluster_info && get_in(cluster_info, [:leader]) != nil
 
           if has_leader do
-            {:ok, %{
-              "status" => get_in(cluster_info, [:status]) || "unknown",
-              "nodes" => length(get_in(cluster_info, [:members]) || []),
-              "storage" => get_in(status, [:storage]) || %{},
-              "leader" => inspect(get_in(cluster_info, [:leader]))
-            }}
+            {:ok,
+             %{
+               "status" => get_in(cluster_info, [:status]) || "unknown",
+               "nodes" => length(get_in(cluster_info, [:members]) || []),
+               "storage" => get_in(status, [:storage]) || %{},
+               "leader" => inspect(get_in(cluster_info, [:leader]))
+             }}
           else
             {:error, :no_leader}
           end
@@ -71,12 +78,15 @@ defmodule Concord.Web.HealthController do
   match _ do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(404, Jason.encode!(%{
-      "status" => "error",
-      "error" => %{
-        "code" => "NOT_FOUND",
-        "message" => "Health endpoint not found"
-      }
-    }))
+    |> send_resp(
+      404,
+      Jason.encode!(%{
+        "status" => "error",
+        "error" => %{
+          "code" => "NOT_FOUND",
+          "message" => "Health endpoint not found"
+        }
+      })
+    )
   end
 end

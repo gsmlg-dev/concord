@@ -115,12 +115,20 @@ defmodule Concord.Index do
           if reindex do
             reindex(name, timeout: timeout)
           end
+
           :ok
 
-        {:ok, {:error, reason}, _} -> {:error, reason}
-        {:timeout, _} -> {:error, :timeout}
-        {:error, :noproc} -> {:error, :cluster_not_ready}
-        {:error, reason} -> {:error, reason}
+        {:ok, {:error, reason}, _} ->
+          {:error, reason}
+
+        {:timeout, _} ->
+          {:error, :timeout}
+
+        {:error, :noproc} ->
+          {:error, :cluster_not_ready}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end
@@ -247,7 +255,9 @@ defmodule Concord.Index do
          {:ok, indexes} <- list(timeout: timeout) do
       if name in indexes do
         # Get the extractor for this index
-        query_fun = fn state -> Concord.StateMachine.query({:get_index_extractor, name}, state) end
+        query_fun = fn state ->
+          Concord.StateMachine.query({:get_index_extractor, name}, state)
+        end
 
         case :ra.consistent_query(server_id, query_fun, timeout) do
           {:ok, {:ok, extractor}, _} when is_function(extractor) ->
@@ -297,7 +307,8 @@ defmodule Concord.Index do
           add_to_index(table_name, index_value, key)
       end
     rescue
-      _ -> :ok  # Silently ignore extractor errors
+      # Silently ignore extractor errors
+      _ -> :ok
     end
   end
 
@@ -317,7 +328,8 @@ defmodule Concord.Index do
           remove_key_from_index(table_name, index_value, key)
       end
     rescue
-      _ -> :ok  # Silently ignore extractor errors
+      # Silently ignore extractor errors
+      _ -> :ok
     end
   end
 

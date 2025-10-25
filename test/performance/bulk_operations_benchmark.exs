@@ -45,7 +45,8 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
     IO.puts("=================================")
 
     batch_sizes = [1, 5, 10, 25, 50, 100, 200, 500]
-    value_size = 100  # 100 bytes per value
+    # 100 bytes per value
+    value_size = 100
 
     for batch_size <- batch_sizes do
       IO.puts("\nTesting batch size: #{batch_size}")
@@ -67,11 +68,20 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
       individual_per_op = individual_time / batch_size
       speedup = individual_per_op / bulk_per_op
 
-      IO.puts("  Bulk operations:     #{format_time(bulk_time)} (#{format_time(bulk_per_op)} per op)")
-      IO.puts("  Individual ops:      #{format_time(individual_time)} (#{format_time(individual_per_op)} per op)")
+      IO.puts(
+        "  Bulk operations:     #{format_time(bulk_time)} (#{format_time(bulk_per_op)} per op)"
+      )
+
+      IO.puts(
+        "  Individual ops:      #{format_time(individual_time)} (#{format_time(individual_per_op)} per op)"
+      )
+
       IO.puts("  Speedup:             #{Float.round(speedup, 2)}x")
       IO.puts("  Efficiency gain:     #{Float.round(efficiency, 1)}%")
-      IO.puts("  Throughput:          #{Float.round(batch_size * 1_000_000 / bulk_time, 2)} ops/sec")
+
+      IO.puts(
+        "  Throughput:          #{Float.round(batch_size * 1_000_000 / bulk_time, 2)} ops/sec"
+      )
     end
   end
 
@@ -79,7 +89,8 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
     IO.puts("\n💾 Data Size Performance Analysis")
     IO.puts("=================================")
 
-    data_sizes = [10, 100, 500, 1000, 5000]  # bytes
+    # bytes
+    data_sizes = [10, 100, 500, 1000, 5000]
     batch_size = 50
 
     for data_size <- data_sizes do
@@ -100,10 +111,22 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
 
       total_time = put_time + get_time + delete_time
 
-      IO.puts("  put_many:  #{format_time(put_time)} (#{format_time(put_time / batch_size)} per op)")
-      IO.puts("  get_many:  #{format_time(get_time)} (#{format_time(get_time / batch_size)} per op)")
-      IO.puts("  delete_many: #{format_time(delete_time)} (#{format_time(delete_time / batch_size)} per op)")
-      IO.puts("  Total:     #{format_time(total_time)} (#{format_time(total_time / (batch_size * 3))} per op)")
+      IO.puts(
+        "  put_many:  #{format_time(put_time)} (#{format_time(put_time / batch_size)} per op)"
+      )
+
+      IO.puts(
+        "  get_many:  #{format_time(get_time)} (#{format_time(get_time / batch_size)} per op)"
+      )
+
+      IO.puts(
+        "  delete_many: #{format_time(delete_time)} (#{format_time(delete_time / batch_size)} per op)"
+      )
+
+      IO.puts(
+        "  Total:     #{format_time(total_time)} (#{format_time(total_time / (batch_size * 3))} per op)"
+      )
+
       IO.puts("  Throughput: #{Float.round(batch_size * 3 * 1_000_000 / total_time, 2)} ops/sec")
     end
   end
@@ -145,10 +168,11 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
       end
 
       # Benchmark
-      measurements = for _i <- 1..50 do
-        {time_us, _result} = :timer.tc(op_function)
-        time_us
-      end
+      measurements =
+        for _i <- 1..50 do
+          {time_us, _result} = :timer.tc(op_function)
+          time_us
+        end
 
       avg_time = Enum.sum(measurements) / length(measurements)
       min_time = Enum.min(measurements)
@@ -181,8 +205,7 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
       comparisons = [
         {"put", fn op -> Concord.put(elem(op, 0), elem(op, 1)) end,
          fn ops -> Concord.put_many(ops) end},
-        {"get", fn key -> Concord.get(key) end,
-         fn keys -> Concord.get_many(keys) end}
+        {"get", fn key -> Concord.get(key) end, fn keys -> Concord.get_many(keys) end}
       ]
 
       for {op_type, individual_fn, bulk_fn} <- comparisons do
@@ -200,11 +223,18 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
 
         # Calculate metrics
         speedup = individual_time / bulk_time
-        efficiency_gain = ((individual_time - bulk_time) / individual_time) * 100
+        efficiency_gain = (individual_time - bulk_time) / individual_time * 100
 
         IO.puts("  #{op_type}:")
-        IO.puts("    Individual: #{format_time(individual_time)} (#{format_time(individual_time / batch_size)} per op)")
-        IO.puts("    Bulk:       #{format_time(bulk_time)} (#{format_time(bulk_time / batch_size)} per op)")
+
+        IO.puts(
+          "    Individual: #{format_time(individual_time)} (#{format_time(individual_time / batch_size)} per op)"
+        )
+
+        IO.puts(
+          "    Bulk:       #{format_time(bulk_time)} (#{format_time(bulk_time / batch_size)} per op)"
+        )
+
         IO.puts("    Speedup:    #{Float.round(speedup, 2)}x")
         IO.puts("    Efficiency: #{Float.round(efficiency_gain, 1)}% gain")
       end
@@ -238,9 +268,11 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
       :erlang.garbage_collect()
 
       memory_before_individual = :erlang.memory()
+
       for {key, value} <- operations do
         Concord.put(key, value)
       end
+
       memory_after_individual = :erlang.memory()
 
       # Calculate memory usage
@@ -249,7 +281,9 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
 
       memory_per_item_bulk = bulk_memory_used / size
       memory_per_item_individual = individual_memory_used / size
-      memory_efficiency = ((individual_memory_used - bulk_memory_used) / individual_memory_used) * 100
+
+      memory_efficiency =
+        (individual_memory_used - bulk_memory_used) / individual_memory_used * 100
 
       IO.puts("  Bulk operations:")
       IO.puts("    Total memory: #{format_memory(memory_after_bulk)}")
@@ -283,10 +317,11 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
     :ets.delete_all_objects(:concord_store)
 
     # Benchmark
-    measurements = for _i <- 1..20 do
-      {time_us, _result} = :timer.tc(fn -> operation_fn.(operations) end)
-      time_us
-    end
+    measurements =
+      for _i <- 1..20 do
+        {time_us, _result} = :timer.tc(fn -> operation_fn.(operations) end)
+        time_us
+      end
 
     Enum.sum(measurements) / length(measurements)
   end
@@ -298,48 +333,58 @@ defmodule Concord.Performance.BulkOperationsBenchmark do
     for op <- operations do
       operation_fn.(op)
     end
+
     :ets.delete_all_objects(:concord_store)
 
     # Benchmark
-    measurements = for _i <- 1..10 do
-      {time_us, _result} = :timer.tc(fn ->
-        for op <- operations do
-          operation_fn.(op)
-        end
-      end)
-      time_us
-    end
+    measurements =
+      for _i <- 1..10 do
+        {time_us, _result} =
+          :timer.tc(fn ->
+            for op <- operations do
+              operation_fn.(op)
+            end
+          end)
+
+        time_us
+      end
 
     Enum.sum(measurements) / length(measurements)
   end
 
   defp benchmark_put_many(operations) do
-    measurements = for _i <- 1..20 do
-      {time_us, _result} = :timer.tc(fn -> Concord.put_many(operations) end)
-      time_us
-    end
+    measurements =
+      for _i <- 1..20 do
+        {time_us, _result} = :timer.tc(fn -> Concord.put_many(operations) end)
+        time_us
+      end
+
     Enum.sum(measurements) / length(measurements)
   end
 
   defp benchmark_get_many(keys) do
-    measurements = for _i <- 1..20 do
-      {time_us, _result} = :timer.tc(fn -> Concord.get_many(keys) end)
-      time_us
-    end
+    measurements =
+      for _i <- 1..20 do
+        {time_us, _result} = :timer.tc(fn -> Concord.get_many(keys) end)
+        time_us
+      end
+
     Enum.sum(measurements) / length(measurements)
   end
 
   defp benchmark_delete_many(keys) do
-    measurements = for _i <- 1..20 do
-      {time_us, _result} = :timer.tc(fn -> Concord.delete_many(keys) end)
-      time_us
-    end
+    measurements =
+      for _i <- 1..20 do
+        {time_us, _result} = :timer.tc(fn -> Concord.delete_many(keys) end)
+        time_us
+      end
+
     Enum.sum(measurements) / length(measurements)
   end
 
   defp calculate_efficiency(bulk_time, individual_time, batch_size) do
     if individual_time > 0 do
-      ((individual_time - bulk_time) / individual_time) * 100
+      (individual_time - bulk_time) / individual_time * 100
     else
       0
     end

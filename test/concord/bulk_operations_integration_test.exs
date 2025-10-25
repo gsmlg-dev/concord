@@ -19,11 +19,13 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"user:3", %{name: "Charlie", age: 35}}
       ]
 
-      assert Concord.put_many(operations) == {:ok, %{
-        "user:1" => :ok,
-        "user:2" => :ok,
-        "user:3" => :ok
-      }}
+      assert Concord.put_many(operations) ==
+               {:ok,
+                %{
+                  "user:1" => :ok,
+                  "user:2" => :ok,
+                  "user:3" => :ok
+                }}
 
       # Verify all values were stored
       assert Concord.get("user:1") == {:ok, %{name: "Alice", age: 30}}
@@ -38,11 +40,13 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"expires_at_key", "expires_value", System.system_time(:second) + 7200}
       ]
 
-      assert Concord.put_many(operations) == {:ok, %{
-        "simple_key" => :ok,
-        "ttl_key" => :ok,
-        "expires_at_key" => :ok
-      }}
+      assert Concord.put_many(operations) ==
+               {:ok,
+                %{
+                  "simple_key" => :ok,
+                  "ttl_key" => :ok,
+                  "expires_at_key" => :ok
+                }}
 
       # Verify all values were stored
       assert Concord.get("simple_key") == {:ok, "simple_value"}
@@ -64,7 +68,8 @@ defmodule Concord.BulkOperationsIntegrationTest do
     test "put_many/2 rejects invalid operations" do
       operations = [
         {"valid_key", "valid_value"},
-        {"", "invalid_value"}  # Empty key
+        # Empty key
+        {"", "invalid_value"}
       ]
 
       assert Concord.put_many(operations) == {:error, :invalid_key}
@@ -76,13 +81,16 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"cache:2", "data2"},
         {"cache:3", "data3"}
       ]
+
       ttl_seconds = 3600
 
-      assert Concord.put_many_with_ttl(operations, ttl_seconds) == {:ok, %{
-        "cache:1" => :ok,
-        "cache:2" => :ok,
-        "cache:3" => :ok
-      }}
+      assert Concord.put_many_with_ttl(operations, ttl_seconds) ==
+               {:ok,
+                %{
+                  "cache:1" => :ok,
+                  "cache:2" => :ok,
+                  "cache:3" => :ok
+                }}
 
       # Verify TTL was set for all keys
       Enum.each(["cache:1", "cache:2", "cache:3"], fn key ->
@@ -100,16 +108,20 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"key2", "value2"},
         {"key3", "value3"}
       ]
+
       assert Concord.put_many(operations) == {:ok, %{"key1" => :ok, "key2" => :ok, "key3" => :ok}}
 
       # Retrieve multiple keys
       keys = ["key1", "key2", "key3", "nonexistent"]
-      assert Concord.get_many(keys) == {:ok, %{
-        "key1" => {:ok, "value1"},
-        "key2" => {:ok, "value2"},
-        "key3" => {:ok, "value3"},
-        "nonexistent" => {:error, :not_found}
-      }}
+
+      assert Concord.get_many(keys) ==
+               {:ok,
+                %{
+                  "key1" => {:ok, "value1"},
+                  "key2" => {:ok, "value2"},
+                  "key3" => {:ok, "value3"},
+                  "nonexistent" => {:error, :not_found}
+                }}
     end
 
     test "get_many/2 respects TTL expiration" do
@@ -118,7 +130,10 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"ttl_key1", "value1"},
         {"ttl_key2", "value2"}
       ]
-      assert Concord.put_many_with_ttl(operations, 1) == {:ok, %{"ttl_key1" => :ok, "ttl_key2" => :ok}}  # 1 second TTL
+
+      # 1 second TTL
+      assert Concord.put_many_with_ttl(operations, 1) ==
+               {:ok, %{"ttl_key1" => :ok, "ttl_key2" => :ok}}
 
       # Wait for expiration
       Process.sleep(1500)
@@ -127,14 +142,17 @@ defmodule Concord.BulkOperationsIntegrationTest do
       try do
         :ra.process_command({:concord_cluster, node()}, :cleanup_expired, 5000)
       rescue
-        _ -> :ok  # Ignore if cleanup fails
+        # Ignore if cleanup fails
+        _ -> :ok
       end
 
       # Should return not found for expired keys
-      assert Concord.get_many(["ttl_key1", "ttl_key2"]) == {:ok, %{
-        "ttl_key1" => {:error, :not_found},
-        "ttl_key2" => {:error, :not_found}
-      }}
+      assert Concord.get_many(["ttl_key1", "ttl_key2"]) ==
+               {:ok,
+                %{
+                  "ttl_key1" => {:error, :not_found},
+                  "ttl_key2" => {:error, :not_found}
+                }}
     end
 
     test "delete_many/2 deletes multiple keys atomically" do
@@ -145,19 +163,25 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"keep1", "value3"},
         {"delete3", "value4"}
       ]
-      assert Concord.put_many(operations) == {:ok, %{
-        "delete1" => :ok,
-        "delete2" => :ok,
-        "keep1" => :ok,
-        "delete3" => :ok
-      }}
+
+      assert Concord.put_many(operations) ==
+               {:ok,
+                %{
+                  "delete1" => :ok,
+                  "delete2" => :ok,
+                  "keep1" => :ok,
+                  "delete3" => :ok
+                }}
 
       # Delete multiple keys
       keys_to_delete = ["delete1", "delete3"]
-      assert Concord.delete_many(keys_to_delete) == {:ok, %{
-        "delete1" => :ok,
-        "delete3" => :ok
-      }}
+
+      assert Concord.delete_many(keys_to_delete) ==
+               {:ok,
+                %{
+                  "delete1" => :ok,
+                  "delete3" => :ok
+                }}
 
       # Verify deleted keys are gone
       assert Concord.get("delete1") == {:error, :not_found}
@@ -174,7 +198,10 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"touch1", "value1"},
         {"touch2", "value2"}
       ]
-      assert Concord.put_many_with_ttl(operations, 2) == {:ok, %{"touch1" => :ok, "touch2" => :ok}}  # 2 second TTL
+
+      # 2 second TTL
+      assert Concord.put_many_with_ttl(operations, 2) ==
+               {:ok, %{"touch1" => :ok, "touch2" => :ok}}
 
       # Verify initial TTL
       {:ok, initial_ttl1} = Concord.ttl("touch1")
@@ -187,19 +214,26 @@ defmodule Concord.BulkOperationsIntegrationTest do
 
       # Extend TTL
       touch_operations = [
-        {"touch1", 3600},  # 1 hour
-        {"touch2", 7200}   # 2 hours
+        # 1 hour
+        {"touch1", 3600},
+        # 2 hours
+        {"touch2", 7200}
       ]
-      assert Concord.touch_many(touch_operations) == {:ok, %{
-        "touch1" => :ok,
-        "touch2" => :ok
-      }}
+
+      assert Concord.touch_many(touch_operations) ==
+               {:ok,
+                %{
+                  "touch1" => :ok,
+                  "touch2" => :ok
+                }}
 
       # Verify TTL was extended
       {:ok, extended_ttl1} = Concord.ttl("touch1")
       {:ok, extended_ttl2} = Concord.ttl("touch2")
-      assert extended_ttl1 > 3000  # Should be close to 1 hour
-      assert extended_ttl2 > 6000  # Should be close to 2 hours
+      # Should be close to 1 hour
+      assert extended_ttl1 > 3000
+      # Should be close to 2 hours
+      assert extended_ttl2 > 6000
     end
 
     test "touch_many/2 handles non-existent keys" do
@@ -213,10 +247,13 @@ defmodule Concord.BulkOperationsIntegrationTest do
 
       # Touch both keys
       result = Concord.touch_many(touch_operations)
-      assert result == {:ok, %{
-        "existent" => :ok,
-        "nonexistent" => {:error, :not_found}
-      }}
+
+      assert result ==
+               {:ok,
+                %{
+                  "existent" => :ok,
+                  "nonexistent" => {:error, :not_found}
+                }}
     end
 
     test "atomic behavior - all operations succeed or fail together" do
@@ -228,12 +265,15 @@ defmodule Concord.BulkOperationsIntegrationTest do
         {"preexisting1", "value1"},
         {"preexisting2", "value2"}
       ]
-      assert Concord.put_many(valid_operations) == {:ok, %{"preexisting1" => :ok, "preexisting2" => :ok}}
+
+      assert Concord.put_many(valid_operations) ==
+               {:ok, %{"preexisting1" => :ok, "preexisting2" => :ok}}
 
       # Now try a batch with one invalid operation
       mixed_operations = [
         {"new_valid1", "new_value1"},
-        {"", "invalid_key"},  # This should cause the whole batch to fail
+        # This should cause the whole batch to fail
+        {"", "invalid_key"},
         {"new_valid2", "new_value2"}
       ]
 
@@ -269,21 +309,29 @@ defmodule Concord.BulkOperationsIntegrationTest do
       ]
 
       # Put many
-      assert Concord.put_many(operations) == {:ok, %{"telemetry_key1" => :ok, "telemetry_key2" => :ok}}
+      assert Concord.put_many(operations) ==
+               {:ok, %{"telemetry_key1" => :ok, "telemetry_key2" => :ok}}
+
       assert_receive {:telemetry_event, [:concord, :api, :put_many], _, %{batch_size: 2}}
 
       # Get many
-      assert Concord.get_many(["telemetry_key1", "telemetry_key2"]) == {:ok, %{
-        "telemetry_key1" => {:ok, "value1"},
-        "telemetry_key2" => {:ok, "value2"}
-      }}
+      assert Concord.get_many(["telemetry_key1", "telemetry_key2"]) ==
+               {:ok,
+                %{
+                  "telemetry_key1" => {:ok, "value1"},
+                  "telemetry_key2" => {:ok, "value2"}
+                }}
+
       assert_receive {:telemetry_event, [:concord, :api, :get_many], _, %{batch_size: 2}}
 
       # Delete many
-      assert Concord.delete_many(["telemetry_key1", "telemetry_key2"]) == {:ok, %{
-        "telemetry_key1" => :ok,
-        "telemetry_key2" => :ok
-      }}
+      assert Concord.delete_many(["telemetry_key1", "telemetry_key2"]) ==
+               {:ok,
+                %{
+                  "telemetry_key1" => :ok,
+                  "telemetry_key2" => :ok
+                }}
+
       assert_receive {:telemetry_event, [:concord, :api, :delete_many], _, %{batch_size: 2}}
 
       # Clean up

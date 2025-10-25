@@ -44,10 +44,11 @@ defmodule Mix.Tasks.Concord.Backup do
   end
 
   defp create_backup(opts) do
-    parsed_opts = parse_opts(opts, [
-      path: :string,
-      compress: :boolean
-    ])
+    parsed_opts =
+      parse_opts(opts,
+        path: :string,
+        compress: :boolean
+      )
 
     IO.puts("Creating backup...")
 
@@ -60,7 +61,9 @@ defmodule Mix.Tasks.Concord.Backup do
         case File.stat(backup_path) do
           {:ok, %{size: size}} ->
             IO.puts("  Size: #{format_bytes(size)}")
-          _ -> :ok
+
+          _ ->
+            :ok
         end
 
       {:error, reason} ->
@@ -70,7 +73,7 @@ defmodule Mix.Tasks.Concord.Backup do
   end
 
   defp list_backups(opts) do
-    parsed_opts = parse_opts(opts, [path: :string])
+    parsed_opts = parse_opts(opts, path: :string)
     backup_dir = Keyword.get(parsed_opts, :path, "./backups")
 
     IO.puts("Listing backups in: #{backup_dir}\n")
@@ -99,10 +102,11 @@ defmodule Mix.Tasks.Concord.Backup do
   end
 
   defp restore_backup(backup_path, opts) do
-    parsed_opts = parse_opts(opts, [
-      force: :boolean,
-      verify: :boolean
-    ])
+    parsed_opts =
+      parse_opts(opts,
+        force: :boolean,
+        verify: :boolean
+      )
 
     force = Keyword.get(parsed_opts, :force, false)
 
@@ -111,7 +115,9 @@ defmodule Mix.Tasks.Concord.Backup do
       IO.write("Are you sure you want to continue? (yes/no): ")
 
       case IO.gets("") |> String.trim() |> String.downcase() do
-        "yes" -> :ok
+        "yes" ->
+          :ok
+
         _ ->
           IO.puts("Restore cancelled.")
           exit({:shutdown, 0})
@@ -156,11 +162,12 @@ defmodule Mix.Tasks.Concord.Backup do
   end
 
   defp cleanup_backups(opts) do
-    parsed_opts = parse_opts(opts, [
-      path: :string,
-      keep_count: :integer,
-      keep_days: :integer
-    ])
+    parsed_opts =
+      parse_opts(opts,
+        path: :string,
+        keep_count: :integer,
+        keep_days: :integer
+      )
 
     backup_dir = Keyword.get(parsed_opts, :path, "./backups")
     keep_count = Keyword.get(parsed_opts, :keep_count, 10)
@@ -214,15 +221,16 @@ defmodule Mix.Tasks.Concord.Backup do
   end
 
   defp parse_opts(args, schema) do
-    {opts, _, _} = OptionParser.parse(args,
-      strict: schema,
-      aliases: [
-        p: :path,
-        f: :force,
-        v: :verify,
-        c: :compress
-      ]
-    )
+    {opts, _, _} =
+      OptionParser.parse(args,
+        strict: schema,
+        aliases: [
+          p: :path,
+          f: :force,
+          v: :verify,
+          c: :compress
+        ]
+      )
 
     # Convert string values to appropriate types
     Enum.map(opts, fn
@@ -233,12 +241,15 @@ defmodule Mix.Tasks.Concord.Backup do
   end
 
   defp format_bytes(bytes) when bytes < 1024, do: "#{bytes} B"
+
   defp format_bytes(bytes) when bytes < 1024 * 1024 do
     "#{Float.round(bytes / 1024, 2)} KB"
   end
+
   defp format_bytes(bytes) when bytes < 1024 * 1024 * 1024 do
     "#{Float.round(bytes / (1024 * 1024), 2)} MB"
   end
+
   defp format_bytes(bytes) do
     "#{Float.round(bytes / (1024 * 1024 * 1024), 2)} GB"
   end

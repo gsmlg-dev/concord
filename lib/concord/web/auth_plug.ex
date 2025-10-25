@@ -75,30 +75,35 @@ defmodule Concord.Web.AuthPlug do
     conn
     |> put_status(:unauthorized)
     |> put_resp_content_type("application/json")
-    |> send_resp(401, Jason.encode!(%{
-      "status" => "error",
-      "error" => %{
-        "code" => "UNAUTHORIZED",
-        "message" => "Authentication token required"
-      }
-    }))
+    |> send_resp(
+      401,
+      Jason.encode!(%{
+        "status" => "error",
+        "error" => %{
+          "code" => "UNAUTHORIZED",
+          "message" => "Authentication token required"
+        }
+      })
+    )
     |> halt()
   end
 
-  
   defp handle_auth_error(conn, reason) do
     Logger.debug("API authentication failed: #{inspect(reason)}")
 
     conn
     |> put_status(:unauthorized)
     |> put_resp_content_type("application/json")
-    |> send_resp(401, Jason.encode!(%{
-      "status" => "error",
-      "error" => %{
-        "code" => "UNAUTHORIZED",
-        "message" => "Authentication failed"
-      }
-    }))
+    |> send_resp(
+      401,
+      Jason.encode!(%{
+        "status" => "error",
+        "error" => %{
+          "code" => "UNAUTHORIZED",
+          "message" => "Authentication failed"
+        }
+      })
+    )
     |> halt()
   end
 end

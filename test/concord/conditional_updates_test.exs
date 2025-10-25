@@ -233,7 +233,7 @@ defmodule Concord.ConditionalUpdatesTest do
 
       # One should succeed, one should fail
       assert {res1, res2} = {result1, result2}
-      assert (:ok in [res1, res2] and {:error, :condition_failed} in [res1, res2])
+      assert :ok in [res1, res2] and {:error, :condition_failed} in [res1, res2]
 
       # Final value should be 1 (only one increment succeeded)
       assert {:ok, 1} = Concord.get("shared_counter")

@@ -81,8 +81,11 @@ defmodule Concord.Tracing.TelemetryBridge do
 
     # Get current span context and add event
     case :otel_tracer.current_span_ctx() do
-      :undefined -> :ok
-      _span_ctx -> :otel_span.add_event(:opentelemetry.get_tracer(:concord), span_name, attributes)
+      :undefined ->
+        :ok
+
+      _span_ctx ->
+        :otel_span.add_event(:opentelemetry.get_tracer(:concord), span_name, attributes)
     end
   end
 

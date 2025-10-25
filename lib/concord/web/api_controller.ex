@@ -34,11 +34,12 @@ defmodule Concord.Web.APIController do
     with {:ok, key} <- validate_key(key) do
       with_ttl = get_with_ttl_param(conn)
 
-      result = if with_ttl do
-        Concord.get_with_ttl(key, token_opts(conn))
-      else
-        Concord.get(key, token_opts(conn))
-      end
+      result =
+        if with_ttl do
+          Concord.get_with_ttl(key, token_opts(conn))
+        else
+          Concord.get(key, token_opts(conn))
+        end
 
       case result do
         {:ok, value} when not with_ttl ->
@@ -127,15 +128,16 @@ defmodule Concord.Web.APIController do
     with {:ok, body} <- read_and_parse_body(conn),
          {:ok, operations} <- validate_bulk_operations(body) do
       # Transform API format %{key, value, ttl?} to internal format {key, value, ttl?}
-      transformed_ops = Enum.map(operations, fn op ->
-        key = Map.fetch!(op, "key")
-        value = Map.fetch!(op, "value")
+      transformed_ops =
+        Enum.map(operations, fn op ->
+          key = Map.fetch!(op, "key")
+          value = Map.fetch!(op, "value")
 
-        case Map.get(op, "ttl") do
-          nil -> {key, value}
-          ttl -> {key, value, ttl}
-        end
-      end)
+          case Map.get(op, "ttl") do
+            nil -> {key, value}
+            ttl -> {key, value, ttl}
+          end
+        end)
 
       case Concord.put_many(transformed_ops, token_opts(conn)) do
         {:ok, results} ->
@@ -161,6 +163,7 @@ defmodule Concord.Web.APIController do
         {:ok, results} ->
           # Transform results to API format
           api_results = transform_bulk_get_results(results, params.with_ttl)
+
           send_success_response(conn, 200, %{
             "status" => "ok",
             "data" => api_results
@@ -200,9 +203,10 @@ defmodule Concord.Web.APIController do
     with {:ok, body} <- read_and_parse_body(conn),
          {:ok, operations} <- validate_bulk_touch_operations(body) do
       # Transform API format %{key, ttl} to internal format {key, ttl}
-      transformed_ops = Enum.map(operations, fn %{"key" => key, "ttl" => ttl} ->
-        {key, ttl}
-      end)
+      transformed_ops =
+        Enum.map(operations, fn %{"key" => key, "ttl" => ttl} ->
+          {key, ttl}
+        end)
 
       case Concord.touch_many(transformed_ops, token_opts(conn)) do
         {:ok, results} ->
@@ -227,19 +231,21 @@ defmodule Concord.Web.APIController do
     with_ttl = get_with_ttl_param(conn)
     limit = get_limit_param(conn)
 
-    result = if with_ttl do
-      Concord.get_all_with_ttl(token_opts(conn))
-    else
-      Concord.get_all(token_opts(conn))
-    end
+    result =
+      if with_ttl do
+        Concord.get_all_with_ttl(token_opts(conn))
+      else
+        Concord.get_all(token_opts(conn))
+      end
 
     case result do
       {:ok, all_data} ->
-        limited_data = if limit do
-          Enum.take(all_data, limit)
-        else
-          all_data
-        end
+        limited_data =
+          if limit do
+            Enum.take(all_data, limit)
+          else
+            all_data
+          end
 
         send_success_response(conn, 200, %{
           "status" => "ok",
@@ -302,26 +308,31 @@ defmodule Concord.Web.APIController do
   defp validate_key(key) when is_binary(key) and byte_size(key) > 0 and byte_size(key) <= 1024 do
     {:ok, key}
   end
+
   defp validate_key(_), do: {:error, :invalid_key}
 
   defp validate_put_params(%{"value" => value} = params) do
     ttl = Map.get(params, "ttl")
-    result = if ttl do
-      case validate_ttl(ttl) do
-        :ok -> {:ok, %{value: value, ttl: ttl}}
-        error -> error
+
+    result =
+      if ttl do
+        case validate_ttl(ttl) do
+          :ok -> {:ok, %{value: value, ttl: ttl}}
+          error -> error
+        end
+      else
+        {:ok, %{value: value}}
       end
-    else
-      {:ok, %{value: value}}
-    end
 
     result
   end
+
   defp validate_put_params(_), do: {:error, :invalid_put_params}
 
   defp validate_ttl_param(%{"ttl" => ttl}) when is_integer(ttl) and ttl > 0 do
     {:ok, ttl}
   end
+
   defp validate_ttl_param(_), do: {:error, :invalid_ttl}
 
   defp validate_ttl(ttl) when is_integer(ttl) and ttl > 0, do: :ok
@@ -333,9 +344,11 @@ defmodule Concord.Web.APIController do
       error -> error
     end
   end
+
   defp validate_bulk_operations(_), do: {:error, :invalid_bulk_operations}
 
   defp validate_bulk_operations_list([]), do: {:error, :empty_operations}
+
   defp validate_bulk_operations_list(operations) do
     if length(operations) > 500 do
       {:error, :batch_too_large}
@@ -355,6 +368,7 @@ defmodule Concord.Web.APIController do
       end
     end
   end
+
   defp validate_bulk_operation(_), do: {:error, :invalid_operation}
 
   defp validate_bulk_get_params(%{"keys" => keys} = params) when is_list(keys) do
@@ -363,6 +377,7 @@ defmodule Concord.Web.APIController do
       {:ok, %{keys: keys, with_ttl: with_ttl}}
     end
   end
+
   defp validate_bulk_get_params(_), do: {:error, :invalid_bulk_get_params}
 
   defp validate_bulk_keys(%{"keys" => keys}) when is_list(keys) do
@@ -371,9 +386,11 @@ defmodule Concord.Web.APIController do
       error -> error
     end
   end
+
   defp validate_bulk_keys(_), do: {:error, :invalid_bulk_keys}
 
   defp validate_bulk_keys_list([]), do: {:error, :empty_keys}
+
   defp validate_bulk_keys_list(keys) do
     if length(keys) > 500 do
       {:error, :batch_too_large}
@@ -391,9 +408,11 @@ defmodule Concord.Web.APIController do
       error -> error
     end
   end
+
   defp validate_bulk_touch_operations(_), do: {:error, :invalid_bulk_touch_operations}
 
   defp validate_bulk_touch_operations_list([]), do: {:error, :empty_operations}
+
   defp validate_bulk_touch_operations_list(operations) do
     if length(operations) > 500 do
       {:error, :batch_too_large}
@@ -405,7 +424,7 @@ defmodule Concord.Web.APIController do
     end
   end
 
-  defp validate_touch_operation(%{"key" => key, "ttl" => ttl} = op) when is_binary(key) do
+  defp validate_touch_operation(%{"key" => key, "ttl" => ttl} = _op) when is_binary(key) do
     cond do
       not is_integer(ttl) ->
         {:error, :invalid_ttl}
@@ -420,6 +439,7 @@ defmodule Concord.Web.APIController do
         end
     end
   end
+
   defp validate_touch_operation(_), do: {:error, :invalid_touch_operation}
 
   defp transform_bulk_get_results(results, with_ttl) do
@@ -453,7 +473,9 @@ defmodule Concord.Web.APIController do
           {n, ""} when n > 0 -> n
           _ -> nil
         end
-      _ -> nil
+
+      _ ->
+        nil
     end
   end
 
@@ -480,59 +502,96 @@ defmodule Concord.Web.APIController do
   defp send_error_response(conn, status, error) do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(status, Jason.encode!(%{
-      "status" => "error",
-      "error" => error
-    }))
+    |> send_resp(
+      status,
+      Jason.encode!(%{
+        "status" => "error",
+        "error" => error
+      })
+    )
   end
 
   defp handle_error(conn, reason, message) do
     Logger.debug("#{message}: #{inspect(reason)}")
 
-    error_code = case reason do
-      :not_found -> "NOT_FOUND"
-      :invalid_key -> "INVALID_KEY"
-      :timeout -> "TIMEOUT"
-      :cluster_not_ready -> "CLUSTER_UNAVAILABLE"
-      :batch_too_large -> "BATCH_TOO_LARGE"
-      :unauthorized -> "UNAUTHORIZED"
-      _ -> "OPERATION_FAILED"
-    end
+    error_code =
+      case reason do
+        :not_found -> "NOT_FOUND"
+        :invalid_key -> "INVALID_KEY"
+        :timeout -> "TIMEOUT"
+        :cluster_not_ready -> "CLUSTER_UNAVAILABLE"
+        :batch_too_large -> "BATCH_TOO_LARGE"
+        :unauthorized -> "UNAUTHORIZED"
+        _ -> "OPERATION_FAILED"
+      end
 
-    send_error_response(conn, case reason do
-      :not_found -> 404
-      :timeout -> 408
-      :unauthorized -> 401
-      :cluster_not_ready -> 503
-      _ -> 400
-    end, %{
-      "code" => error_code,
-      "message" => message
-    })
+    send_error_response(
+      conn,
+      case reason do
+        :not_found -> 404
+        :timeout -> 408
+        :unauthorized -> 401
+        :cluster_not_ready -> 503
+        _ -> 400
+      end,
+      %{
+        "code" => error_code,
+        "message" => message
+      }
+    )
   end
 
   defp handle_validation_error(conn, reason) do
-    error_map = case reason do
-      :invalid_key -> %{"code" => "INVALID_KEY", "message" => "Key cannot be empty and must be <= 1024 bytes"}
-      :invalid_json -> %{"code" => "INVALID_REQUEST", "message" => "Malformed JSON in request body"}
-      :invalid_put_params -> %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'value' field"}
-      :invalid_ttl -> %{"code" => "INVALID_REQUEST", "message" => "TTL must be a positive integer"}
-      :invalid_bulk_operations -> %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
-      :invalid_bulk_get_params -> %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
-      :invalid_bulk_keys -> %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
-      :invalid_bulk_touch_operations -> %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
-      :empty_operations -> %{"code" => "INVALID_REQUEST", "message" => "Operations list cannot be empty"}
-      :empty_keys -> %{"code" => "INVALID_REQUEST", "message" => "Keys list cannot be empty"}
-      :batch_too_large -> %{"code" => "BATCH_TOO_LARGE", "message" => "Batch size exceeds 500 operations limit"}
-      :invalid_operation -> %{"code" => "INVALID_REQUEST", "message" => "Invalid operation format"}
-      :invalid_touch_operation -> %{"code" => "INVALID_REQUEST", "message" => "Invalid touch operation format"}
-      _ -> %{"code" => "VALIDATION_ERROR", "message" => "Request validation failed"}
-    end
+    error_map =
+      case reason do
+        :invalid_key ->
+          %{"code" => "INVALID_KEY", "message" => "Key cannot be empty and must be <= 1024 bytes"}
 
-    status = case reason do
-      :batch_too_large -> 413
-      _ -> 400
-    end
+        :invalid_json ->
+          %{"code" => "INVALID_REQUEST", "message" => "Malformed JSON in request body"}
+
+        :invalid_put_params ->
+          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'value' field"}
+
+        :invalid_ttl ->
+          %{"code" => "INVALID_REQUEST", "message" => "TTL must be a positive integer"}
+
+        :invalid_bulk_operations ->
+          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
+
+        :invalid_bulk_get_params ->
+          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
+
+        :invalid_bulk_keys ->
+          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
+
+        :invalid_bulk_touch_operations ->
+          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
+
+        :empty_operations ->
+          %{"code" => "INVALID_REQUEST", "message" => "Operations list cannot be empty"}
+
+        :empty_keys ->
+          %{"code" => "INVALID_REQUEST", "message" => "Keys list cannot be empty"}
+
+        :batch_too_large ->
+          %{"code" => "BATCH_TOO_LARGE", "message" => "Batch size exceeds 500 operations limit"}
+
+        :invalid_operation ->
+          %{"code" => "INVALID_REQUEST", "message" => "Invalid operation format"}
+
+        :invalid_touch_operation ->
+          %{"code" => "INVALID_REQUEST", "message" => "Invalid touch operation format"}
+
+        _ ->
+          %{"code" => "VALIDATION_ERROR", "message" => "Request validation failed"}
+      end
+
+    status =
+      case reason do
+        :batch_too_large -> 413
+        _ -> 400
+      end
 
     send_error_response(conn, status, error_map)
   end

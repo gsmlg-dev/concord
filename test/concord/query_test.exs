@@ -161,7 +161,9 @@ defmodule Concord.QueryTest do
     end
 
     test "combines range and contains" do
-      assert {:ok, keys} = Query.keys(range: {"order:2024-01-01", "order:2024-12-31"}, contains: "-02-")
+      assert {:ok, keys} =
+               Query.keys(range: {"order:2024-01-01", "order:2024-12-31"}, contains: "-02-")
+
       # All order keys are in the range, then filter by contains "-02-"
       assert length(keys) == 1
       assert "order:2024-02-20" in keys
@@ -178,20 +180,22 @@ defmodule Concord.QueryTest do
     end
 
     test "filters by value predicate" do
-      assert {:ok, pairs} = Query.where(
-        prefix: "product:",
-        filter: fn {_k, v} -> v.price > 100 end
-      )
+      assert {:ok, pairs} =
+               Query.where(
+                 prefix: "product:",
+                 filter: fn {_k, v} -> v.price > 100 end
+               )
 
       assert length(pairs) == 2
       assert Enum.all?(pairs, fn {_k, v} -> v.price > 100 end)
     end
 
     test "filters users by role" do
-      assert {:ok, pairs} = Query.where(
-        prefix: "user:",
-        filter: fn {_k, v} -> v.role == "admin" end
-      )
+      assert {:ok, pairs} =
+               Query.where(
+                 prefix: "user:",
+                 filter: fn {_k, v} -> v.role == "admin" end
+               )
 
       assert length(pairs) == 2
       names = Enum.map(pairs, fn {_k, v} -> v.name end)
@@ -200,31 +204,34 @@ defmodule Concord.QueryTest do
     end
 
     test "filters with complex predicate" do
-      assert {:ok, pairs} = Query.where(
-        prefix: "user:",
-        filter: fn {_k, v} -> v.age >= 30 and v.role == "user" end
-      )
+      assert {:ok, pairs} =
+               Query.where(
+                 prefix: "user:",
+                 filter: fn {_k, v} -> v.age >= 30 and v.role == "user" end
+               )
 
       assert length(pairs) == 1
       assert {_k, %{name: "Charlie"}} = hd(pairs)
     end
 
     test "combines range and filter" do
-      assert {:ok, pairs} = Query.where(
-        range: {"order:2024-01-01", "order:2024-12-31"},
-        filter: fn {_k, v} -> v.status == :completed end
-      )
+      assert {:ok, pairs} =
+               Query.where(
+                 range: {"order:2024-01-01", "order:2024-12-31"},
+                 filter: fn {_k, v} -> v.status == :completed end
+               )
 
       assert length(pairs) == 2
       assert Enum.all?(pairs, fn {_k, v} -> v.status == :completed end)
     end
 
     test "supports pagination with filter" do
-      assert {:ok, pairs} = Query.where(
-        prefix: "user:",
-        filter: fn {_k, v} -> v.age > 20 end,
-        limit: 2
-      )
+      assert {:ok, pairs} =
+               Query.where(
+                 prefix: "user:",
+                 filter: fn {_k, v} -> v.age > 20 end,
+                 limit: 2
+               )
 
       assert length(pairs) == 2
     end
@@ -263,7 +270,9 @@ defmodule Concord.QueryTest do
     end
 
     test "deletes keys in range" do
-      assert {:ok, deleted_count} = Query.delete_where(range: {"order:2024-02-01", "order:2024-02-28"})
+      assert {:ok, deleted_count} =
+               Query.delete_where(range: {"order:2024-02-01", "order:2024-02-28"})
+
       assert deleted_count == 1
 
       # Verify specific key was deleted

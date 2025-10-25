@@ -40,55 +40,69 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
     # Simulate a web application storing user sessions, request counts, etc.
     IO.puts("Simulating web application with user sessions and analytics...")
 
-    benchee_run(%{
-      "store_user_session" => fn ->
-        user_id = System.unique_integer()
-        session_data = %{
-          user_id: user_id,
-          session_id: "sess_#{user_id}",
-          csrf_token: Base.encode64(:crypto.strong_rand_bytes(32)),
-          last_activity: DateTime.utc_now(),
-          ip_address: "192.168.1.#{rem(user_id, 255)}"
-        }
-        Concord.put("session:#{user_id}", session_data, [ttl: 1800]) # 30 min TTL
-      end,
+    benchee_run(
+      %{
+        "store_user_session" => fn ->
+          user_id = System.unique_integer()
 
-      "track_page_view" => fn ->
-        user_id = :rand.uniform(1000)
-        page = "/page#{:rand.uniform(100)}"
-        Concord.put("analytics:#{user_id}:pages:#{System.unique_integer()}", %{
-          page: page,
-          timestamp: DateTime.utc_now(),
-          user_agent: "Mozilla/5.0..."
-        }, [ttl: 86400]) # 24 hour TTL
-      end,
+          session_data = %{
+            user_id: user_id,
+            session_id: "sess_#{user_id}",
+            csrf_token: Base.encode64(:crypto.strong_rand_bytes(32)),
+            last_activity: DateTime.utc_now(),
+            ip_address: "192.168.1.#{rem(user_id, 255)}"
+          }
 
-      "rate_limit_check" => fn ->
-        user_id = :rand.uniform(1000)
-        key = "rate_limit:#{user_id}:#{DateTime.utc_now() |> DateTime.to_date()}"
+          # 30 min TTL
+          Concord.put("session:#{user_id}", session_data, ttl: 1800)
+        end,
+        "track_page_view" => fn ->
+          user_id = :rand.uniform(1000)
+          page = "/page#{:rand.uniform(100)}"
 
-        # Get current count
-        current = case Concord.get(key) do
-          {:ok, count} -> count
-          {:error, :not_found} -> 0
+          Concord.put(
+            "analytics:#{user_id}:pages:#{System.unique_integer()}",
+            %{
+              page: page,
+              timestamp: DateTime.utc_now(),
+              user_agent: "Mozilla/5.0..."
+            },
+            # 24 hour TTL
+            ttl: 86400
+          )
+        end,
+        "rate_limit_check" => fn ->
+          user_id = :rand.uniform(1000)
+          key = "rate_limit:#{user_id}:#{DateTime.utc_now() |> DateTime.to_date()}"
+
+          # Get current count
+          current =
+            case Concord.get(key) do
+              {:ok, count} -> count
+              {:error, :not_found} -> 0
+            end
+
+          # Increment and check against limit
+          new_count = current + 1
+          Concord.put(key, new_count, ttl: 86400)
+          # Assuming 100 requests per day limit
+          new_count <= 100
+        end,
+        "cache_api_response" => fn ->
+          endpoint = "/api/v1/resource#{:rand.uniform(50)}"
+
+          response = %{
+            data: "api_response_data_#{System.unique_integer()}",
+            cached_at: DateTime.utc_now(),
+            expires_in: 300
+          }
+
+          # 5 min cache
+          Concord.put("cache:api:#{endpoint}", response, ttl: 300)
         end
-
-        # Increment and check against limit
-        new_count = current + 1
-        Concord.put(key, new_count, [ttl: 86400])
-        new_count <= 100 # Assuming 100 requests per day limit
-      end,
-
-      "cache_api_response" => fn ->
-        endpoint = "/api/v1/resource#{:rand.uniform(50)}"
-        response = %{
-          data: "api_response_data_#{System.unique_integer()}",
-          cached_at: DateTime.utc_now(),
-          expires_in: 300
-        }
-        Concord.put("cache:api:#{endpoint}", response, [ttl: 300]) # 5 min cache
-      end
-    }, "Web Application Operations")
+      },
+      "Web Application Operations"
+    )
   end
 
   def phoenix_session_store_scenario do
@@ -98,46 +112,50 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
     # Simulate Phoenix using Concord as session store
     IO.puts("Simulating Phoenix session storage patterns...")
 
-    benchee_run(%{
-      "create_session" => fn ->
-        session_id = Base.encode64(:crypto.strong_rand_bytes(24))
-        session_data = %{
-          user_id: System.unique_integer([:positive]),
-          flash: %{"info" => "Welcome!"},
-          locale: "en",
-          timezone: "UTC"
-        }
-        Concord.put("phx_sess:#{session_id}", session_data, [ttl: 7200]) # 2 hours
-      end,
+    benchee_run(
+      %{
+        "create_session" => fn ->
+          session_id = Base.encode64(:crypto.strong_rand_bytes(24))
 
-      "load_session" => fn ->
-        session_id = Base.encode64(:crypto.strong_rand_bytes(24))
-        # Pre-create session
-        Concord.put("phx_sess:#{session_id}", %{user_id: 123}, [ttl: 7200])
-        # Load it
-        Concord.get("phx_sess:#{session_id}")
-      end,
+          session_data = %{
+            user_id: System.unique_integer([:positive]),
+            flash: %{"info" => "Welcome!"},
+            locale: "en",
+            timezone: "UTC"
+          }
 
-      "update_session" => fn ->
-        session_id = Base.encode64(:crypto.strong_rand_bytes(24))
-        Concord.put("phx_sess:#{session_id}", %{user_id: 123}, [ttl: 7200])
+          # 2 hours
+          Concord.put("phx_sess:#{session_id}", session_data, ttl: 7200)
+        end,
+        "load_session" => fn ->
+          session_id = Base.encode64(:crypto.strong_rand_bytes(24))
+          # Pre-create session
+          Concord.put("phx_sess:#{session_id}", %{user_id: 123}, ttl: 7200)
+          # Load it
+          Concord.get("phx_sess:#{session_id}")
+        end,
+        "update_session" => fn ->
+          session_id = Base.encode64(:crypto.strong_rand_bytes(24))
+          Concord.put("phx_sess:#{session_id}", %{user_id: 123}, ttl: 7200)
 
-        # Update with new data
-        updated_data = %{
-          user_id: 123,
-          flash: %{"success" => "Profile updated"},
-          last_activity: DateTime.utc_now()
-        }
-        Concord.put("phx_sess:#{session_id}", updated_data, [ttl: 7200])
-      end,
+          # Update with new data
+          updated_data = %{
+            user_id: 123,
+            flash: %{"success" => "Profile updated"},
+            last_activity: DateTime.utc_now()
+          }
 
-      "cleanup_expired_sessions" => fn ->
-        # Simulate cleanup by touching valid sessions
-        session_id = Base.encode64(:crypto.strong_rand_bytes(24))
-        Concord.put("phx_sess:#{session_id}", %{user_id: 123}, [ttl: 7200])
-        Concord.touch("phx_sess:#{session_id}", 7200)
-      end
-    }, "Phoenix Session Store Operations")
+          Concord.put("phx_sess:#{session_id}", updated_data, ttl: 7200)
+        end,
+        "cleanup_expired_sessions" => fn ->
+          # Simulate cleanup by touching valid sessions
+          session_id = Base.encode64(:crypto.strong_rand_bytes(24))
+          Concord.put("phx_sess:#{session_id}", %{user_id: 123}, ttl: 7200)
+          Concord.touch("phx_sess:#{session_id}", 7200)
+        end
+      },
+      "Phoenix Session Store Operations"
+    )
   end
 
   def configuration_management_scenario do
@@ -153,47 +171,54 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
       features: %{new_ui: true, beta_features: false},
       limits: %{max_requests_per_minute: 1000, max_upload_size: 10_485_760}
     }
+
     Concord.put("config:app", config_data)
 
-    benchee_run(%{
-      "get_config_value" => fn ->
-        case Concord.get("config:app") do
-          {:ok, config} -> config[:database][:port]
-          {:error, _} -> 5432
-        end
-      end,
+    benchee_run(
+      %{
+        "get_config_value" => fn ->
+          case Concord.get("config:app") do
+            {:ok, config} -> config[:database][:port]
+            {:error, _} -> 5432
+          end
+        end,
+        "update_feature_flag" => fn ->
+          case Concord.get("config:app") do
+            {:ok, config} ->
+              updated_config = put_in(config, [:features, :beta_features], true)
+              Concord.put("config:app", updated_config)
 
-      "update_feature_flag" => fn ->
-        case Concord.get("config:app") do
-          {:ok, config} ->
-            updated_config = put_in(config, [:features, :beta_features], true)
-            Concord.put("config:app", updated_config)
-          {:error, _} -> :ok
-        end
-      end,
+            {:error, _} ->
+              :ok
+          end
+        end,
+        "get_nested_config" => fn ->
+          case Concord.get("config:app") do
+            {:ok, config} ->
+              {
+                config[:database][:pool_size],
+                config[:limits][:max_requests_per_minute],
+                config[:features][:new_ui]
+              }
 
-      "get_nested_config" => fn ->
-        case Concord.get("config:app") do
-          {:ok, config} ->
-            {
-              config[:database][:pool_size],
-              config[:limits][:max_requests_per_minute],
-              config[:features][:new_ui]
-            }
-          {:error, _} -> {10, 1000, false}
-        end
-      end,
+            {:error, _} ->
+              {10, 1000, false}
+          end
+        end,
+        "cache_configuration" => fn ->
+          # Simulate caching configuration in process dictionary
+          case Concord.get("config:app") do
+            {:ok, config} ->
+              Process.put(:cached_config, config)
+              config
 
-      "cache_configuration" => fn ->
-        # Simulate caching configuration in process dictionary
-        case Concord.get("config:app") do
-          {:ok, config} ->
-            Process.put(:cached_config, config)
-            config
-          {:error, _} -> %{}
+            {:error, _} ->
+              %{}
+          end
         end
-      end
-    }, "Configuration Management Operations")
+      },
+      "Configuration Management Operations"
+    )
   end
 
   def feature_flag_scenario do
@@ -223,48 +248,55 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
       Concord.put("flag:#{flag}", data)
     end
 
-    benchee_run(%{
-      "check_feature_flag" => fn ->
-        flag = "new_dashboard"
-        user_id = System.unique_integer([:positive])
-        user_plan = if rem(user_id, 3) == 0, do: "premium", else: "basic"
+    benchee_run(
+      %{
+        "check_feature_flag" => fn ->
+          flag = "new_dashboard"
+          user_id = System.unique_integer([:positive])
+          user_plan = if rem(user_id, 3) == 0, do: "premium", else: "basic"
 
-        case Concord.get("flag:#{flag}") do
-          {:ok, flag_data} ->
-            enabled = flag_data.enabled and
-                     (flag_data.rollout_percentage >= 50 or
-                      user_id in flag_data.user_ids or
-                      user_plan in flag_data.conditions.plan)
-            enabled
-          {:error, _} -> false
-        end
-      end,
-
-      "enable_feature_for_user" => fn ->
-        flag = "beta_search"
-        user_id = System.unique_integer([:positive])
-
-        case Concord.get("flag:#{flag}") do
-          {:ok, flag_data} ->
-            updated_users = [user_id | flag_data.user_ids] |> Enum.uniq()
-            updated_flag = %{flag_data | user_ids: updated_users, enabled: true}
-            Concord.put("flag:#{flag}", updated_flag)
-          {:error, _} -> :ok
-        end
-      end,
-
-      "bulk_flag_check" => fn ->
-        flags = ["new_dashboard", "beta_search", "advanced_analytics", "real_time_sync"]
-        user_id = System.unique_integer([:positive])
-
-        for flag <- flags do
           case Concord.get("flag:#{flag}") do
-            {:ok, flag_data} -> flag_data.enabled
-            {:error, _} -> false
+            {:ok, flag_data} ->
+              enabled =
+                flag_data.enabled and
+                  (flag_data.rollout_percentage >= 50 or
+                     user_id in flag_data.user_ids or
+                     user_plan in flag_data.conditions.plan)
+
+              enabled
+
+            {:error, _} ->
+              false
+          end
+        end,
+        "enable_feature_for_user" => fn ->
+          flag = "beta_search"
+          user_id = System.unique_integer([:positive])
+
+          case Concord.get("flag:#{flag}") do
+            {:ok, flag_data} ->
+              updated_users = [user_id | flag_data.user_ids] |> Enum.uniq()
+              updated_flag = %{flag_data | user_ids: updated_users, enabled: true}
+              Concord.put("flag:#{flag}", updated_flag)
+
+            {:error, _} ->
+              :ok
+          end
+        end,
+        "bulk_flag_check" => fn ->
+          flags = ["new_dashboard", "beta_search", "advanced_analytics", "real_time_sync"]
+          user_id = System.unique_integer([:positive])
+
+          for flag <- flags do
+            case Concord.get("flag:#{flag}") do
+              {:ok, flag_data} -> flag_data.enabled
+              {:error, _} -> false
+            end
           end
         end
-      end
-    }, "Feature Flag Operations")
+      },
+      "Feature Flag Operations"
+    )
   end
 
   def caching_scenario do
@@ -274,45 +306,53 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
     # Simulate application-level caching
     IO.puts("Simulating caching layer operations...")
 
-    benchee_run(%{
-      "cache_computation_result" => fn ->
-        cache_key = "calc:result:#{:rand.uniform(100)}"
-        result = %{
-          value: :rand.uniform(1000),
-          computed_at: DateTime.utc_now(),
-          computation_time_ms: :rand.uniform(100)
-        }
-        Concord.put(cache_key, result, [ttl: 300]) # 5 minute cache
-      end,
+    benchee_run(
+      %{
+        "cache_computation_result" => fn ->
+          cache_key = "calc:result:#{:rand.uniform(100)}"
 
-      "get_cached_result" => fn ->
-        cache_key = "calc:result:#{:rand.uniform(100)}"
-        case Concord.get(cache_key) do
-          {:ok, cached} -> cached[:value]
-          {:error, :not_found} ->
-            # Simulate computation and cache result
-            result = :rand.uniform(1000)
-            Concord.put(cache_key, %{value: result, computed_at: DateTime.utc_now()}, [ttl: 300])
-            result
-        end
-      end,
+          result = %{
+            value: :rand.uniform(1000),
+            computed_at: DateTime.utc_now(),
+            computation_time_ms: :rand.uniform(100)
+          }
 
-      "cache_invalidation" => fn ->
-        pattern = "calc:result:*"
-        # In real implementation, this would be more sophisticated
-        # For now, simulate by touching with short TTL
-        for i <- 1..10 do
-          Concord.touch("calc:result:#{i}", 1)
-        end
-      end,
+          # 5 minute cache
+          Concord.put(cache_key, result, ttl: 300)
+        end,
+        "get_cached_result" => fn ->
+          cache_key = "calc:result:#{:rand.uniform(100)}"
 
-      "bulk_cache_operations" => fn ->
-        operations = for i <- 1..50 do
-          %{"key" => "bulk:cache:#{i}", "value" => "cached_value_#{i}", "ttl" => 600}
+          case Concord.get(cache_key) do
+            {:ok, cached} ->
+              cached[:value]
+
+            {:error, :not_found} ->
+              # Simulate computation and cache result
+              result = :rand.uniform(1000)
+              Concord.put(cache_key, %{value: result, computed_at: DateTime.utc_now()}, ttl: 300)
+              result
+          end
+        end,
+        "cache_invalidation" => fn ->
+          pattern = "calc:result:*"
+          # In real implementation, this would be more sophisticated
+          # For now, simulate by touching with short TTL
+          for i <- 1..10 do
+            Concord.touch("calc:result:#{i}", 1)
+          end
+        end,
+        "bulk_cache_operations" => fn ->
+          operations =
+            for i <- 1..50 do
+              %{"key" => "bulk:cache:#{i}", "value" => "cached_value_#{i}", "ttl" => 600}
+            end
+
+          Concord.put_many(operations)
         end
-        Concord.put_many(operations)
-      end
-    }, "Caching Operations")
+      },
+      "Caching Operations"
+    )
   end
 
   def distributed_lock_scenario do
@@ -322,43 +362,49 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
     # Simulate distributed locking using Concord
     IO.puts("Simulating distributed lock operations...")
 
-    benchee_run(%{
-      "acquire_lock" => fn ->
-        lock_key = "lock:resource:#{System.unique_integer()}"
-        lock_data = %{
-          owner: self(),
-          acquired_at: DateTime.utc_now(),
-          expires_at: DateTime.add(DateTime.utc_now(), 30, :second)
-        }
-        Concord.put(lock_key, lock_data, [ttl: 30])
-      end,
+    benchee_run(
+      %{
+        "acquire_lock" => fn ->
+          lock_key = "lock:resource:#{System.unique_integer()}"
 
-      "check_lock_status" => fn ->
-        lock_key = "lock:resource:#{System.unique_integer()}"
-        case Concord.get(lock_key) do
-          {:ok, lock_data} ->
-            expired = DateTime.compare(lock_data.expires_at, DateTime.utc_now()) == :lt
-            not expired and lock_data.owner == self()
-          {:error, :not_found} -> true # Lock available
+          lock_data = %{
+            owner: self(),
+            acquired_at: DateTime.utc_now(),
+            expires_at: DateTime.add(DateTime.utc_now(), 30, :second)
+          }
+
+          Concord.put(lock_key, lock_data, ttl: 30)
+        end,
+        "check_lock_status" => fn ->
+          lock_key = "lock:resource:#{System.unique_integer()}"
+
+          case Concord.get(lock_key) do
+            {:ok, lock_data} ->
+              expired = DateTime.compare(lock_data.expires_at, DateTime.utc_now()) == :lt
+              not expired and lock_data.owner == self()
+
+            # Lock available
+            {:error, :not_found} ->
+              true
+          end
+        end,
+        "release_lock" => fn ->
+          lock_key = "lock:resource:#{System.unique_integer()}"
+          # Simulate lock acquisition
+          Concord.put(lock_key, %{owner: self()}, ttl: 30)
+          # Release it
+          Concord.delete(lock_key)
+        end,
+        "lock_renewal" => fn ->
+          lock_key = "lock:resource:#{System.unique_integer()}"
+          # Acquire lock
+          Concord.put(lock_key, %{owner: self()}, ttl: 30)
+          # Renew it
+          Concord.touch(lock_key, 60)
         end
-      end,
-
-      "release_lock" => fn ->
-        lock_key = "lock:resource:#{System.unique_integer()}"
-        # Simulate lock acquisition
-        Concord.put(lock_key, %{owner: self()}, [ttl: 30])
-        # Release it
-        Concord.delete(lock_key)
-      end,
-
-      "lock_renewal" => fn ->
-        lock_key = "lock:resource:#{System.unique_integer()}"
-        # Acquire lock
-        Concord.put(lock_key, %{owner: self()}, [ttl: 30])
-        # Renew it
-        Concord.touch(lock_key, 60)
-      end
-    }, "Distributed Lock Operations")
+      },
+      "Distributed Lock Operations"
+    )
   end
 
   def pubsub_state_scenario do
@@ -368,54 +414,62 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
     # Simulate PubSub state management
     IO.puts("Simulating PubSub state synchronization...")
 
-    benchee_run(%{
-      "store_subscriber_state" => fn ->
-        topic = "events:user:#{System.unique_integer([:positive])}"
-        subscriber = self()
-        state = %{
-          last_seen: System.unique_integer(),
-          subscriber: subscriber,
-          subscribed_at: DateTime.utc_now()
-        }
-        Concord.put("pubsub:#{topic}:#{subscriber}", state, [ttl: 3600])
-      end,
+    benchee_run(
+      %{
+        "store_subscriber_state" => fn ->
+          topic = "events:user:#{System.unique_integer([:positive])}"
+          subscriber = self()
 
-      "broadcast_to_subscribers" => fn ->
-        topic = "events:global"
-        message_id = System.unique_integer()
-        message = %{id: message_id, type: "notification", data: "Hello World"}
+          state = %{
+            last_seen: System.unique_integer(),
+            subscriber: subscriber,
+            subscribed_at: DateTime.utc_now()
+          }
 
-        # Store message for subscribers
-        Concord.put("pubsub:#{topic}:msg:#{message_id}", message, [ttl: 300])
+          Concord.put("pubsub:#{topic}:#{subscriber}", state, ttl: 3600)
+        end,
+        "broadcast_to_subscribers" => fn ->
+          topic = "events:global"
+          message_id = System.unique_integer()
+          message = %{id: message_id, type: "notification", data: "Hello World"}
 
-        # Update topic state
-        case Concord.get("pubsub:#{topic}:state") do
-          {:ok, state} ->
-            updated_state = %{state | last_message_id: message_id, message_count: state.message_count + 1}
-            Concord.put("pubsub:#{topic}:state", updated_state)
-          {:error, :not_found} ->
-            initial_state = %{last_message_id: message_id, message_count: 1}
-            Concord.put("pubsub:#{topic}:state", initial_state)
+          # Store message for subscribers
+          Concord.put("pubsub:#{topic}:msg:#{message_id}", message, ttl: 300)
+
+          # Update topic state
+          case Concord.get("pubsub:#{topic}:state") do
+            {:ok, state} ->
+              updated_state = %{
+                state
+                | last_message_id: message_id,
+                  message_count: state.message_count + 1
+              }
+
+              Concord.put("pubsub:#{topic}:state", updated_state)
+
+            {:error, :not_found} ->
+              initial_state = %{last_message_id: message_id, message_count: 1}
+              Concord.put("pubsub:#{topic}:state", initial_state)
+          end
+        end,
+        "get_subscriber_state" => fn ->
+          topic = "events:user:#{System.unique_integer([:positive])}"
+          subscriber = self()
+
+          case Concord.get("pubsub:#{topic}:#{subscriber}") do
+            {:ok, state} -> state.last_seen
+            {:error, :not_found} -> 0
+          end
+        end,
+        "cleanup_expired_states" => fn ->
+          # Simulate cleanup of expired subscriber states
+          for i <- 1..20 do
+            Concord.touch("pubsub:cleanup:test:#{i}", 1)
+          end
         end
-      end,
-
-      "get_subscriber_state" => fn ->
-        topic = "events:user:#{System.unique_integer([:positive])}"
-        subscriber = self()
-
-        case Concord.get("pubsub:#{topic}:#{subscriber}") do
-          {:ok, state} -> state.last_seen
-          {:error, :not_found} -> 0
-        end
-      end,
-
-      "cleanup_expired_states" => fn ->
-        # Simulate cleanup of expired subscriber states
-        for i <- 1..20 do
-          Concord.touch("pubsub:cleanup:test:#{i}", 1)
-        end
-      end
-    }, "PubSub State Operations")
+      },
+      "PubSub State Operations"
+    )
   end
 
   defp benchee_run(jobs, description) do
@@ -445,10 +499,11 @@ defmodule Concord.Performance.EmbeddedScenariosBenchmark do
       fun.()
 
       # Measure
-      measurements = for _i <- 1..100 do
-        {time_us, _result} = :timer.tc(fun)
-        time_us
-      end
+      measurements =
+        for _i <- 1..100 do
+          {time_us, _result} = :timer.tc(fun)
+          time_us
+        end
 
       avg_time = Enum.sum(measurements) / length(measurements)
       min_time = Enum.min(measurements)

@@ -38,20 +38,20 @@ defmodule Concord.Backup do
 
   @typedoc "Backup metadata"
   @type metadata :: %{
-    timestamp: DateTime.t(),
-    node: node(),
-    cluster_name: atom(),
-    entry_count: non_neg_integer(),
-    memory_bytes: non_neg_integer(),
-    version: String.t(),
-    checksum: binary()
-  }
+          timestamp: DateTime.t(),
+          node: node(),
+          cluster_name: atom(),
+          entry_count: non_neg_integer(),
+          memory_bytes: non_neg_integer(),
+          version: String.t(),
+          checksum: binary()
+        }
 
   @typedoc "Backup content"
   @type backup :: %{
-    metadata: metadata(),
-    data: list({term(), term()})
-  }
+          metadata: metadata(),
+          data: list({term(), term()})
+        }
 
   @doc """
   Creates a backup of the current cluster state.

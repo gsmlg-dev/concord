@@ -9,9 +9,9 @@ defmodule Concord.Web.AuthenticatedRouter do
   use Plug.Router
   require Logger
 
-  plug Concord.Web.AuthPlug
-  plug :match
-  plug :dispatch
+  plug(Concord.Web.AuthPlug)
+  plug(:match)
+  plug(:dispatch)
 
   # Core CRUD operations
   put "/kv/:key" do
@@ -65,12 +65,15 @@ defmodule Concord.Web.AuthenticatedRouter do
   match _ do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(404, Jason.encode!(%{
-      "status" => "error",
-      "error" => %{
-        "code" => "NOT_FOUND",
-        "message" => "API endpoint not found"
-      }
-    }))
+    |> send_resp(
+      404,
+      Jason.encode!(%{
+        "status" => "error",
+        "error" => %{
+          "code" => "NOT_FOUND",
+          "message" => "API endpoint not found"
+        }
+      })
+    )
   end
 end
