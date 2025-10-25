@@ -98,10 +98,11 @@ defmodule Concord.Web.APIControllerTest do
       |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
-      assert conn.status == 400
+      # Empty key path doesn't match the router pattern, returns 404
+      assert conn.status == 404
 
       response = Jason.decode!(conn.resp_body)
-      assert response["error"]["code"] == "INVALID_KEY"
+      assert response["error"]["code"] == "NOT_FOUND"
     end
 
     test "rejects missing value", %{token: token} do
@@ -447,6 +448,10 @@ defmodule Concord.Web.APIControllerTest do
       |> Map.put(:body_params, %{"operations" => operations})
       |> put_req_header("authorization", "Bearer #{token}")
       |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
+
+      if conn.status != 200 do
+        IO.puts("DEBUG touch_bulk: Status=#{conn.status}, Body=#{conn.resp_body}")
+      end
 
       assert conn.state == :sent
       assert conn.status == 200

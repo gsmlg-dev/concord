@@ -390,7 +390,10 @@ defmodule Concord.Web.APIController do
   end
 
   defp validate_touch_operation(%{"key" => key, "ttl" => ttl}) when is_binary(key) and is_integer(ttl) and ttl > 0 do
-    validate_key(key)
+    case validate_key(key) do
+      {:ok, _} -> :ok
+      error -> error
+    end
   end
   defp validate_touch_operation(_), do: {:error, :invalid_touch_operation}
 
