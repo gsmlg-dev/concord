@@ -31,36 +31,37 @@ defmodule Concord.Web.APIController do
 
   # GET /api/v1/kv/:key
   def get(conn, key) do
-    with {:ok, key} <- validate_key(key) do
-      with_ttl = get_with_ttl_param(conn)
+    case validate_key(key) do
+      {:ok, key} ->
+        with_ttl = get_with_ttl_param(conn)
 
-      result =
-        if with_ttl do
-          Concord.get_with_ttl(key, token_opts(conn))
-        else
-          Concord.get(key, token_opts(conn))
+        result =
+          if with_ttl do
+            Concord.get_with_ttl(key, token_opts(conn))
+          else
+            Concord.get(key, token_opts(conn))
+          end
+
+        case result do
+          {:ok, value} when not with_ttl ->
+            send_success_response(conn, 200, %{
+              "status" => "ok",
+              "data" => %{"value" => value}
+            })
+
+          {:ok, {value, ttl}} when with_ttl ->
+            send_success_response(conn, 200, %{
+              "status" => "ok",
+              "data" => %{
+                "value" => value,
+                "ttl" => ttl
+              }
+            })
+
+          {:error, reason} ->
+            handle_error(conn, reason, "Key not found")
         end
 
-      case result do
-        {:ok, value} when not with_ttl ->
-          send_success_response(conn, 200, %{
-            "status" => "ok",
-            "data" => %{"value" => value}
-          })
-
-        {:ok, {value, ttl}} when with_ttl ->
-          send_success_response(conn, 200, %{
-            "status" => "ok",
-            "data" => %{
-              "value" => value,
-              "ttl" => ttl
-            }
-          })
-
-        {:error, reason} ->
-          handle_error(conn, reason, "Key not found")
-      end
-    else
       {:error, reason} ->
         handle_validation_error(conn, reason)
     end
@@ -68,15 +69,16 @@ defmodule Concord.Web.APIController do
 
   # DELETE /api/v1/kv/:key
   def delete(conn, key) do
-    with {:ok, key} <- validate_key(key) do
-      case Concord.delete(key, token_opts(conn)) do
-        :ok ->
-          send_success_response(conn, 200, %{"status" => "ok"})
+    case validate_key(key) do
+      {:ok, key} ->
+        case Concord.delete(key, token_opts(conn)) do
+          :ok ->
+            send_success_response(conn, 200, %{"status" => "ok"})
 
-        {:error, reason} ->
-          handle_error(conn, reason, "Failed to delete key")
-      end
-    else
+          {:error, reason} ->
+            handle_error(conn, reason, "Failed to delete key")
+        end
+
       {:error, reason} ->
         handle_validation_error(conn, reason)
     end
@@ -104,18 +106,19 @@ defmodule Concord.Web.APIController do
 
   # GET /api/v1/kv/:key/ttl
   def ttl(conn, key) do
-    with {:ok, key} <- validate_key(key) do
-      case Concord.ttl(key, token_opts(conn)) do
-        {:ok, ttl} ->
-          send_success_response(conn, 200, %{
-            "status" => "ok",
-            "data" => %{"ttl" => ttl}
-          })
+    case validate_key(key) do
+      {:ok, key} ->
+        case Concord.ttl(key, token_opts(conn)) do
+          {:ok, ttl} ->
+            send_success_response(conn, 200, %{
+              "status" => "ok",
+              "data" => %{"ttl" => ttl}
+            })
 
-        {:error, reason} ->
-          handle_error(conn, reason, "Failed to get TTL")
-      end
-    else
+          {:error, reason} ->
+            handle_error(conn, reason, "Failed to get TTL")
+        end
+
       {:error, reason} ->
         handle_validation_error(conn, reason)
     end
@@ -579,50 +582,7 @@ defmodule Concord.Web.APIController do
   end
 
   defp handle_validation_error(conn, reason) do
-    error_map =
-      case reason do
-        :invalid_key ->
-          %{"code" => "INVALID_KEY", "message" => "Key cannot be empty and must be <= 1024 bytes"}
-
-        :invalid_json ->
-          %{"code" => "INVALID_REQUEST", "message" => "Malformed JSON in request body"}
-
-        :invalid_put_params ->
-          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'value' field"}
-
-        :invalid_ttl ->
-          %{"code" => "INVALID_REQUEST", "message" => "TTL must be a positive integer"}
-
-        :invalid_bulk_operations ->
-          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
-
-        :invalid_bulk_get_params ->
-          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
-
-        :invalid_bulk_keys ->
-          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
-
-        :invalid_bulk_touch_operations ->
-          %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
-
-        :empty_operations ->
-          %{"code" => "INVALID_REQUEST", "message" => "Operations list cannot be empty"}
-
-        :empty_keys ->
-          %{"code" => "INVALID_REQUEST", "message" => "Keys list cannot be empty"}
-
-        :batch_too_large ->
-          %{"code" => "BATCH_TOO_LARGE", "message" => "Batch size exceeds 500 operations limit"}
-
-        :invalid_operation ->
-          %{"code" => "INVALID_REQUEST", "message" => "Invalid operation format"}
-
-        :invalid_touch_operation ->
-          %{"code" => "INVALID_REQUEST", "message" => "Invalid touch operation format"}
-
-        _ ->
-          %{"code" => "VALIDATION_ERROR", "message" => "Request validation failed"}
-      end
+    error_map = validation_error_details(reason)
 
     status =
       case reason do
@@ -631,5 +591,51 @@ defmodule Concord.Web.APIController do
       end
 
     send_error_response(conn, status, error_map)
+  end
+
+  defp validation_error_details(reason) do
+    case reason do
+      :invalid_key ->
+        %{"code" => "INVALID_KEY", "message" => "Key cannot be empty and must be <= 1024 bytes"}
+
+      :invalid_json ->
+        %{"code" => "INVALID_REQUEST", "message" => "Malformed JSON in request body"}
+
+      :invalid_put_params ->
+        %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'value' field"}
+
+      :invalid_ttl ->
+        %{"code" => "INVALID_REQUEST", "message" => "TTL must be a positive integer"}
+
+      :invalid_bulk_operations ->
+        %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
+
+      :invalid_bulk_get_params ->
+        %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
+
+      :invalid_bulk_keys ->
+        %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'keys' field"}
+
+      :invalid_bulk_touch_operations ->
+        %{"code" => "INVALID_REQUEST", "message" => "Missing or invalid 'operations' field"}
+
+      :empty_operations ->
+        %{"code" => "INVALID_REQUEST", "message" => "Operations list cannot be empty"}
+
+      :empty_keys ->
+        %{"code" => "INVALID_REQUEST", "message" => "Keys list cannot be empty"}
+
+      :batch_too_large ->
+        %{"code" => "BATCH_TOO_LARGE", "message" => "Batch size exceeds 500 operations limit"}
+
+      :invalid_operation ->
+        %{"code" => "INVALID_REQUEST", "message" => "Invalid operation format"}
+
+      :invalid_touch_operation ->
+        %{"code" => "INVALID_REQUEST", "message" => "Invalid touch operation format"}
+
+      _ ->
+        %{"code" => "VALIDATION_ERROR", "message" => "Request validation failed"}
+    end
   end
 end

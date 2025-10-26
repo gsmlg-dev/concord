@@ -7,7 +7,8 @@ defmodule Concord.Application do
   use Application
   require Logger
 
-  alias Concord.{Auth, Prometheus, StateMachine, Telemetry, TTL, Web}
+  alias Concord.{AuditLog, Auth, EventStream, Prometheus, StateMachine, Telemetry, Tracing, TTL, Web}
+  alias Concord.Tracing.TelemetryBridge
 
   @impl true
   def start(_type, _args) do
@@ -16,17 +17,17 @@ defmodule Concord.Application do
 
     # Attach OpenTelemetry telemetry bridge if tracing is enabled
     if Application.get_env(:concord, :tracing_enabled, false) do
-      Concord.Tracing.TelemetryBridge.attach()
+      TelemetryBridge.attach()
     end
 
     # Attach audit log telemetry handler if enabled
     if audit_log_enabled?() do
-      Concord.AuditLog.TelemetryHandler.attach()
+      AuditLog.TelemetryHandler.attach()
     end
 
     # Attach event stream telemetry handler if enabled
     if event_stream_enabled?() do
-      Concord.EventStream.TelemetryHandler.attach()
+      EventStream.TelemetryHandler.attach()
     end
 
     # Build children list conditionally
@@ -56,7 +57,7 @@ defmodule Concord.Application do
     # Add Audit Log GenServer if enabled
     children =
       if audit_log_enabled?() do
-        children ++ [Concord.AuditLog]
+        children ++ [AuditLog]
       else
         children
       end
@@ -64,7 +65,7 @@ defmodule Concord.Application do
     # Add Event Stream GenStage producer if enabled
     children =
       if event_stream_enabled?() do
-        children ++ [Concord.EventStream]
+        children ++ [EventStream]
       else
         children
       end

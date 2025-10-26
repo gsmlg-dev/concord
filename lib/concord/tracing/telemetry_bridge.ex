@@ -23,6 +23,8 @@ defmodule Concord.Tracing.TelemetryBridge do
 
   require Logger
 
+  alias Concord.Tracing
+
   @telemetry_events [
     [:concord, :api, :put],
     [:concord, :api, :get],
@@ -43,7 +45,7 @@ defmodule Concord.Tracing.TelemetryBridge do
   Called automatically during application startup when tracing is enabled.
   """
   def attach do
-    if Concord.Tracing.enabled?() do
+    if Tracing.enabled?() do
       :telemetry.attach_many(
         "concord-opentelemetry-bridge",
         @telemetry_events,

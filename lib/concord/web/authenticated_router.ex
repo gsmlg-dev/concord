@@ -9,56 +9,59 @@ defmodule Concord.Web.AuthenticatedRouter do
   use Plug.Router
   require Logger
 
-  plug(Concord.Web.AuthPlug)
+  alias Concord.Web.APIController
+  alias Concord.Web.AuthPlug
+
+  plug(AuthPlug)
   plug(:match)
   plug(:dispatch)
 
   # Core CRUD operations
   put "/kv/:key" do
-    Concord.Web.APIController.put(conn, key)
+    APIController.put(conn, key)
   end
 
   get "/kv/:key" do
-    Concord.Web.APIController.get(conn, key)
+    APIController.get(conn, key)
   end
 
   delete "/kv/:key" do
-    Concord.Web.APIController.delete(conn, key)
+    APIController.delete(conn, key)
   end
 
   # Bulk operations (must come before parameterized routes to match correctly)
   post "/kv/bulk" do
-    Concord.Web.APIController.put_bulk(conn)
+    APIController.put_bulk(conn)
   end
 
   post "/kv/bulk/get" do
-    Concord.Web.APIController.get_bulk(conn)
+    APIController.get_bulk(conn)
   end
 
   post "/kv/bulk/delete" do
-    Concord.Web.APIController.delete_bulk(conn)
+    APIController.delete_bulk(conn)
   end
 
   post "/kv/bulk/touch" do
-    Concord.Web.APIController.touch_bulk(conn)
+    APIController.touch_bulk(conn)
   end
 
   # Administrative operations
   get "/kv" do
-    Concord.Web.APIController.get_all(conn)
+    APIController.get_all(conn)
   end
 
   # TTL operations (parameterized routes come after specific routes)
   post "/kv/:key/touch" do
-    Concord.Web.APIController.touch(conn, key)
+    APIController.touch(conn, key)
   end
 
   get "/kv/:key/ttl" do
-    Concord.Web.APIController.ttl(conn, key)
+    APIController.ttl(conn, key)
   end
 
   get "/status" do
-    Concord.Web.APIController.status(conn)
+    APIController.status(conn)
   end
 
   # Catch-all for unknown authenticated routes

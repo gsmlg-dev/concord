@@ -2,6 +2,8 @@ defmodule Concord.EventStream.TelemetryHandler do
   @moduledoc false
   # Telemetry handler that captures Concord operations and publishes them to EventStream
 
+  alias Concord.EventStream
+
   @stream_events [
     [:concord, :api, :put],
     [:concord, :api, :get],
@@ -17,7 +19,7 @@ defmodule Concord.EventStream.TelemetryHandler do
   Attaches the telemetry handler to capture events.
   """
   def attach do
-    if Concord.EventStream.enabled?() do
+    if EventStream.enabled?() do
       :telemetry.attach_many(
         "concord-event-stream-handler",
         @stream_events,
@@ -33,7 +35,7 @@ defmodule Concord.EventStream.TelemetryHandler do
   Detaches the telemetry handler.
   """
   def detach do
-    if Concord.EventStream.enabled?() do
+    if EventStream.enabled?() do
       :telemetry.detach("concord-event-stream-handler")
     end
 
@@ -45,7 +47,7 @@ defmodule Concord.EventStream.TelemetryHandler do
   defp handle_event(event_name, _measurements, metadata, _config) do
     operation = extract_operation(event_name)
     event = build_event(operation, metadata)
-    Concord.EventStream.publish(event)
+    EventStream.publish(event)
   end
 
   defp extract_operation([:concord, :api, operation]), do: operation

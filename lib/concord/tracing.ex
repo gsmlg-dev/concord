@@ -37,6 +37,7 @@ defmodule Concord.Tracing do
   """
 
   require OpenTelemetry.Tracer, as: Tracer
+  alias OpenTelemetry.Span
 
   @doc """
   Executes a function within a new span with the given name and attributes.
@@ -51,7 +52,7 @@ defmodule Concord.Tracing do
   """
   defmacro with_span(span_name, attributes \\ quote(do: %{}), do: block) do
     quote do
-      if Concord.Tracing.enabled?() do
+      if unquote(__MODULE__).enabled?() do
         Tracer.with_span unquote(span_name), %{attributes: unquote(attributes)} do
           unquote(block)
         end
@@ -190,7 +191,7 @@ defmodule Concord.Tracing do
     if enabled?() do
       case Tracer.current_span_ctx() do
         :undefined -> nil
-        span_ctx -> OpenTelemetry.Span.trace_id(span_ctx) |> format_trace_id()
+        span_ctx -> Span.trace_id(span_ctx) |> format_trace_id()
       end
     end
   end
@@ -204,7 +205,7 @@ defmodule Concord.Tracing do
     if enabled?() do
       case Tracer.current_span_ctx() do
         :undefined -> nil
-        span_ctx -> OpenTelemetry.Span.span_id(span_ctx) |> format_span_id()
+        span_ctx -> Span.span_id(span_ctx) |> format_span_id()
       end
     end
   end

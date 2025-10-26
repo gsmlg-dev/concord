@@ -30,6 +30,8 @@ defmodule Concord.Web.TracingPlug do
   import Plug.Conn
   require OpenTelemetry.Tracer, as: Tracer
 
+  alias Concord.Tracing
+
   @behaviour Plug
 
   @impl true
@@ -37,7 +39,7 @@ defmodule Concord.Web.TracingPlug do
 
   @impl true
   def call(conn, _opts) do
-    if Concord.Tracing.enabled?() do
+    if Tracing.enabled?() do
       # Extract trace context from headers
       ctx = :otel_propagator_text_map.extract(conn.req_headers)
       :otel_ctx.attach(ctx)
@@ -76,15 +78,13 @@ defmodule Concord.Web.TracingPlug do
   end
 
   defp execute_request(conn) do
-    try do
-      # Let the request continue through the pipeline
-      conn
-    rescue
-      e ->
-        # Record exception in span
-        Concord.Tracing.record_exception(e, __STACKTRACE__)
-        reraise e, __STACKTRACE__
-    end
+    # Let the request continue through the pipeline
+    conn
+  rescue
+    e ->
+      # Record exception in span
+      Tracing.record_exception(e, __STACKTRACE__)
+      reraise e, __STACKTRACE__
   end
 
   defp set_span_status(status) when status >= 500 do

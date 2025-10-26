@@ -56,6 +56,8 @@ defmodule Concord.Index do
   - Reindexing existing data requires calling `reindex/1`
   """
 
+  alias Concord.StateMachine
+
   @timeout 5_000
   @cluster_name :concord_cluster
 
@@ -187,7 +189,7 @@ defmodule Concord.Index do
   def lookup(name, value, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     server_id = {@cluster_name, node()}
-    query_fun = fn state -> Concord.StateMachine.query({:index_lookup, name, value}, state) end
+    query_fun = fn state -> StateMachine.query({:index_lookup, name, value}, state) end
 
     case :ra.consistent_query(server_id, query_fun, timeout) do
       {:ok, {:ok, keys}, _} when is_list(keys) -> {:ok, keys}
@@ -217,7 +219,7 @@ defmodule Concord.Index do
   def list(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     server_id = {@cluster_name, node()}
-    query_fun = fn state -> Concord.StateMachine.query(:list_indexes, state) end
+    query_fun = fn state -> StateMachine.query(:list_indexes, state) end
 
     case :ra.consistent_query(server_id, query_fun, timeout) do
       {:ok, {:ok, indexes}, _} when is_list(indexes) -> {:ok, indexes}
@@ -256,7 +258,7 @@ defmodule Concord.Index do
       if name in indexes do
         # Get the extractor for this index
         query_fun = fn state ->
-          Concord.StateMachine.query({:get_index_extractor, name}, state)
+          StateMachine.query({:get_index_extractor, name}, state)
         end
 
         case :ra.consistent_query(server_id, query_fun, timeout) do
@@ -293,44 +295,40 @@ defmodule Concord.Index do
 
   @doc false
   def index_value(table_name, key, value, extractor) do
-    try do
-      case extractor.(value) do
-        nil ->
-          :ok
+    case extractor.(value) do
+      nil ->
+        :ok
 
-        index_values when is_list(index_values) ->
-          Enum.each(index_values, fn idx_val ->
-            add_to_index(table_name, idx_val, key)
-          end)
+      index_values when is_list(index_values) ->
+        Enum.each(index_values, fn idx_val ->
+          add_to_index(table_name, idx_val, key)
+        end)
 
-        index_value ->
-          add_to_index(table_name, index_value, key)
-      end
-    rescue
-      # Silently ignore extractor errors
-      _ -> :ok
+      index_value ->
+        add_to_index(table_name, index_value, key)
     end
+  rescue
+    # Silently ignore extractor errors
+    _ -> :ok
   end
 
   @doc false
   def remove_from_index(table_name, key, value, extractor) do
-    try do
-      case extractor.(value) do
-        nil ->
-          :ok
+    case extractor.(value) do
+      nil ->
+        :ok
 
-        index_values when is_list(index_values) ->
-          Enum.each(index_values, fn idx_val ->
-            remove_key_from_index(table_name, idx_val, key)
-          end)
+      index_values when is_list(index_values) ->
+        Enum.each(index_values, fn idx_val ->
+          remove_key_from_index(table_name, idx_val, key)
+        end)
 
-        index_value ->
-          remove_key_from_index(table_name, index_value, key)
-      end
-    rescue
-      # Silently ignore extractor errors
-      _ -> :ok
+      index_value ->
+        remove_key_from_index(table_name, index_value, key)
     end
+  rescue
+    # Silently ignore extractor errors
+    _ -> :ok
   end
 
   defp add_to_index(table_name, index_value, key) do
