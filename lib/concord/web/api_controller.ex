@@ -158,11 +158,30 @@ defmodule Concord.Web.APIController do
   # POST /api/v1/kv/bulk/get
   def get_bulk(conn) do
     with {:ok, body} <- read_and_parse_body(conn),
-         {:ok, params} <- validate_bulk_get_params(body) do
-      case Concord.get_many(params.keys, token_opts(conn)) do
+         {:ok, keys} <- validate_bulk_keys(body) do
+      with_ttl = Map.get(body, "with_ttl", false)
+
+      result =
+        if with_ttl do
+          # When TTL is requested, fetch each key individually with TTL
+          results =
+            Enum.map(keys, fn key ->
+              case Concord.get_with_ttl(key, token_opts(conn)) do
+                {:ok, {value, ttl}} -> {key, {:ok, {value, ttl}}}
+                {:error, reason} -> {key, {:error, reason}}
+              end
+            end)
+            |> Map.new()
+
+          {:ok, results}
+        else
+          Concord.get_many(keys, token_opts(conn))
+        end
+
+      case result do
         {:ok, results} ->
           # Transform results to API format
-          api_results = transform_bulk_get_results(results, params.with_ttl)
+          api_results = transform_bulk_get_results(results, with_ttl)
 
           send_success_response(conn, 200, %{
             "status" => "ok",
@@ -184,9 +203,12 @@ defmodule Concord.Web.APIController do
          {:ok, keys} <- validate_bulk_keys(body) do
       case Concord.delete_many(keys, token_opts(conn)) do
         {:ok, results} ->
+          # Transform map results to list format expected by API
+          api_results = transform_bulk_delete_results(results)
+
           send_success_response(conn, 200, %{
             "status" => "ok",
-            "data" => results
+            "data" => api_results
           })
 
         {:error, reason} ->
@@ -242,7 +264,9 @@ defmodule Concord.Web.APIController do
       {:ok, all_data} ->
         limited_data =
           if limit do
-            Enum.take(all_data, limit)
+            all_data
+            |> Enum.take(limit)
+            |> Map.new()
           else
             all_data
           end
@@ -371,15 +395,6 @@ defmodule Concord.Web.APIController do
 
   defp validate_bulk_operation(_), do: {:error, :invalid_operation}
 
-  defp validate_bulk_get_params(%{"keys" => keys} = params) when is_list(keys) do
-    with :ok <- validate_bulk_keys_list(keys) do
-      with_ttl = Map.get(params, "with_ttl", false)
-      {:ok, %{keys: keys, with_ttl: with_ttl}}
-    end
-  end
-
-  defp validate_bulk_get_params(_), do: {:error, :invalid_bulk_get_params}
-
   defp validate_bulk_keys(%{"keys" => keys}) when is_list(keys) do
     case validate_bulk_keys_list(keys) do
       :ok -> {:ok, keys}
@@ -395,9 +410,15 @@ defmodule Concord.Web.APIController do
     if length(keys) > 500 do
       {:error, :batch_too_large}
     else
-      case Enum.find_value(keys, :ok, fn key -> validate_key(key) end) do
-        :ok -> :ok
-        error -> error
+      # Validate each key, Enum.find_value returns first error or :ok
+      case Enum.find_value(keys, fn key ->
+             case validate_key(key) do
+               {:ok, _} -> nil  # nil means continue searching
+               error -> error    # return first error
+             end
+           end) do
+        nil -> :ok        # all keys valid
+        error -> error    # found an error
       end
     end
   end
@@ -456,6 +477,18 @@ defmodule Concord.Web.APIController do
       end
     end)
     |> Map.new()
+  end
+
+  defp transform_bulk_delete_results(results) do
+    Enum.map(results, fn {key, result} ->
+      case result do
+        :ok ->
+          %{"key" => key, "status" => "ok"}
+
+        {:error, reason} ->
+          %{"key" => key, "status" => "error", "error" => Atom.to_string(reason)}
+      end
+    end)
   end
 
   defp get_with_ttl_param(conn) do
@@ -522,7 +555,6 @@ defmodule Concord.Web.APIController do
         :cluster_not_ready -> "CLUSTER_UNAVAILABLE"
         :batch_too_large -> "BATCH_TOO_LARGE"
         :unauthorized -> "UNAUTHORIZED"
-        :no_ttl -> "NO_TTL"
         _ -> "OPERATION_FAILED"
       end
 

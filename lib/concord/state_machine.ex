@@ -659,8 +659,8 @@ defmodule Concord.StateMachine do
                 remaining_ttl = max(0, expires_at - current_timestamp())
                 {:ok, remaining_ttl}
               else
-                # Key exists but has no TTL
-                {:error, :no_ttl}
+                # Key exists but has no TTL - return nil for backward compatibility
+                {:ok, nil}
               end
             end
 
