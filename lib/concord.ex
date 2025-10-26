@@ -548,25 +548,7 @@ defmodule Concord do
           {key, value, expires_at} -> {key, value, expires_at}
         end)
 
-      result =
-        case command({:put_many, formatted_operations}, timeout) do
-          {:ok, {:ok, results}, _} ->
-            # Convert StateMachine results to map format
-            success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
-            {:ok, success_map}
-
-          {:ok, {:error, reason}, _} ->
-            {:error, reason}
-
-          {:timeout, _} ->
-            {:error, :timeout}
-
-          {:error, :noproc} ->
-            {:error, :cluster_not_ready}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+      result = process_batch_command_result(command({:put_many, formatted_operations}, timeout))
 
       duration = System.monotonic_time() - start_time
 
@@ -669,25 +651,7 @@ defmodule Concord do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
 
-      result =
-        case command({:delete_many, keys}, timeout) do
-          {:ok, {:ok, results}, _} ->
-            # Convert StateMachine results to map format
-            success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
-            {:ok, success_map}
-
-          {:ok, {:error, reason}, _} ->
-            {:error, reason}
-
-          {:timeout, _} ->
-            {:error, :timeout}
-
-          {:error, :noproc} ->
-            {:error, :cluster_not_ready}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+      result = process_batch_command_result(command({:delete_many, keys}, timeout))
 
       duration = System.monotonic_time() - start_time
 
@@ -754,6 +718,28 @@ defmodule Concord do
   end
 
   # Private helpers
+
+  # Helper function to process batch command results
+  defp process_batch_command_result(command_result) do
+    case command_result do
+      {:ok, {:ok, results}, _} ->
+        # Convert StateMachine results to map format
+        success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
+        {:ok, success_map}
+
+      {:ok, {:error, reason}, _} ->
+        {:error, reason}
+
+      {:timeout, _} ->
+        {:error, :timeout}
+
+      {:error, :noproc} ->
+        {:error, :cluster_not_ready}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   defp command(cmd, timeout) do
     :ra.process_command(server_id(), cmd, timeout)
