@@ -34,7 +34,7 @@ defmodule Concord.Web.Supervisor do
 
       port_str ->
         case Integer.parse(port_str) do
-          {port, ""} when port > 0 and port <= 65535 -> port
+          {port, ""} when port > 0 and port <= 65_535 -> port
           _ -> raise "Invalid CONCORD_API_PORT: #{port_str}. Must be 1-65535."
         end
     end

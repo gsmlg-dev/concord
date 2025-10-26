@@ -22,9 +22,9 @@ defmodule Concord.StateMachine do
   defp extract_value(value), do: {value, nil}
 
   # No expiration
-  defp is_expired?(nil), do: false
+  defp expired?(nil), do: false
 
-  defp is_expired?(expires_at) do
+  defp expired?(expires_at) do
     System.system_time(:second) > expires_at
   end
 
@@ -149,7 +149,7 @@ defmodule Concord.StateMachine do
         [{^key, stored_data}] ->
           case extract_value(stored_data) do
             {current_value, current_expires_at} ->
-              if is_expired?(current_expires_at) do
+              if expired?(current_expires_at) do
                 {:error, :not_found}
               else
                 # Check condition
@@ -206,7 +206,7 @@ defmodule Concord.StateMachine do
         [{^key, stored_data}] ->
           case extract_value(stored_data) do
             {current_value, current_expires_at} ->
-              if is_expired?(current_expires_at) do
+              if expired?(current_expires_at) do
                 {:error, :not_found}
               else
                 # Check condition
@@ -302,7 +302,7 @@ defmodule Concord.StateMachine do
         case :ets.lookup(:concord_store, key) do
           [{^key, stored_data}] ->
             case extract_value(stored_data) do
-              {_value, expires_at} -> is_expired?(expires_at)
+              {_value, expires_at} -> expired?(expires_at)
               _ -> false
             end
 
@@ -387,7 +387,7 @@ defmodule Concord.StateMachine do
           [{^key, stored_data}] ->
             case extract_value(stored_data) do
               {value, expires_at} ->
-                if is_expired?(expires_at) do
+                if expired?(expires_at) do
                   {key, {:error, :not_found}}
                 else
                   {key, {:ok, value}}
@@ -553,7 +553,7 @@ defmodule Concord.StateMachine do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {value, expires_at} ->
-            if is_expired?(expires_at) do
+            if expired?(expires_at) do
               # Key has expired, return not found
               {:error, :not_found}
             else
@@ -574,7 +574,7 @@ defmodule Concord.StateMachine do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {value, expires_at} ->
-            if is_expired?(expires_at) do
+            if expired?(expires_at) do
               {:error, :not_found}
             else
               remaining_ttl =
@@ -604,7 +604,7 @@ defmodule Concord.StateMachine do
       Enum.reduce(all, [], fn {key, stored_data}, acc ->
         case extract_value(stored_data) do
           {value, expires_at} ->
-            if not is_expired?(expires_at) do
+            if not expired?(expires_at) do
               [{key, value} | acc]
             else
               acc
@@ -626,7 +626,7 @@ defmodule Concord.StateMachine do
       Enum.reduce(all, [], fn {key, stored_data}, acc ->
         case extract_value(stored_data) do
           {value, expires_at} ->
-            if not is_expired?(expires_at) do
+            if not expired?(expires_at) do
               remaining_ttl =
                 if expires_at do
                   max(0, expires_at - current_timestamp())
@@ -652,7 +652,7 @@ defmodule Concord.StateMachine do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {_value, expires_at} ->
-            if is_expired?(expires_at) do
+            if expired?(expires_at) do
               {:error, :not_found}
             else
               remaining_ttl =
@@ -681,7 +681,7 @@ defmodule Concord.StateMachine do
           [{^key, stored_data}] ->
             case extract_value(stored_data) do
               {value, expires_at} ->
-                if is_expired?(expires_at) do
+                if expired?(expires_at) do
                   {key, {:error, :not_found}}
                 else
                   {key, {:ok, value}}
