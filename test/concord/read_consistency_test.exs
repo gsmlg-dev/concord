@@ -273,8 +273,8 @@ defmodule Concord.ReadConsistencyTest do
       # Put with very short TTL
       assert :ok = Concord.put_with_ttl(key, value, 1)
 
-      # Wait for expiration (add a bit more buffer time)
-      :timer.sleep(1500)
+      # Wait for expiration (need to wait longer than 1 second to ensure expiry)
+      :timer.sleep(2100)
 
       # Should return not_found with all consistency levels
       result_eventual = Concord.get(key, consistency: :eventual)

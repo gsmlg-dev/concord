@@ -655,14 +655,13 @@ defmodule Concord.StateMachine do
             if expired?(expires_at) do
               {:error, :not_found}
             else
-              remaining_ttl =
-                if expires_at do
-                  max(0, expires_at - current_timestamp())
-                else
-                  nil
-                end
-
-              {:ok, remaining_ttl}
+              if expires_at do
+                remaining_ttl = max(0, expires_at - current_timestamp())
+                {:ok, remaining_ttl}
+              else
+                # Key exists but has no TTL
+                {:error, :no_ttl}
+              end
             end
 
           _ ->

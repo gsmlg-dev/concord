@@ -522,6 +522,7 @@ defmodule Concord.Web.APIController do
         :cluster_not_ready -> "CLUSTER_UNAVAILABLE"
         :batch_too_large -> "BATCH_TOO_LARGE"
         :unauthorized -> "UNAUTHORIZED"
+        :no_ttl -> "NO_TTL"
         _ -> "OPERATION_FAILED"
       end
 
