@@ -7,7 +7,17 @@ defmodule Concord.Application do
   use Application
   require Logger
 
-  alias Concord.{AuditLog, Auth, EventStream, Prometheus, StateMachine, Telemetry, Tracing, TTL, Web}
+  alias Concord.{
+    AuditLog,
+    Auth,
+    EventStream,
+    Prometheus,
+    StateMachine,
+    Telemetry,
+    TTL,
+    Web
+  }
+
   alias Concord.Tracing.TelemetryBridge
 
   @impl true

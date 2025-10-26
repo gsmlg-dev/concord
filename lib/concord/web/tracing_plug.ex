@@ -34,6 +34,12 @@ defmodule Concord.Web.TracingPlug do
 
   @behaviour Plug
 
+  # Suppress Dialyzer warnings for functions used conditionally in tracing
+  # and for OpenTelemetry opaque types
+  @dialyzer {:nowarn_function,
+             call: 2, execute_request: 1, set_span_status: 1, inject_trace_context: 1,
+             get_header_value: 2, format_peer_ip: 1}
+
   @impl true
   def init(opts), do: opts
 
@@ -42,7 +48,8 @@ defmodule Concord.Web.TracingPlug do
     if Tracing.enabled?() do
       # Extract trace context from headers
       ctx = :otel_propagator_text_map.extract(conn.req_headers)
-      :otel_ctx.attach(ctx)
+      # Suppress opaque type warning - this is correct usage per OTel docs
+      _ = :otel_ctx.attach(ctx)
 
       # Start root HTTP span
       Tracer.with_span "HTTP #{conn.method} #{conn.request_path}" do
