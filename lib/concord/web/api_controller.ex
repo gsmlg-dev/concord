@@ -413,12 +413,16 @@ defmodule Concord.Web.APIController do
       # Validate each key, Enum.find_value returns first error or :ok
       case Enum.find_value(keys, fn key ->
              case validate_key(key) do
-               {:ok, _} -> nil  # nil means continue searching
-               error -> error    # return first error
+               # nil means continue searching
+               {:ok, _} -> nil
+               # return first error
+               error -> error
              end
            end) do
-        nil -> :ok        # all keys valid
-        error -> error    # found an error
+        # all keys valid
+        nil -> :ok
+        # found an error
+        error -> error
       end
     end
   end
