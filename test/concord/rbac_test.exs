@@ -8,15 +8,16 @@ defmodule Concord.RBACTest do
     # Start the application to initialize ETS tables
     :ok = Concord.TestHelper.start_test_cluster()
 
-    # Initialize RBAC tables (since full application isn't started in tests)
-    RBAC.init_tables()
+    # Initialize tables if they don't exist
+    if :ets.whereis(:concord_roles) == :undefined do
+      RBAC.init_tables()
+    end
 
-    # Initialize Auth token table if it doesn't exist
     if :ets.whereis(:concord_tokens) == :undefined do
       :ets.new(:concord_tokens, [:set, :public, :named_table])
     end
 
-    # Wait a bit for tables to be initialized
+    # Wait a bit for the application to fully start
     Process.sleep(50)
 
     # Clean up any existing roles, grants, and ACLs

@@ -6,13 +6,21 @@ defmodule Concord.MultiTenancyTest do
 
   setup do
     :ok = Concord.TestHelper.start_test_cluster()
-    MultiTenancy.init_tables()
-    RBAC.init_tables()
+
+    # Initialize tables if they don't exist
+    if :ets.whereis(:concord_tenants) == :undefined do
+      MultiTenancy.init_tables()
+    end
+
+    if :ets.whereis(:concord_roles) == :undefined do
+      RBAC.init_tables()
+    end
 
     if :ets.whereis(:concord_tokens) == :undefined do
       :ets.new(:concord_tokens, [:set, :public, :named_table])
     end
 
+    # Wait a bit for the application to fully start
     Process.sleep(50)
 
     # Clean up tables
