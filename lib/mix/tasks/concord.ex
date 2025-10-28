@@ -5,8 +5,8 @@ defmodule Mix.Tasks.Concord.Cluster do
 
   use Mix.Task
   alias Concord.Auth
-  alias Concord.RBAC
   alias Concord.MultiTenancy
+  alias Concord.RBAC
 
   @shortdoc "Manages Concord cluster operations"
 
