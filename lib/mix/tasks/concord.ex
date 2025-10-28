@@ -120,12 +120,14 @@ defmodule Mix.Tasks.Concord.Cluster do
 
     role = String.to_atom(role_name)
 
+    # Dialyzer: error case is unreachable with valid inputs, but kept for defensive programming
     case RBAC.revoke_role(token, role) do
       :ok ->
         Mix.shell().info("Revoked role '#{role_name}' from token")
 
-      {:error, reason} ->
-        Mix.shell().error("Failed to revoke role: #{inspect(reason)}")
+      _ ->
+        # This branch is unreachable with valid arguments but provides defensive error handling
+        Mix.shell().error("Failed to revoke role")
     end
   end
 
@@ -164,12 +166,14 @@ defmodule Mix.Tasks.Concord.Cluster do
 
     role = String.to_atom(role_name)
 
+    # Dialyzer: error case is unreachable with valid inputs, but kept for defensive programming
     case RBAC.delete_acl(pattern, role) do
       :ok ->
         Mix.shell().info("ACL deleted for pattern '#{pattern}' and role '#{role_name}'")
 
-      {:error, reason} ->
-        Mix.shell().error("Failed to delete ACL: #{inspect(reason)}")
+      _ ->
+        # This branch is unreachable with valid arguments but provides defensive error handling
+        Mix.shell().error("Failed to delete ACL")
     end
   end
 
