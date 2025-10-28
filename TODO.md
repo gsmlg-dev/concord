@@ -146,11 +146,14 @@ Concord has successfully completed all Phase 3 requirements from the design spec
     - [ ] Rollback capabilities
 
 ### Security Enhancements
-11. **Role-Based Access Control (RBAC)**
-    - [ ] Fine-grained permission system
-    - [ ] User roles and scopes
-    - [ ] Per-key access control lists
-    - [ ] Admin management interface
+11. **Role-Based Access Control (RBAC)** ✅ **COMPLETED**
+    - [x] Fine-grained permission system with predefined and custom roles
+    - [x] Role management (create, delete, grant, revoke)
+    - [x] Per-key ACL rules with wildcard pattern matching
+    - [x] Mix CLI management interface for roles and ACLs
+    - [x] Token-to-role mapping with additive permissions
+    - [x] Backward compatibility with simple token permissions
+    - [x] Comprehensive test coverage (34 tests)
 
 12. **TLS Encryption** ✅ **COMPLETED**
     - [x] HTTPS support for HTTP API

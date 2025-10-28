@@ -12,6 +12,7 @@ defmodule Concord.Application do
     Auth,
     EventStream,
     Prometheus,
+    RBAC,
     StateMachine,
     Telemetry,
     TTL,
@@ -22,6 +23,9 @@ defmodule Concord.Application do
 
   @impl true
   def start(_type, _args) do
+    # Initialize RBAC tables
+    RBAC.init_tables()
+
     # Attach telemetry handlers
     Telemetry.setup()
 
