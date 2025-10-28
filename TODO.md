@@ -213,7 +213,7 @@ Concord has successfully completed all Phase 3 requirements from the design spec
     - [x] Count and bulk delete operations
     - [x] Combined filters
     - [x] Conditional updates (compare-and-swap, distributed locks)
-    - [ ] Secondary indexes (future)
+    - [x] Secondary indexes (value-based lookups with custom extractors)
 
 ## 📋 Implementation Priorities
 
@@ -230,7 +230,7 @@ Concord has successfully completed all Phase 3 requirements from the design spec
 ### Long Term (6+ months)
 7. Multi-datacenter support (global deployment scenarios)
 8. RBAC and enhanced security (enterprise requirements)
-9. Advanced query capabilities (complex use case support)
+9. ✅ Advanced query capabilities (COMPLETED - secondary indexes implemented)
 
 ## 🎯 Success Metrics
 
