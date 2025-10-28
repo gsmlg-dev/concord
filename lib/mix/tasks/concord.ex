@@ -6,6 +6,7 @@ defmodule Mix.Tasks.Concord.Cluster do
   use Mix.Task
   alias Concord.Auth
   alias Concord.RBAC
+  alias Concord.MultiTenancy
 
   @shortdoc "Manages Concord cluster operations"
 
@@ -172,6 +173,148 @@ defmodule Mix.Tasks.Concord.Cluster do
     end
   end
 
+  # Tenant Management Commands
+  def run(["tenant", "create", tenant_id | opts_list]) do
+    Mix.Task.run("app.start")
+
+    tenant_atom = String.to_atom(tenant_id)
+
+    # Parse optional arguments
+    opts =
+      Enum.reduce(opts_list, [], fn opt, acc ->
+        case String.split(opt, "=", parts: 2) do
+          ["--name", value] -> Keyword.put(acc, :name, value)
+          ["--max-keys", value] -> Keyword.put(acc, :max_keys, String.to_integer(value))
+          ["--max-storage", value] -> Keyword.put(acc, :max_storage_bytes, String.to_integer(value))
+          ["--max-ops", value] -> Keyword.put(acc, :max_ops_per_sec, String.to_integer(value))
+          ["--namespace", value] -> Keyword.put(acc, :namespace, value)
+          _ -> acc
+        end
+      end)
+
+    case MultiTenancy.create_tenant(tenant_atom, opts) do
+      {:ok, tenant} ->
+        Mix.shell().info("✓ Created tenant: #{tenant.id}")
+        Mix.shell().info("  Name: #{tenant.name}")
+        Mix.shell().info("  Namespace: #{tenant.namespace}")
+        Mix.shell().info("  Role: #{tenant.role}")
+        Mix.shell().info("")
+        Mix.shell().info("  Quotas:")
+        Mix.shell().info("    Max Keys: #{format_quota(tenant.quotas.max_keys)}")
+        Mix.shell().info("    Max Storage: #{format_bytes(tenant.quotas.max_storage_bytes)}")
+        Mix.shell().info("    Max Ops/Sec: #{format_quota(tenant.quotas.max_ops_per_sec)}")
+        Mix.shell().info("")
+        Mix.shell().info("To grant a token access to this tenant:")
+        Mix.shell().info("  mix concord.cluster role grant <token> #{tenant.role}")
+
+      {:error, :tenant_exists} ->
+        Mix.shell().error("✗ Tenant #{tenant_id} already exists")
+
+      {:error, reason} ->
+        Mix.shell().error("✗ Failed to create tenant: #{inspect(reason)}")
+    end
+  end
+
+  def run(["tenant", "list" | _]) do
+    Mix.Task.run("app.start")
+
+    case MultiTenancy.list_tenants() do
+      {:ok, []} ->
+        Mix.shell().info("No tenants found")
+
+      {:ok, tenants} ->
+        Mix.shell().info("Tenants (#{length(tenants)}):")
+        Mix.shell().info("")
+
+        Enum.each(tenants, fn tenant ->
+          Mix.shell().info("#{tenant.id} - #{tenant.name}")
+          Mix.shell().info("  Namespace: #{tenant.namespace}")
+          Mix.shell().info("  Role: #{tenant.role}")
+          Mix.shell().info("  Usage: #{tenant.usage.key_count} keys, #{format_bytes(tenant.usage.storage_bytes)}, #{tenant.usage.ops_last_second} ops/sec")
+          Mix.shell().info("  Quotas: #{format_quota(tenant.quotas.max_keys)} keys, #{format_bytes(tenant.quotas.max_storage_bytes)}, #{format_quota(tenant.quotas.max_ops_per_sec)} ops/sec")
+          Mix.shell().info("")
+        end)
+    end
+  end
+
+  def run(["tenant", "delete", tenant_id | _]) do
+    Mix.Task.run("app.start")
+
+    tenant_atom = String.to_atom(tenant_id)
+
+    case MultiTenancy.delete_tenant(tenant_atom) do
+      :ok ->
+        Mix.shell().info("✓ Deleted tenant: #{tenant_id}")
+        Mix.shell().info("  Note: Tenant keys remain in storage")
+
+      {:error, :not_found} ->
+        Mix.shell().error("✗ Tenant not found: #{tenant_id}")
+
+      {:error, reason} ->
+        Mix.shell().error("✗ Failed to delete tenant: #{inspect(reason)}")
+    end
+  end
+
+  def run(["tenant", "usage", tenant_id | _]) do
+    Mix.Task.run("app.start")
+
+    tenant_atom = String.to_atom(tenant_id)
+
+    case MultiTenancy.get_tenant(tenant_atom) do
+      {:ok, tenant} ->
+        Mix.shell().info("Tenant: #{tenant.id} - #{tenant.name}")
+        Mix.shell().info("")
+        Mix.shell().info("Current Usage:")
+        Mix.shell().info("  Keys: #{tenant.usage.key_count} / #{format_quota(tenant.quotas.max_keys)}")
+        Mix.shell().info("  Storage: #{format_bytes(tenant.usage.storage_bytes)} / #{format_bytes(tenant.quotas.max_storage_bytes)}")
+        Mix.shell().info("  Ops/Sec: #{tenant.usage.ops_last_second} / #{format_quota(tenant.quotas.max_ops_per_sec)}")
+        Mix.shell().info("")
+
+        # Calculate percentages
+        key_pct =
+          if tenant.quotas.max_keys == :unlimited,
+            do: 0,
+            else: Float.round(tenant.usage.key_count / tenant.quotas.max_keys * 100, 2)
+
+        storage_pct =
+          if tenant.quotas.max_storage_bytes == :unlimited,
+            do: 0,
+            else: Float.round(tenant.usage.storage_bytes / tenant.quotas.max_storage_bytes * 100, 2)
+
+        Mix.shell().info("Utilization:")
+        Mix.shell().info("  Keys: #{key_pct}%")
+        Mix.shell().info("  Storage: #{storage_pct}%")
+
+      {:error, :not_found} ->
+        Mix.shell().error("✗ Tenant not found: #{tenant_id}")
+    end
+  end
+
+  def run(["tenant", "quota", tenant_id, quota_type, value | _]) do
+    Mix.Task.run("app.start")
+
+    tenant_atom = String.to_atom(tenant_id)
+    quota_atom = String.to_atom(quota_type)
+
+    quota_value =
+      case value do
+        "unlimited" -> :unlimited
+        n -> String.to_integer(n)
+      end
+
+    case MultiTenancy.update_quota(tenant_atom, quota_atom, quota_value) do
+      {:ok, tenant} ->
+        Mix.shell().info("✓ Updated #{quota_type} for tenant #{tenant_id}")
+        Mix.shell().info("  New value: #{format_quota(Map.get(tenant.quotas, quota_atom))}")
+
+      {:error, :not_found} ->
+        Mix.shell().error("✗ Tenant not found: #{tenant_id}")
+
+      {:error, reason} ->
+        Mix.shell().error("✗ Failed to update quota: #{inspect(reason)}")
+    end
+  end
+
   def run(_) do
     Mix.shell().info("""
     Usage:
@@ -193,6 +336,29 @@ defmodule Mix.Tasks.Concord.Cluster do
       mix concord.cluster acl create PATTERN ROLE PERMS - Create ACL (e.g., "users:*" viewer read)
       mix concord.cluster acl list                      - List all ACLs
       mix concord.cluster acl delete PATTERN ROLE       - Delete an ACL
+
+      Tenant Management:
+      mix concord.cluster tenant create ID [OPTIONS]    - Create tenant
+        Options: --name="Name" --max-keys=10000 --max-storage=100000000 --max-ops=1000 --namespace="pattern"
+      mix concord.cluster tenant list                   - List all tenants
+      mix concord.cluster tenant delete ID              - Delete tenant
+      mix concord.cluster tenant usage ID               - Show tenant usage statistics
+      mix concord.cluster tenant quota ID TYPE VALUE    - Update quota (max_keys, max_storage_bytes, max_ops_per_sec)
     """)
+  end
+
+  # Helper functions for formatting
+  defp format_quota(:unlimited), do: "unlimited"
+  defp format_quota(value) when is_integer(value), do: to_string(value)
+
+  defp format_bytes(:unlimited), do: "unlimited"
+
+  defp format_bytes(bytes) when is_integer(bytes) do
+    cond do
+      bytes >= 1_000_000_000 -> "#{Float.round(bytes / 1_000_000_000, 2)} GB"
+      bytes >= 1_000_000 -> "#{Float.round(bytes / 1_000_000, 2)} MB"
+      bytes >= 1_000 -> "#{Float.round(bytes / 1_000, 2)} KB"
+      true -> "#{bytes} bytes"
+    end
   end
 end

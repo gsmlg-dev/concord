@@ -11,6 +11,7 @@ defmodule Concord.Application do
     AuditLog,
     Auth,
     EventStream,
+    MultiTenancy,
     Prometheus,
     RBAC,
     StateMachine,
@@ -25,6 +26,9 @@ defmodule Concord.Application do
   def start(_type, _args) do
     # Initialize RBAC tables
     RBAC.init_tables()
+
+    # Initialize multi-tenancy tables
+    MultiTenancy.init_tables()
 
     # Attach telemetry handlers
     Telemetry.setup()
@@ -54,6 +58,8 @@ defmodule Concord.Application do
       Auth.TokenStore,
       # Start TTL manager for periodic cleanup
       {TTL, []},
+      # Start multi-tenancy rate limiter
+      MultiTenancy.RateLimiter,
       # Start HTTP API web server
       Web.Supervisor,
       # Start the Concord cluster after a brief delay
