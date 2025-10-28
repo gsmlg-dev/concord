@@ -58,6 +58,28 @@ mix concord.cluster token create
 
 # Revoke a token
 mix concord.cluster token revoke <token>
+
+# Generate self-signed TLS certificates for development
+mix concord.gen.cert
+
+# Generate with custom options
+mix concord.gen.cert --out priv/cert --host myhost.local --days 730
+```
+
+### TLS/HTTPS Configuration
+```bash
+# Enable HTTPS in config/dev.exs or config/prod.exs
+config :concord, :tls,
+  enabled: true,
+  certfile: "priv/cert/selfsigned.pem",
+  keyfile: "priv/cert/selfsigned_key.pem"
+
+# For production, use CA-signed certificates:
+config :concord, :tls,
+  enabled: true,
+  certfile: "/etc/letsencrypt/live/yourdomain.com/fullchain.pem",
+  keyfile: "/etc/letsencrypt/live/yourdomain.com/privkey.pem",
+  cacertfile: "/etc/letsencrypt/live/yourdomain.com/chain.pem"  # Optional: for client cert verification
 ```
 
 ### Testing with Multiple Nodes
@@ -87,9 +109,12 @@ The test suite is configured with `--no-start` alias to avoid automatic cluster 
 - **Concord.TTL** - Time-to-live key expiration management
 - **Concord.Backup** - Snapshot-based backup and restore
 - **Concord.Query** - Advanced query language (pattern matching, ranges, predicates)
-- **Concord.Index** - Secondary indexes for value-based lookups (WIP)
+- **Concord.Index** - Secondary indexes for value-based lookups
 - **Concord.EventStream** - Real-time CDC event streaming with GenStage
-- **Concord.Web** - HTTP API with OpenAPI/Swagger (Plug + Bandit)
+- **Concord.Web** - HTTP/HTTPS API with OpenAPI/Swagger (Plug + Bandit)
+  - TLS/HTTPS support with configurable certificates
+  - Secure cipher suites (TLS 1.2 and 1.3)
+  - Optional client certificate verification
 
 ### Key Dependencies
 - **ra** - Raft consensus algorithm implementation
