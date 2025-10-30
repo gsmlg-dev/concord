@@ -35,8 +35,16 @@ defmodule Concord.StateMachine do
 
   @impl :ra_machine
   def init(_config) do
-    # Create the ETS table with a known name
-    _table = :ets.new(:concord_store, [:set, :public, :named_table])
+    # Create the ETS table with a known name if it doesn't already exist
+    # This allows the state machine to be reused in tests
+    case :ets.whereis(:concord_store) do
+      :undefined ->
+        :ets.new(:concord_store, [:set, :public, :named_table])
+
+      _table ->
+        :ok
+    end
+
     # Return simple state similar to ra_machine_simple
     # data map will store index definitions: %{index_name => extractor_function}
     {:concord_kv, %{indexes: %{}}}
