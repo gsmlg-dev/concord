@@ -253,7 +253,7 @@ defmodule Concord.MultiTenancy do
   @spec update_quota(tenant_id(), atom(), quota()) :: {:ok, tenant()} | {:error, term()}
   def update_quota(tenant_id, quota_type, value)
       when is_atom(tenant_id) and quota_type in [:max_keys, :max_storage_bytes, :max_ops_per_sec] and
-             (is_integer(value) and value >= 0 or value == :unlimited) do
+             ((is_integer(value) and value >= 0) or value == :unlimited) do
     case get_tenant(tenant_id) do
       {:ok, tenant} ->
         updated_quotas = Map.put(tenant.quotas, quota_type, value)
@@ -352,7 +352,8 @@ defmodule Concord.MultiTenancy do
       iex> Concord.MultiTenancy.record_operation(:acme, :write, key_delta: 1, storage_delta: 256)
       :ok
   """
-  @spec record_operation(tenant_id(), :read | :write | :delete, keyword()) :: :ok | {:error, term()}
+  @spec record_operation(tenant_id(), :read | :write | :delete, keyword()) ::
+          :ok | {:error, term()}
   def record_operation(tenant_id, operation, opts \\ [])
       when is_atom(tenant_id) and operation in [:read, :write, :delete] do
     case get_tenant(tenant_id) do

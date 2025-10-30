@@ -187,12 +187,23 @@ defmodule Mix.Tasks.Concord.Cluster do
     opts =
       Enum.reduce(opts_list, [], fn opt, acc ->
         case String.split(opt, "=", parts: 2) do
-          ["--name", value] -> Keyword.put(acc, :name, value)
-          ["--max-keys", value] -> Keyword.put(acc, :max_keys, String.to_integer(value))
-          ["--max-storage", value] -> Keyword.put(acc, :max_storage_bytes, String.to_integer(value))
-          ["--max-ops", value] -> Keyword.put(acc, :max_ops_per_sec, String.to_integer(value))
-          ["--namespace", value] -> Keyword.put(acc, :namespace, value)
-          _ -> acc
+          ["--name", value] ->
+            Keyword.put(acc, :name, value)
+
+          ["--max-keys", value] ->
+            Keyword.put(acc, :max_keys, String.to_integer(value))
+
+          ["--max-storage", value] ->
+            Keyword.put(acc, :max_storage_bytes, String.to_integer(value))
+
+          ["--max-ops", value] ->
+            Keyword.put(acc, :max_ops_per_sec, String.to_integer(value))
+
+          ["--namespace", value] ->
+            Keyword.put(acc, :namespace, value)
+
+          _ ->
+            acc
         end
       end)
 
@@ -234,8 +245,15 @@ defmodule Mix.Tasks.Concord.Cluster do
           Mix.shell().info("#{tenant.id} - #{tenant.name}")
           Mix.shell().info("  Namespace: #{tenant.namespace}")
           Mix.shell().info("  Role: #{tenant.role}")
-          Mix.shell().info("  Usage: #{tenant.usage.key_count} keys, #{format_bytes(tenant.usage.storage_bytes)}, #{tenant.usage.ops_last_second} ops/sec")
-          Mix.shell().info("  Quotas: #{format_quota(tenant.quotas.max_keys)} keys, #{format_bytes(tenant.quotas.max_storage_bytes)}, #{format_quota(tenant.quotas.max_ops_per_sec)} ops/sec")
+
+          Mix.shell().info(
+            "  Usage: #{tenant.usage.key_count} keys, #{format_bytes(tenant.usage.storage_bytes)}, #{tenant.usage.ops_last_second} ops/sec"
+          )
+
+          Mix.shell().info(
+            "  Quotas: #{format_quota(tenant.quotas.max_keys)} keys, #{format_bytes(tenant.quotas.max_storage_bytes)}, #{format_quota(tenant.quotas.max_ops_per_sec)} ops/sec"
+          )
+
           Mix.shell().info("")
         end)
     end
@@ -269,9 +287,19 @@ defmodule Mix.Tasks.Concord.Cluster do
         Mix.shell().info("Tenant: #{tenant.id} - #{tenant.name}")
         Mix.shell().info("")
         Mix.shell().info("Current Usage:")
-        Mix.shell().info("  Keys: #{tenant.usage.key_count} / #{format_quota(tenant.quotas.max_keys)}")
-        Mix.shell().info("  Storage: #{format_bytes(tenant.usage.storage_bytes)} / #{format_bytes(tenant.quotas.max_storage_bytes)}")
-        Mix.shell().info("  Ops/Sec: #{tenant.usage.ops_last_second} / #{format_quota(tenant.quotas.max_ops_per_sec)}")
+
+        Mix.shell().info(
+          "  Keys: #{tenant.usage.key_count} / #{format_quota(tenant.quotas.max_keys)}"
+        )
+
+        Mix.shell().info(
+          "  Storage: #{format_bytes(tenant.usage.storage_bytes)} / #{format_bytes(tenant.quotas.max_storage_bytes)}"
+        )
+
+        Mix.shell().info(
+          "  Ops/Sec: #{tenant.usage.ops_last_second} / #{format_quota(tenant.quotas.max_ops_per_sec)}"
+        )
+
         Mix.shell().info("")
 
         # Calculate percentages
@@ -283,7 +311,8 @@ defmodule Mix.Tasks.Concord.Cluster do
         storage_pct =
           if tenant.quotas.max_storage_bytes == :unlimited,
             do: 0,
-            else: Float.round(tenant.usage.storage_bytes / tenant.quotas.max_storage_bytes * 100, 2)
+            else:
+              Float.round(tenant.usage.storage_bytes / tenant.quotas.max_storage_bytes * 100, 2)
 
         Mix.shell().info("Utilization:")
         Mix.shell().info("  Keys: #{key_pct}%")

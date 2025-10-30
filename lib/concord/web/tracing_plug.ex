@@ -37,8 +37,12 @@ defmodule Concord.Web.TracingPlug do
   # Suppress Dialyzer warnings for functions used conditionally in tracing
   # and for OpenTelemetry opaque types
   @dialyzer {:nowarn_function,
-             call: 2, execute_request: 1, set_span_status: 1, inject_trace_context: 1,
-             get_header_value: 2, format_peer_ip: 1}
+             call: 2,
+             execute_request: 1,
+             set_span_status: 1,
+             inject_trace_context: 1,
+             get_header_value: 2,
+             format_peer_ip: 1}
 
   @impl true
   def init(opts), do: opts

@@ -213,7 +213,9 @@ defmodule Concord.MultiTenancyTest do
     test "records delete operation" do
       assert {:ok, _} = MultiTenancy.create_tenant(:acme)
       assert :ok = MultiTenancy.record_operation(:acme, :write, key_delta: 1, storage_delta: 256)
-      assert :ok = MultiTenancy.record_operation(:acme, :delete, key_delta: -1, storage_delta: -256)
+
+      assert :ok =
+               MultiTenancy.record_operation(:acme, :delete, key_delta: -1, storage_delta: -256)
 
       assert {:ok, usage} = MultiTenancy.get_usage(:acme)
       assert usage.key_count == 0
@@ -236,7 +238,9 @@ defmodule Concord.MultiTenancyTest do
 
     test "handles negative values gracefully" do
       assert {:ok, _} = MultiTenancy.create_tenant(:acme)
-      assert :ok = MultiTenancy.record_operation(:acme, :delete, key_delta: -10, storage_delta: -1000)
+
+      assert :ok =
+               MultiTenancy.record_operation(:acme, :delete, key_delta: -10, storage_delta: -1000)
 
       assert {:ok, usage} = MultiTenancy.get_usage(:acme)
       assert usage.key_count == 0
@@ -297,7 +301,11 @@ defmodule Concord.MultiTenancyTest do
                  max_ops_per_sec: :unlimited
                )
 
-      assert :ok = MultiTenancy.record_operation(:acme, :write, key_delta: 1_000_000, storage_delta: 999_999_999)
+      assert :ok =
+               MultiTenancy.record_operation(:acme, :write,
+                 key_delta: 1_000_000,
+                 storage_delta: 999_999_999
+               )
 
       assert :ok = MultiTenancy.check_quota(:acme, :write, value_size: 999_999_999)
     end

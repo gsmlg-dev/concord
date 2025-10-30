@@ -373,7 +373,9 @@ defmodule Concord.RBAC do
       else
         # ACLs exist for the token's roles - check if any match the key pattern
         matching_acls =
-          Enum.filter(token_role_acls, fn {pattern, _role, _perms} -> matches_pattern?(key, pattern) end)
+          Enum.filter(token_role_acls, fn {pattern, _role, _perms} ->
+            matches_pattern?(key, pattern)
+          end)
 
         # Check if any matching ACL grants the permission
         has_permission =

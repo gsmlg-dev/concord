@@ -122,7 +122,10 @@ defmodule Concord.Web.Supervisor do
           if File.exists?(cacertfile) do
             https_opts ++ [cacertfile: cacertfile, verify: :verify_peer]
           else
-            :logger.warning("TLS CA certificate file not found: #{cacertfile}, skipping client verification")
+            :logger.warning(
+              "TLS CA certificate file not found: #{cacertfile}, skipping client verification"
+            )
+
             https_opts
           end
 

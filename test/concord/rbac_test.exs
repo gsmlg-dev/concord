@@ -343,7 +343,9 @@ defmodule Concord.RBACTest do
       # User can read public data
       assert :ok = RBAC.check_permission(user_token, :read, "public:announcements")
       # But not write
-      assert {:error, :forbidden} = RBAC.check_permission(user_token, :write, "public:announcements")
+      assert {:error, :forbidden} =
+               RBAC.check_permission(user_token, :write, "public:announcements")
+
       # And not access private data
       assert {:error, :forbidden} = RBAC.check_permission(user_token, :read, "private:settings")
 
@@ -375,7 +377,8 @@ defmodule Concord.RBACTest do
       # Tenant 2 can access their own data
       assert :ok = RBAC.check_permission(tenant2_token, :write, "tenant2:products")
       # But not tenant 1's data
-      assert {:error, :forbidden} = RBAC.check_permission(tenant2_token, :write, "tenant1:products")
+      assert {:error, :forbidden} =
+               RBAC.check_permission(tenant2_token, :write, "tenant1:products")
     end
   end
 end
