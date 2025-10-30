@@ -30,6 +30,21 @@ config :concord,
   api_port: 4000,
   # localhost
   api_ip: {127, 0, 0, 1},
+  # TLS/HTTPS configuration
+  tls: [
+    # Enable HTTPS instead of HTTP
+    enabled: false,
+    # Path to certificate file (PEM format)
+    certfile: nil,
+    # Path to private key file (PEM format)
+    keyfile: nil,
+    # Optional: Path to CA certificate file for client verification
+    cacertfile: nil,
+    # Cipher suite configuration (defaults to secure modern ciphers)
+    ciphers: :default,
+    # TLS versions to support (default: TLS 1.2 and 1.3)
+    versions: [:"tlsv1.2", :"tlsv1.3"]
+  ],
   # Prometheus metrics configuration
   prometheus_enabled: true,
   prometheus_port: 9568,

@@ -9,8 +9,14 @@ defmodule Concord.AuthTest do
     # Start test cluster
     :ok = Concord.TestHelper.start_test_cluster()
 
-    # Start TokenStore GenServer for tests
-    {:ok, _} = Concord.Auth.TokenStore.start_link([])
+    # Start TokenStore GenServer for tests if not already started
+    case Concord.Auth.TokenStore.start_link([]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    # Clean token store for test isolation
+    :ets.delete_all_objects(:concord_tokens)
 
     on_exit(fn ->
       Application.put_env(:concord, :auth_enabled, original)

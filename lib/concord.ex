@@ -314,11 +314,14 @@ defmodule Concord do
     server_id = server_id()
 
     with {:ok, overview, _} <- :ra.member_overview(server_id, timeout),
-         {:ok, {{_index, _term}, query_result}, _} <- query(:stats, timeout, consistency) do
+         {:ok, {{_index, _term}, {:ok, stats}}, _} <- query(:stats, timeout, consistency) do
+      # Convert overview to JSON-friendly format (recursively convert tuples to strings)
+      json_friendly_overview = make_json_friendly(overview)
+
       {:ok,
        %{
-         cluster: overview,
-         storage: query_result,
+         cluster: json_friendly_overview,
+         storage: stats,
          node: node()
        }}
     else
@@ -545,25 +548,7 @@ defmodule Concord do
           {key, value, expires_at} -> {key, value, expires_at}
         end)
 
-      result =
-        case command({:put_many, formatted_operations}, timeout) do
-          {:ok, {:ok, results}, _} ->
-            # Convert StateMachine results to map format
-            success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
-            {:ok, success_map}
-
-          {:ok, {:error, reason}, _} ->
-            {:error, reason}
-
-          {:timeout, _} ->
-            {:error, :timeout}
-
-          {:error, :noproc} ->
-            {:error, :cluster_not_ready}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+      result = process_batch_command_result(command({:put_many, formatted_operations}, timeout))
 
       duration = System.monotonic_time() - start_time
 
@@ -666,25 +651,7 @@ defmodule Concord do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
 
-      result =
-        case command({:delete_many, keys}, timeout) do
-          {:ok, {:ok, results}, _} ->
-            # Convert StateMachine results to map format
-            success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
-            {:ok, success_map}
-
-          {:ok, {:error, reason}, _} ->
-            {:error, reason}
-
-          {:timeout, _} ->
-            {:error, :timeout}
-
-          {:error, :noproc} ->
-            {:error, :cluster_not_ready}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+      result = process_batch_command_result(command({:delete_many, keys}, timeout))
 
       duration = System.monotonic_time() - start_time
 
@@ -752,6 +719,28 @@ defmodule Concord do
 
   # Private helpers
 
+  # Helper function to process batch command results
+  defp process_batch_command_result(command_result) do
+    case command_result do
+      {:ok, {:ok, results}, _} ->
+        # Convert StateMachine results to map format
+        success_map = Map.new(results, fn {key, :ok} -> {key, :ok} end)
+        {:ok, success_map}
+
+      {:ok, {:error, reason}, _} ->
+        {:error, reason}
+
+      {:timeout, _} ->
+        {:error, :timeout}
+
+      {:error, :noproc} ->
+        {:error, :cluster_not_ready}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp command(cmd, timeout) do
     :ra.process_command(server_id(), cmd, timeout)
   end
@@ -811,6 +800,29 @@ defmodule Concord do
   defp default_consistency do
     Application.get_env(:concord, :default_read_consistency, :leader)
   end
+
+  # Recursively convert data structures to JSON-friendly format
+  # Converts tuples, references, PIDs, and other non-JSON types to strings
+  defp make_json_friendly(data) when is_map(data) do
+    Enum.map(data, fn {k, v} ->
+      {make_json_friendly(k), make_json_friendly(v)}
+    end)
+    |> Map.new()
+  end
+
+  defp make_json_friendly(data) when is_list(data) do
+    Enum.map(data, &make_json_friendly/1)
+  end
+
+  defp make_json_friendly(data) when is_tuple(data) do
+    inspect(data)
+  end
+
+  defp make_json_friendly(data) when is_reference(data) or is_pid(data) or is_port(data) do
+    inspect(data)
+  end
+
+  defp make_json_friendly(data), do: data
 
   defp select_read_replica do
     # Get cluster members for load balancing eventual consistency reads

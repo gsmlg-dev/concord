@@ -13,6 +13,10 @@ defmodule Concord.BulkOperationsTest do
   describe "StateMachine Bulk Operations" do
     setup do
       state = StateMachine.init(%{})
+
+      # Clean the ETS table to ensure test isolation
+      :ets.delete_all_objects(:concord_store)
+
       {:ok, state: state}
     end
 

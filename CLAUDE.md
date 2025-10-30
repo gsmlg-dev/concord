@@ -58,6 +58,28 @@ mix concord.cluster token create
 
 # Revoke a token
 mix concord.cluster token revoke <token>
+
+# Generate self-signed TLS certificates for development
+mix concord.gen.cert
+
+# Generate with custom options
+mix concord.gen.cert --out priv/cert --host myhost.local --days 730
+```
+
+### TLS/HTTPS Configuration
+```bash
+# Enable HTTPS in config/dev.exs or config/prod.exs
+config :concord, :tls,
+  enabled: true,
+  certfile: "priv/cert/selfsigned.pem",
+  keyfile: "priv/cert/selfsigned_key.pem"
+
+# For production, use CA-signed certificates:
+config :concord, :tls,
+  enabled: true,
+  certfile: "/etc/letsencrypt/live/yourdomain.com/fullchain.pem",
+  keyfile: "/etc/letsencrypt/live/yourdomain.com/privkey.pem",
+  cacertfile: "/etc/letsencrypt/live/yourdomain.com/chain.pem"  # Optional: for client cert verification
 ```
 
 ### Testing with Multiple Nodes
@@ -87,9 +109,12 @@ The test suite is configured with `--no-start` alias to avoid automatic cluster 
 - **Concord.TTL** - Time-to-live key expiration management
 - **Concord.Backup** - Snapshot-based backup and restore
 - **Concord.Query** - Advanced query language (pattern matching, ranges, predicates)
-- **Concord.Index** - Secondary indexes for value-based lookups (WIP)
+- **Concord.Index** - Secondary indexes for value-based lookups
 - **Concord.EventStream** - Real-time CDC event streaming with GenStage
-- **Concord.Web** - HTTP API with OpenAPI/Swagger (Plug + Bandit)
+- **Concord.Web** - HTTP/HTTPS API with OpenAPI/Swagger (Plug + Bandit)
+  - TLS/HTTPS support with configurable certificates
+  - Secure cipher suites (TLS 1.2 and 1.3)
+  - Optional client certificate verification
 
 ### Key Dependencies
 - **ra** - Raft consensus algorithm implementation
@@ -171,6 +196,8 @@ Test categories:
 - **Unit Tests**: Basic CRUD operations, validation (e.g., `test/concord_test.exs`)
 - **Feature Tests**: TTL, compression, bulk operations, queries, indexes
 - **Auth Tests**: Token management, authorization flows
+- **RBAC Tests**: Role management, ACL rules, permission checking (`test/concord/rbac_test.exs` - 34 tests)
+- **Multi-Tenancy Tests**: Tenant lifecycle, quotas, usage tracking (`test/concord/multi_tenancy_test.exs` - 41 tests)
 - **Telemetry Tests**: Event emission verification
 - **Integration Tests**: Multi-node scenarios, HTTP API
 - **Performance Tests**: Benchmarks in `test/performance/`
@@ -210,11 +237,18 @@ mix run test/performance/kv_operations_benchmark.exs
 ### Important File Locations
 - Raft logs and snapshots: `{data_dir}/` (default: `./data/dev` in development)
 - Ra data directory: `nonode@nohost/` (gitignored - test artifacts)
-- ETS tables: `:concord_store` (main KV), `:concord_index_*` (per-index)
+- ETS tables:
+  - `:concord_store` - Main KV storage
+  - `:concord_index_*` - Per-index tables
+  - `:concord_roles`, `:concord_role_grants`, `:concord_acls` - RBAC tables
+  - `:concord_tenants` - Multi-tenancy table
+  - `:concord_tokens` - Authentication tokens
 - Telemetry events: `[:concord, :api, :*]`, `[:concord, :operation, :*]`, `[:concord, :state, :*]`
 - Cluster management tasks: `lib/mix/tasks/concord.ex`
 - HTTP API: `lib/concord/web/` (router, controllers, OpenAPI spec)
 - Audit logs: `audit_logs/` directory (JSONL format)
+- RBAC module: `lib/concord/rbac.ex`
+- Multi-tenancy: `lib/concord/multi_tenancy.ex`, `lib/concord/multi_tenancy/rate_limiter.ex`
 
 ## Feature-Specific Guidance
 
@@ -251,17 +285,224 @@ When implementing new features in Concord, follow this pattern:
    - Update module documentation
    - Consider adding to HTTP API if applicable
 
-### Working with Secondary Indexes (WIP)
+### Working with RBAC (Role-Based Access Control)
 
-Current status: Core functionality implemented, some test failures remain.
+Concord includes a comprehensive RBAC system for fine-grained access control.
 
-**Known Issues:**
-- 18/22 tests failing due to query result unwrapping
-- Need to handle `{:ok, {:ok, result}, _}` pattern consistently
+**Core Concepts:**
+- **Roles**: Collections of permissions (admin, editor, viewer, none, or custom)
+- **Permissions**: Individual capabilities (read, write, delete, admin, *)
+- **ACL Rules**: Per-key pattern restrictions (e.g., "users:*" for namespace isolation)
+- **Token-Role Mapping**: Many-to-many relationship between tokens and roles
 
-**To Fix:**
-- Check all `:ra.consistent_query` calls in `lib/concord/index.ex`
-- Ensure proper pattern matching for nested `{:ok, ...}` tuples
+**Predefined Roles:**
+```elixir
+:admin   -> [:*]                      # All permissions
+:editor  -> [:read, :write, :delete]  # Standard CRUD
+:viewer  -> [:read]                   # Read-only access
+:none    -> []                        # No permissions
+```
+
+**Usage Examples:**
+
+```elixir
+# Create custom role
+:ok = Concord.RBAC.create_role(:developer, [:read, :write])
+
+# Grant role to token
+{:ok, token} = Concord.Auth.create_token()
+:ok = Concord.RBAC.grant_role(token, :developer)
+
+# Check permission
+:ok = Concord.RBAC.check_permission(token, :write, "config:app")
+
+# Create ACL for namespace isolation
+:ok = Concord.RBAC.create_acl("users:*", :viewer, [:read])
+
+# Multiple roles grant additive permissions
+:ok = Concord.RBAC.grant_role(token, :viewer)  # Read access
+:ok = Concord.RBAC.grant_role(token, :editor) # Now has read+write+delete
+
+# Revoke role
+:ok = Concord.RBAC.revoke_role(token, :editor)
+```
+
+**CLI Commands:**
+```bash
+# Create custom role
+mix concord.cluster role create developer read,write
+
+# Grant role to token
+mix concord.cluster role grant <token> developer
+
+# List all roles
+mix concord.cluster role list
+
+# Create ACL for key pattern
+mix concord.cluster acl create "users:*" viewer read
+
+# List all ACLs
+mix concord.cluster acl list
+```
+
+**ACL Behavior:**
+- When ACLs exist for a role, they RESTRICT access to matching patterns only
+- Multiple ACLs for same role are combined with OR logic
+- Wildcard patterns: `*` matches any characters (`"tenant1:*"` matches all tenant1 keys)
+- For multi-tenant isolation, each tenant should have its own role
+
+**Implementation Details:**
+- Located in `lib/concord/rbac.ex`
+- ETS tables: `:concord_roles`, `:concord_role_grants`, `:concord_acls`
+- 34 comprehensive tests in `test/concord/rbac_test.exs`
+- Backward compatible with simple token permissions
+
+### Working with Multi-Tenancy
+
+Concord provides complete multi-tenancy support with resource isolation and quotas.
+
+**Key Features:**
+- Automatic namespace isolation via RBAC
+- Resource quotas (keys, storage, rate limits)
+- Real-time usage tracking
+- Per-tenant metrics and billing data
+
+**Tenant Structure:**
+```elixir
+%{
+  id: :acme,                           # Unique tenant identifier
+  name: "ACME Corporation",            # Display name
+  namespace: "acme:*",                 # Key namespace pattern
+  role: :tenant_acme,                  # Auto-created RBAC role
+  quotas: %{
+    max_keys: 10_000,                  # Maximum keys
+    max_storage_bytes: 100_000_000,    # 100MB storage limit
+    max_ops_per_sec: 1_000             # Rate limit
+  },
+  usage: %{
+    key_count: 0,                      # Current key count
+    storage_bytes: 0,                  # Current storage usage
+    ops_last_second: 0                 # Current rate (resets every second)
+  },
+  created_at: ~U[2025-10-29 12:00:00Z],
+  updated_at: ~U[2025-10-29 12:00:00Z]
+}
+```
+
+**Usage Examples:**
+
+```elixir
+# Create tenant with quotas
+{:ok, tenant} = Concord.MultiTenancy.create_tenant(:acme,
+  name: "ACME Corporation",
+  max_keys: 10_000,
+  max_storage_bytes: 100_000_000,  # 100MB
+  max_ops_per_sec: 1_000
+)
+
+# Create token and grant tenant access
+{:ok, token} = Concord.Auth.create_token()
+:ok = Concord.RBAC.grant_role(token, :tenant_acme)
+
+# Check quota before operation
+:ok = Concord.MultiTenancy.check_quota(:acme, :write, value_size: 256)
+
+# Perform operation (with automatic namespace)
+:ok = Concord.put("acme:users:123", %{name: "Alice"}, token: token)
+
+# Record operation for usage tracking
+:ok = Concord.MultiTenancy.record_operation(:acme, :write,
+  key_delta: 1,
+  storage_delta: 256
+)
+
+# Get usage statistics
+{:ok, usage} = Concord.MultiTenancy.get_usage(:acme)
+# => %{key_count: 1, storage_bytes: 256, ops_last_second: 1}
+
+# Update quotas
+{:ok, _} = Concord.MultiTenancy.update_quota(:acme, :max_keys, 20_000)
+
+# Extract tenant from key
+{:ok, :acme} = Concord.MultiTenancy.tenant_from_key("acme:users:123")
+```
+
+**CLI Commands:**
+```bash
+# Create tenant
+mix concord.cluster tenant create acme \
+  --name="ACME Corporation" \
+  --max-keys=10000 \
+  --max-storage=100000000 \
+  --max-ops=1000
+
+# List all tenants with usage
+mix concord.cluster tenant list
+
+# Show tenant usage statistics
+mix concord.cluster tenant usage acme
+
+# Update quota
+mix concord.cluster tenant quota acme max_keys 20000
+
+# Delete tenant (keeps keys in storage)
+mix concord.cluster tenant delete acme
+```
+
+**Quota Enforcement:**
+- Quotas are checked BEFORE operations via `check_quota/3`
+- Operations return `{:error, :quota_exceeded}` when limits reached
+- Rate limiting uses sliding 1-second window (auto-reset by GenServer)
+- Set quotas to `:unlimited` to disable limits
+
+**Multi-Tenant Isolation Pattern:**
+```elixir
+# Each tenant gets unique role
+{:ok, tenant1} = MultiTenancy.create_tenant(:tenant1)  # Creates :tenant_tenant1 role
+{:ok, tenant2} = MultiTenancy.create_tenant(:tenant2)  # Creates :tenant_tenant2 role
+
+# Tokens can only access their tenant's namespace
+{:ok, token1} = Auth.create_token()
+:ok = RBAC.grant_role(token1, :tenant_tenant1)
+
+{:ok, token2} = Auth.create_token()
+:ok = RBAC.grant_role(token2, :tenant_tenant2)
+
+# Token1 can access tenant1:* but NOT tenant2:*
+:ok = RBAC.check_permission(token1, :write, "tenant1:data")
+{:error, :forbidden} = RBAC.check_permission(token1, :write, "tenant2:data")
+```
+
+**Implementation Details:**
+- Located in `lib/concord/multi_tenancy.ex` and `lib/concord/multi_tenancy/rate_limiter.ex`
+- ETS table: `:concord_tenants`
+- Rate limiter GenServer resets counters every second
+- 41 comprehensive tests in `test/concord/multi_tenancy_test.exs`
+- Integrates with RBAC for automatic role/ACL creation
+
+### Working with Secondary Indexes
+
+**Status**: ✅ Fully implemented and tested (22 tests passing)
+
+Secondary indexes enable value-based lookups with custom extractor functions.
+
+**Usage Examples:**
+```elixir
+# Create index with extractor function
+extractor = fn value -> Map.get(value, :email) end
+:ok = Concord.Index.create_index(:user_email, extractor)
+
+# Put data (index updates automatically)
+:ok = Concord.put("user:1", %{name: "Alice", email: "alice@example.com"})
+
+# Query by indexed value
+{:ok, ["user:1"]} = Concord.Index.query_index(:user_email, "alice@example.com")
+```
+
+**Implementation:**
+- Located in `lib/concord/index.ex`
+- Each index has its own ETS table: `:concord_index_#{name}`
+- Indexes update automatically on put/delete operations
 - Test with `MIX_ENV=test mix test test/concord/index_test.exs`
 
 ### Committing Changes

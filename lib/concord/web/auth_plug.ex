@@ -12,6 +12,8 @@ defmodule Concord.Web.AuthPlug do
   import Plug.Conn
   require Logger
 
+  alias Concord.Auth
+
   def init(opts), do: opts
 
   def call(conn, _opts) do
@@ -58,7 +60,7 @@ defmodule Concord.Web.AuthPlug do
   defp verify_token(token) do
     # Check if auth is enabled globally
     if Application.get_env(:concord, :auth_enabled, false) do
-      case Concord.Auth.verify_token(token) do
+      case Auth.verify_token(token) do
         :ok -> :ok
         {:error, _reason} = error -> error
       end

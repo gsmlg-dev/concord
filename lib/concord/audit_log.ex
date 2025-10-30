@@ -87,6 +87,8 @@ defmodule Concord.AuditLog do
   use GenServer
   require Logger
 
+  alias Concord.Tracing
+
   @type event :: %{
           timestamp: DateTime.t(),
           event_id: String.t(),
@@ -366,13 +368,13 @@ defmodule Concord.AuditLog do
 
   defp get_trace_id do
     if function_exported?(Concord.Tracing, :current_trace_id, 0) do
-      Concord.Tracing.current_trace_id()
+      Tracing.current_trace_id()
     end
   end
 
   defp get_span_id do
     if function_exported?(Concord.Tracing, :current_span_id, 0) do
-      Concord.Tracing.current_span_id()
+      Tracing.current_span_id()
     end
   end
 

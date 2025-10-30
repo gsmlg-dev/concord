@@ -27,6 +27,8 @@ defmodule Mix.Tasks.Concord.Backup do
   use Mix.Task
   require Logger
 
+  alias Concord.Backup
+
   @shortdoc "Manage Concord backups"
 
   @impl Mix.Task
@@ -52,7 +54,7 @@ defmodule Mix.Tasks.Concord.Backup do
 
     IO.puts("Creating backup...")
 
-    case Concord.Backup.create(parsed_opts) do
+    case Backup.create(parsed_opts) do
       {:ok, backup_path} ->
         IO.puts("✓ Backup created successfully!")
         IO.puts("  Path: #{backup_path}")
@@ -78,7 +80,7 @@ defmodule Mix.Tasks.Concord.Backup do
 
     IO.puts("Listing backups in: #{backup_dir}\n")
 
-    case Concord.Backup.list(backup_dir) do
+    case Backup.list(backup_dir) do
       {:ok, []} ->
         IO.puts("No backups found.")
 
@@ -126,7 +128,7 @@ defmodule Mix.Tasks.Concord.Backup do
 
     IO.puts("\nRestoring from backup: #{backup_path}")
 
-    case Concord.Backup.restore(backup_path, parsed_opts) do
+    case Backup.restore(backup_path, parsed_opts) do
       :ok ->
         IO.puts("✓ Backup restored successfully!")
 
@@ -147,7 +149,7 @@ defmodule Mix.Tasks.Concord.Backup do
   defp verify_backup(backup_path) do
     IO.puts("Verifying backup: #{backup_path}")
 
-    case Concord.Backup.verify(backup_path) do
+    case Backup.verify(backup_path) do
       {:ok, :valid} ->
         IO.puts("✓ Backup is valid")
 
@@ -177,7 +179,7 @@ defmodule Mix.Tasks.Concord.Backup do
     IO.puts("  Keep count: #{keep_count}")
     IO.puts("  Keep days: #{keep_days}\n")
 
-    case Concord.Backup.cleanup(parsed_opts) do
+    case Backup.cleanup(parsed_opts) do
       {:ok, 0} ->
         IO.puts("✓ No backups to delete")
 

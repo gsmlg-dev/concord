@@ -135,8 +135,8 @@ defmodule Concord.BulkOperationsIntegrationTest do
       assert Concord.put_many_with_ttl(operations, 1) ==
                {:ok, %{"ttl_key1" => :ok, "ttl_key2" => :ok}}
 
-      # Wait for expiration
-      Process.sleep(1500)
+      # Wait for expiration (need >2s for second-precision expiry)
+      Process.sleep(2100)
 
       # Manually trigger cleanup to ensure expired keys are removed
       try do

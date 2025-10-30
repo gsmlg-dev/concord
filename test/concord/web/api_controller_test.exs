@@ -263,7 +263,7 @@ defmodule Concord.Web.APIControllerTest do
       assert response["data"]["ttl"] > 0
     end
 
-    test "returns error for key without TTL", %{token: token} do
+    test "returns null for key without TTL", %{token: token} do
       :ets.insert(:concord_store, {"no-ttl-key", %{value: "value", expires_at: nil}})
 
       conn =
@@ -272,7 +272,11 @@ defmodule Concord.Web.APIControllerTest do
         |> Concord.Web.AuthenticatedRouter.call(Concord.Web.AuthenticatedRouter.init([]))
 
       assert conn.state == :sent
-      assert conn.status == 400
+      assert conn.status == 200
+
+      response = Jason.decode!(conn.resp_body)
+      assert response["status"] == "ok"
+      assert response["data"]["ttl"] == nil
     end
   end
 
@@ -457,7 +461,8 @@ defmodule Concord.Web.APIControllerTest do
 
       assert del1_result["status"] == "ok"
       assert del2_result["status"] == "ok"
-      assert nonexistent_result["status"] == "error"
+      # Delete is idempotent - deleting non-existent key returns ok
+      assert nonexistent_result["status"] == "ok"
     end
   end
 

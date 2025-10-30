@@ -45,33 +45,31 @@ defmodule Concord.Web.HealthController do
     end
   end
 
-  defp check_cluster_health() do
-    try do
-      case Concord.status() do
-        {:ok, status} ->
-          # Check if cluster has a leader
-          cluster_info = get_in(status, [:cluster])
-          has_leader = cluster_info && get_in(cluster_info, [:leader]) != nil
+  defp check_cluster_health do
+    case Concord.status() do
+      {:ok, status} ->
+        # Check if cluster has a leader
+        cluster_info = get_in(status, [:cluster])
+        has_leader = cluster_info && get_in(cluster_info, [:leader]) != nil
 
-          if has_leader do
-            {:ok,
-             %{
-               "status" => get_in(cluster_info, [:status]) || "unknown",
-               "nodes" => length(get_in(cluster_info, [:members]) || []),
-               "storage" => get_in(status, [:storage]) || %{},
-               "leader" => inspect(get_in(cluster_info, [:leader]))
-             }}
-          else
-            {:error, :no_leader}
-          end
+        if has_leader do
+          {:ok,
+           %{
+             "status" => get_in(cluster_info, [:status]) || "unknown",
+             "nodes" => length(get_in(cluster_info, [:members]) || []),
+             "storage" => get_in(status, [:storage]) || %{},
+             "leader" => inspect(get_in(cluster_info, [:leader]))
+           }}
+        else
+          {:error, :no_leader}
+        end
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    rescue
-      error ->
-        {:error, error}
+      {:error, reason} ->
+        {:error, reason}
     end
+  rescue
+    error ->
+      {:error, error}
   end
 
   # Fallback for other paths

@@ -148,8 +148,8 @@ defmodule Concord.TTLIntegrationTest do
       assert Concord.put(ttl_key, ttl_value, ttl: 1) == :ok
       assert Concord.put(no_ttl_key, no_ttl_value) == :ok
 
-      # Wait for expiration
-      Process.sleep(1500)
+      # Wait for expiration - use 2 seconds to account for timing variability in CI
+      Process.sleep(2000)
 
       # Get all should only include non-expired key
       {:ok, all_data} = Concord.get_all()

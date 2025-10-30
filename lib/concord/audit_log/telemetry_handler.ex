@@ -20,6 +20,8 @@ defmodule Concord.AuditLog.TelemetryHandler do
 
   require Logger
 
+  alias Concord.AuditLog
+
   @audit_events [
     [:concord, :api, :put],
     [:concord, :api, :delete],
@@ -109,7 +111,7 @@ defmodule Concord.AuditLog.TelemetryHandler do
     }
 
     # Log to audit log
-    Concord.AuditLog.log(audit_event)
+    AuditLog.log(audit_event)
   end
 
   defp extract_operation([:concord, :api, operation | _rest]) do

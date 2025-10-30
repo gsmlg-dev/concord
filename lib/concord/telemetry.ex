@@ -37,7 +37,7 @@ defmodule Concord.Telemetry do
     duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
 
     Logger.debug(
-      "API #{operation}: #{metadata.result} (#{duration_ms}ms)",
+      "API #{operation}: #{inspect(metadata.result)} (#{duration_ms}ms)",
       operation: operation,
       result: metadata.result,
       duration_ms: duration_ms

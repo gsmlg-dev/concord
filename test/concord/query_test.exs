@@ -4,6 +4,9 @@ defmodule Concord.QueryTest do
   alias Concord.Query
 
   setup do
+    # Disable auth for these tests to avoid interference from other tests
+    Application.put_env(:concord, :auth_enabled, false)
+
     # Start test cluster
     :ok = Concord.TestHelper.start_test_cluster()
 
