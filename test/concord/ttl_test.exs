@@ -65,6 +65,11 @@ defmodule Concord.TTLTest do
     setup do
       # Start a fresh state machine for each test
       state = StateMachine.init(%{})
+
+      # Clean the ETS table to ensure test isolation
+      # The table is shared across all tests because it's a named table
+      :ets.delete_all_objects(:concord_store)
+
       {:ok, state: state}
     end
 
