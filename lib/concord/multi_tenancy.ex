@@ -106,7 +106,9 @@ defmodule Concord.MultiTenancy do
   - `{:error, :invalid_id}` - Tenant ID must be an atom
   """
   @spec create_tenant(tenant_id(), keyword()) :: {:ok, tenant()} | {:error, term()}
-  def create_tenant(tenant_id, opts \\ []) when is_atom(tenant_id) do
+  def create_tenant(tenant_id, opts \\ [])
+
+  def create_tenant(tenant_id, opts) when is_atom(tenant_id) do
     # Check if tenant already exists
     case get_tenant(tenant_id) do
       {:ok, _} ->
