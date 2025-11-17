@@ -7,13 +7,13 @@ defmodule Concord.E2E.LeaderElectionTest do
 
   setup do
     # Start a fresh cluster for each test
-    {:ok, nodes} = ClusterHelper.start_cluster(nodes: 3)
+    {:ok, nodes, cluster} = ClusterHelper.start_cluster(nodes: 3)
 
     on_exit(fn ->
-      ClusterHelper.stop_cluster(nodes)
+      ClusterHelper.stop_cluster(cluster)
     end)
 
-    %{nodes: nodes}
+    %{nodes: nodes, cluster: cluster}
   end
 
   describe "Leader Election" do
@@ -27,7 +27,7 @@ defmodule Concord.E2E.LeaderElectionTest do
       IO.puts("✓ Leader elected: #{leader}")
     end
 
-    test "new leader elected after current leader dies", %{nodes: [n1, n2, n3] = nodes} do
+    test "new leader elected after current leader dies", %{nodes: nodes} do
       # Find initial leader
       initial_leader = ClusterHelper.find_leader(nodes)
       assert initial_leader != nil

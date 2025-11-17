@@ -25,8 +25,7 @@ config :concord, :http,
 config :concord, :telemetry, enabled: true
 
 # Prometheus exporter
-config :concord, :prometheus,
-  enabled: false
+config :concord, :prometheus, enabled: false
 
 # Disable OpenTelemetry tracing in e2e tests
 config :opentelemetry,

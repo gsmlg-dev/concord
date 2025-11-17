@@ -32,12 +32,15 @@ defmodule Concord.E2E.ClusterHelper do
 
     IO.puts("Starting #{node_count}-node cluster with prefix '#{prefix}'...")
 
-    # Start nodes with LocalCluster
-    nodes =
-      LocalCluster.start_nodes(prefix, node_count,
-        files: [__ENV__.file],
+    # Start cluster with LocalCluster 2.x API
+    {:ok, cluster} =
+      LocalCluster.start_link(node_count,
+        prefix: prefix,
         applications: [:ra, :telemetry, :concord]
       )
+
+    # Get the node names
+    {:ok, nodes} = LocalCluster.nodes(cluster)
 
     IO.puts("Started nodes: #{inspect(nodes)}")
 
@@ -51,11 +54,11 @@ defmodule Concord.E2E.ClusterHelper do
     case wait_for_cluster_ready(nodes, wait_timeout) do
       :ok ->
         IO.puts("✓ Cluster ready with #{length(nodes)} nodes")
-        {:ok, nodes}
+        {:ok, nodes, cluster}
 
       {:error, reason} ->
         IO.puts("✗ Cluster failed to start: #{inspect(reason)}")
-        stop_cluster(nodes)
+        LocalCluster.stop(cluster)
         {:error, reason}
     end
   end
@@ -63,7 +66,8 @@ defmodule Concord.E2E.ClusterHelper do
   @doc """
   Stops a running cluster and cleans up resources.
   """
-  def stop_cluster(nodes) when is_list(nodes) do
+  def stop_cluster(cluster) do
+    {:ok, nodes} = LocalCluster.nodes(cluster)
     IO.puts("Stopping cluster nodes: #{inspect(nodes)}")
 
     # Stop Concord application on each node first
@@ -74,8 +78,8 @@ defmodule Concord.E2E.ClusterHelper do
     # Give time for graceful shutdown
     Process.sleep(500)
 
-    # Stop the nodes
-    LocalCluster.stop_nodes(nodes)
+    # Stop the cluster
+    LocalCluster.stop(cluster)
 
     # Clean up data directories
     cleanup_data_dirs()
@@ -95,7 +99,7 @@ defmodule Concord.E2E.ClusterHelper do
 
     * `{group_a, group_b}` - The two partitioned groups
   """
-  def partition_network(nodes, {count_a, count_b}) do
+  def partition_network(nodes, {count_a, _count_b}) do
     {group_a, group_b} = Enum.split(nodes, count_a)
 
     IO.puts("Creating network partition: #{inspect(group_a)} | #{inspect(group_b)}")
@@ -137,21 +141,14 @@ defmodule Concord.E2E.ClusterHelper do
 
   @doc """
   Restarts a node that was previously killed.
+
+  Note: With LocalCluster 2.x, restarting individual nodes requires
+  starting a new cluster. For now, this is a simplified implementation.
   """
-  def restart_node(prefix, index) do
-    IO.puts("Restarting node: #{prefix}_#{index}")
-
-    [node] =
-      LocalCluster.start_nodes("#{prefix}", 1,
-        files: [__ENV__.file],
-        applications: [:ra, :telemetry, :concord],
-        boot_timeout: 30_000
-      )
-
-    :rpc.call(node, Application, :ensure_all_started, [:concord])
-    Process.sleep(2000)
-
-    {:ok, node}
+  def restart_node(_cluster, _node_name) do
+    IO.puts("Note: Node restart not fully implemented with LocalCluster 2.x")
+    IO.puts("Consider restarting the entire cluster instead")
+    {:error, :not_implemented}
   end
 
   @doc """

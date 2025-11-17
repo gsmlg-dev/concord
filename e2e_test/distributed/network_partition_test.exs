@@ -6,13 +6,13 @@ defmodule Concord.E2E.NetworkPartitionTest do
   @moduletag :distributed
 
   setup do
-    {:ok, nodes} = ClusterHelper.start_cluster(nodes: 5)
+    {:ok, nodes, cluster} = ClusterHelper.start_cluster(nodes: 5)
 
     on_exit(fn ->
-      ClusterHelper.stop_cluster(nodes)
+      ClusterHelper.stop_cluster(cluster)
     end)
 
-    %{nodes: nodes}
+    %{nodes: nodes, cluster: cluster}
   end
 
   describe "Network Partition" do
@@ -39,7 +39,7 @@ defmodule Concord.E2E.NetworkPartitionTest do
 
     test "minority partition cannot serve writes during partition", %{nodes: nodes} do
       # Create 3-2 partition
-      {majority, minority} = ClusterHelper.partition_network(nodes, {3, 2})
+      {_majority, minority} = ClusterHelper.partition_network(nodes, {3, 2})
 
       Process.sleep(3000)
 
