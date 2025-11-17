@@ -33,10 +33,10 @@ defmodule Concord.E2E.ClusterHelper do
     IO.puts("Starting #{node_count}-node cluster with prefix '#{prefix}'...")
 
     # Start cluster with LocalCluster 2.x API
+    # Note: Don't start applications here - they'll be started manually on each node
     {:ok, cluster} =
       LocalCluster.start_link(node_count,
-        prefix: prefix,
-        applications: [:ra, :telemetry, :concord]
+        prefix: String.to_atom(prefix)
       )
 
     # Get the node names
