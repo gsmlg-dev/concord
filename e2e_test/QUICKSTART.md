@@ -26,9 +26,11 @@ MIX_ENV=e2e_test mix compile
 ## Run Your First E2E Test (30 seconds)
 
 ```bash
-# Run a simple leader election test
-MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs --trace
+# Run a simple leader election test (requires named node for LocalCluster)
+elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/distributed/leader_election_test.exs --trace
 ```
+
+**Important**: E2E tests require the test node to be a distributed Erlang node (using `--name` flag) because LocalCluster spawns child nodes.
 
 You should see output like:
 

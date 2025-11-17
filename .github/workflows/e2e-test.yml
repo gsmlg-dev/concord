@@ -58,7 +58,7 @@ jobs:
         run: epmd -daemon
 
       - name: Run E2E Distributed Tests
-        run: MIX_ENV=e2e_test mix test e2e_test/distributed/ --trace
+        run: elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/distributed/ --trace
         env:
           MIX_ENV: e2e_test
 
