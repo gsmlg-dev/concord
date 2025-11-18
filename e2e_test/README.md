@@ -2,6 +2,14 @@
 
 This directory contains end-to-end tests for Concord that verify distributed behavior across multiple nodes in realistic scenarios.
 
+## ⚠️ Current Status: OTP 28 Compatibility Issue
+
+**LocalCluster 2.x is experiencing compatibility issues with Erlang/OTP 28.** The `:peer` module (used internally by LocalCluster) times out when attempting to start child nodes, preventing automated e2e tests from running.
+
+**Workaround:** Use manual multi-node testing (see "Manual Testing" section below) until this is resolved.
+
+**Tracking:** This is a known issue with the `:peer` module in OTP 28 that affects multiple distributed testing tools.
+
 ## Overview
 
 The e2e tests are **completely separate** from unit tests (`test/`) and focus on:
@@ -17,6 +25,82 @@ The e2e tests are **completely separate** from unit tests (`test/`) and focus on
 2. **Longer execution time**: E2E tests take 5-15 minutes vs. unit tests ~1-2 minutes
 3. **Resource intensive**: Spawns multiple Erlang VMs (3-5 nodes per test)
 4. **Different CI strategy**: Run on schedule/manual trigger rather than every commit
+
+## Manual Testing (Current Recommended Approach)
+
+Until the OTP 28 compatibility issues are resolved, you can test Concord's distributed features manually:
+
+### Starting Multiple Nodes
+
+Open 3 terminal windows and run:
+
+**Terminal 1:**
+```bash
+iex --name n1@127.0.0.1 --cookie concord_test -S mix
+```
+
+**Terminal 2:**
+```bash
+iex --name n2@127.0.0.1 --cookie concord_test -S mix
+```
+
+**Terminal 3:**
+```bash
+iex --name n3@127.0.0.1 --cookie concord_test -S mix
+```
+
+### Verify Cluster Formation
+
+In any terminal:
+```elixir
+# Check connected nodes
+Node.list()
+# => [:"n1@127.0.0.1", :"n2@127.0.0.1"] (from n3's perspective)
+
+# Find the Raft leader
+:ra.members({:concord_cluster, node()})
+# => {:ok, members, {:concord_cluster, leader_node}}
+```
+
+### Test Scenarios
+
+**Leader Election:**
+```elixir
+# Find leader
+{:ok, _members, {:concord_cluster, leader}} = :ra.members({:concord_cluster, node()})
+
+# Kill leader (close terminal or Ctrl+C twice)
+# Wait a few seconds
+
+# On remaining nodes, verify new leader
+:ra.members({:concord_cluster, node()})
+```
+
+**Data Replication:**
+```elixir
+# On node 1
+Concord.put("test_key", "test_value")
+
+# On node 2 (verify replication)
+Concord.get("test_key")
+# => {:ok, "test_value"}
+```
+
+**Network Partition:**
+```elixir
+# From n1, disconnect from n2
+Node.disconnect(:"n2@127.0.0.1")
+
+# Try writes on both sides
+Concord.put("partition_test", "value_from_partition_a")  # n1 side
+Concord.put("partition_test", "value_from_partition_b")  # n2 side (should fail - no quorum)
+
+# Reconnect
+Node.connect(:"n2@127.0.0.1")
+
+# Check which value won
+Concord.get("partition_test")
+```
 
 ## Directory Structure
 

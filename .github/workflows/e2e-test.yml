@@ -59,8 +59,15 @@ jobs:
 
       - name: Run E2E Distributed Tests
         run: |
-          echo "E2E tests are currently disabled due to LocalCluster compatibility issues"
-          echo "See https://github.com/gsmlg-dev/concord/issues/XX for details"
+          echo "⚠️  E2E tests are currently disabled due to LocalCluster/OTP 28 compatibility issues"
+          echo ""
+          echo "The :peer module (used by LocalCluster 2.x) times out when starting child nodes in OTP 28."
+          echo "This affects distributed testing tools across the Elixir ecosystem."
+          echo ""
+          echo "Workaround: Use manual multi-node testing (see e2e_test/README.md)"
+          echo "Tracking: Investigating :peer module timeout issues in OTP 28"
+          echo ""
+          echo "✅ Marking as success to unblock CI (e2e tests will be re-enabled once resolved)"
           exit 0
         env:
           MIX_ENV: e2e_test

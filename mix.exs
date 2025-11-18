@@ -125,11 +125,12 @@ defmodule Concord.MixProject do
   defp aliases do
     [
       test: "test --no-start",
-      "test.e2e": "cmd elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/",
+      "test.e2e":
+        "cmd MIX_ENV=e2e_test elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/ --no-start",
       "test.e2e.distributed":
-        "cmd elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/distributed/",
+        "cmd MIX_ENV=e2e_test elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/distributed/ --no-start",
       "test.e2e.docker":
-        "cmd elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/docker/",
+        "cmd MIX_ENV=e2e_test elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/docker/ --no-start",
       lint: ["credo --strict", "dialyzer --ignore-exit-status"]
     ]
   end
