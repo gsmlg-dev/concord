@@ -61,6 +61,7 @@ defmodule Concord.MixProject do
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(:e2e_test), do: ["lib", "e2e_test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
   # Package metadata for Hex.pm
@@ -112,6 +113,9 @@ defmodule Concord.MixProject do
       {:opentelemetry_telemetry, "~> 1.1"},
       # Event streaming with GenStage
       {:gen_stage, "~> 1.2"},
+      # E2E testing
+      {:local_cluster, "~> 2.0", only: [:e2e_test], runtime: false},
+      {:httpoison, "~> 2.0", only: [:e2e_test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}
@@ -121,6 +125,11 @@ defmodule Concord.MixProject do
   defp aliases do
     [
       test: "test --no-start",
+      "test.e2e": "cmd elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/",
+      "test.e2e.distributed":
+        "cmd elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/distributed/",
+      "test.e2e.docker":
+        "cmd elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/docker/",
       lint: ["credo --strict", "dialyzer --ignore-exit-status"]
     ]
   end

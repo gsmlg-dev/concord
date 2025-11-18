@@ -15,7 +15,7 @@ Concord is a distributed, strongly-consistent **embedded** key-value store built
 # Compile the project
 mix compile
 
-# Run all tests
+# Run unit tests (fast, isolated)
 mix test
 
 # Run specific test file
@@ -26,6 +26,15 @@ mix test test/concord_test.exs:42
 
 # Run with coverage
 mix test --cover
+
+# Run e2e tests (multi-node, distributed scenarios)
+mix test.e2e
+
+# Run only distributed e2e tests
+mix test.e2e.distributed
+
+# Run specific e2e test file
+MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs
 
 # Run linting
 mix credo
@@ -192,15 +201,16 @@ The configuration follows standard Elixir patterns with environment-specific fil
 
 ## Testing Strategy
 
-Test categories:
+### Unit Tests (`test/`)
+
+Fast, isolated tests for individual components:
+
 - **Unit Tests**: Basic CRUD operations, validation (e.g., `test/concord_test.exs`)
 - **Feature Tests**: TTL, compression, bulk operations, queries, indexes
 - **Auth Tests**: Token management, authorization flows
 - **RBAC Tests**: Role management, ACL rules, permission checking (`test/concord/rbac_test.exs` - 34 tests)
 - **Multi-Tenancy Tests**: Tenant lifecycle, quotas, usage tracking (`test/concord/multi_tenancy_test.exs` - 41 tests)
 - **Telemetry Tests**: Event emission verification
-- **Integration Tests**: Multi-node scenarios, HTTP API
-- **Performance Tests**: Benchmarks in `test/performance/`
 
 **Important Testing Notes:**
 - Tests use `Concord.TestHelper.start_test_cluster()` to initialize Ra cluster
@@ -209,6 +219,39 @@ Test categories:
 - The `--no-start` alias prevents automatic application startup during tests
 - State machine version changes require cluster restart or data cleanup
 - Tests run with `async: false` to avoid Ra cluster conflicts
+
+### E2E Tests (`e2e_test/`)
+
+**Separate test suite** for distributed, multi-node scenarios:
+
+- **Leader Election**: Raft leader election and failover (`e2e_test/distributed/leader_election_test.exs`)
+- **Network Partitions**: Split-brain, quorum behavior, partition healing (`e2e_test/distributed/network_partition_test.exs`)
+- **Data Consistency**: Replication, concurrent writes, TTL consistency (`e2e_test/distributed/data_consistency_test.exs`)
+- **Node Failures**: Crash tolerance, recovery, log replay (`e2e_test/distributed/node_failure_test.exs`)
+
+**E2E Testing Environment:**
+- Uses `MIX_ENV=e2e_test` (separate from unit tests)
+- Spawns actual Erlang nodes with LocalCluster (3-5 nodes per test)
+- Longer execution time: ~5 minutes for full suite
+- Resource intensive: ~1GB RAM, requires EPMD running
+- See `e2e_test/README.md` for detailed documentation
+
+**Running E2E Tests:**
+```bash
+# Run all e2e tests
+mix test.e2e
+
+# Run only distributed tests
+mix test.e2e.distributed
+
+# Run specific e2e test
+MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs
+
+# Run with verbose output
+MIX_ENV=e2e_test mix test e2e_test/ --trace
+```
+
+### Performance Tests
 
 **Running Performance Benchmarks:**
 ```bash
@@ -235,7 +278,7 @@ mix run test/performance/kv_operations_benchmark.exs
 - Track leader changes via telemetry events
 
 ### Important File Locations
-- Raft logs and snapshots: `{data_dir}/` (default: `./data/dev` in development)
+- Raft logs and snapshots: `{data_dir}/` (default: `./data/dev` in development, `./data/e2e_test` in e2e tests)
 - Ra data directory: `nonode@nohost/` (gitignored - test artifacts)
 - ETS tables:
   - `:concord_store` - Main KV storage
@@ -249,6 +292,10 @@ mix run test/performance/kv_operations_benchmark.exs
 - Audit logs: `audit_logs/` directory (JSONL format)
 - RBAC module: `lib/concord/rbac.ex`
 - Multi-tenancy: `lib/concord/multi_tenancy.ex`, `lib/concord/multi_tenancy/rate_limiter.ex`
+- **E2E Tests**: `e2e_test/` directory (separate from `test/`)
+  - `e2e_test/support/e2e_cluster_helper.ex` - Multi-node cluster utilities
+  - `e2e_test/distributed/` - Distributed system tests
+  - `config/e2e_test.exs` - E2E test configuration
 
 ## Feature-Specific Guidance
 

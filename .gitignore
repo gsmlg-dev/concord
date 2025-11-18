@@ -23,6 +23,8 @@ concord-*.tar
 /tmp/
 plts/
 nonode@nohost/
+concord_e2e_*
+/data/
 
 # devenv
 .devenv/
