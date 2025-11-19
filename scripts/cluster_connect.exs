@@ -62,6 +62,9 @@ defmodule ClusterHelper do
       {:error, :not_started} ->
         IO.puts("⚠ Ra server was not started")
 
+      {:error, :system_not_started} ->
+        IO.puts("⚠ Ra system not started yet, skipping stop")
+
       error ->
         IO.puts("⚠ Stop server returned: #{inspect(error)}")
     end
