@@ -49,17 +49,36 @@ iex --name n2@127.0.0.1 --cookie concord_test -S mix
 iex --name n3@127.0.0.1 --cookie concord_test -S mix
 ```
 
-### Verify Cluster Formation
+### Connect the Nodes
 
-In any terminal:
+**IMPORTANT:** Nodes don't auto-discover with the Gossip strategy on localhost. You must manually connect them.
+
+**In Terminal 1 (n1):**
 ```elixir
-# Check connected nodes
-Node.list()
-# => [:"n1@127.0.0.1", :"n2@127.0.0.1"] (from n3's perspective)
+Node.connect(:"n2@127.0.0.1")
+Node.connect(:"n3@127.0.0.1")
+```
 
-# Find the Raft leader
+**Wait 2-3 seconds for cluster to form**, then verify:
+
+```elixir
+# Check connected nodes (should see all other nodes)
+Node.list()
+# => [:"n2@127.0.0.1", :"n3@127.0.0.1"]
+
+# Check Raft cluster status
 :ra.members({:concord_cluster, node()})
 # => {:ok, members, {:concord_cluster, leader_node}}
+
+# If you get :cluster_not_ready, wait a few more seconds
+# The Raft cluster needs time to elect a leader
+```
+
+**Verify cluster is ready:**
+```elixir
+Concord.put("test", "hello")
+# => :ok (if cluster is ready)
+# => {:error, :cluster_not_ready} (if still initializing - wait a bit)
 ```
 
 ### Test Scenarios
