@@ -28,9 +28,33 @@ The e2e tests are **completely separate** from unit tests (`test/`) and focus on
 
 ## Manual Testing (Current Recommended Approach)
 
-Until the OTP 28 compatibility issues are resolved, you can test Concord's distributed features manually:
+Until the OTP 28 compatibility issues are resolved, you can test Concord's distributed features manually.
 
-### Starting Multiple Nodes
+### Quick Start with Helper Script
+
+**Terminal 1:**
+```bash
+iex --name n1@127.0.0.1 --cookie concord_test -S mix
+```
+
+Then in the IEx session:
+```elixir
+import_file("scripts/cluster_connect.exs")
+```
+
+This will automatically connect to n2 and n3, wait for cluster formation, and verify it's ready.
+
+**Terminal 2:**
+```bash
+iex --name n2@127.0.0.1 --cookie concord_test -S mix
+```
+
+**Terminal 3:**
+```bash
+iex --name n3@127.0.0.1 --cookie concord_test -S mix
+```
+
+### Manual Setup (Without Helper Script)
 
 Open 3 terminal windows and run:
 
