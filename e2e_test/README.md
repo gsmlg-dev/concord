@@ -32,17 +32,12 @@ Until the OTP 28 compatibility issues are resolved, you can test Concord's distr
 
 ### Quick Start with Helper Script
 
+**Step 1:** Start all 3 nodes in separate terminals:
+
 **Terminal 1:**
 ```bash
 iex --name n1@127.0.0.1 --cookie concord_test -S mix
 ```
-
-Then in the IEx session:
-```elixir
-import_file("scripts/cluster_connect.exs")
-```
-
-This will automatically connect to n2 and n3, wait for cluster formation, and verify it's ready.
 
 **Terminal 2:**
 ```bash
@@ -52,6 +47,32 @@ iex --name n2@127.0.0.1 --cookie concord_test -S mix
 **Terminal 3:**
 ```bash
 iex --name n3@127.0.0.1 --cookie concord_test -S mix
+```
+
+**Step 2:** In Terminal 1 (n1), load the helper script and connect:
+
+```elixir
+import_file("scripts/cluster_connect.exs")
+ClusterHelper.connect_all()
+```
+
+This will:
+- Connect n1 to n2 and n3
+- Load the helper script on all nodes
+- Restart the Raft cluster on all nodes with the full member list
+- Wait for cluster initialization
+- Verify the cluster is ready
+
+**Step 3:** Test the cluster:
+
+```elixir
+# In any node
+Concord.put("test", "value")
+Concord.get("test")
+# => {:ok, "value"}
+
+# Check cluster status
+ClusterHelper.status()
 ```
 
 ### Manual Setup (Without Helper Script)
