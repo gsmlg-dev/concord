@@ -17,9 +17,7 @@ config :libcluster,
 config :logger, level: :warning
 
 # HTTP API configuration for e2e tests
-config :concord, :http,
-  enabled: true,
-  port: 4000
+config :concord, :http, enabled: true, port: 4000
 
 # Telemetry configuration
 config :concord, :telemetry, enabled: true

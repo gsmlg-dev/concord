@@ -60,11 +60,18 @@ defmodule Concord.Application do
       {TTL, []},
       # Start multi-tenancy rate limiter
       MultiTenancy.RateLimiter,
-      # Start HTTP API web server
-      Web.Supervisor,
       # Start the Concord cluster after a brief delay
       {Task, fn -> init_cluster() end}
     ]
+
+    # Add HTTP API web server if enabled
+    children =
+      if http_api_enabled?() do
+        # Insert Web.Supervisor before the cluster init task
+        List.insert_at(children, -1, Web.Supervisor)
+      else
+        children
+      end
 
     # Add Prometheus exporter if enabled
     children =
@@ -92,6 +99,11 @@ defmodule Concord.Application do
 
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp http_api_enabled? do
+    Application.get_env(:concord, :http, [])
+    |> Keyword.get(:enabled, false)
   end
 
   defp prometheus_enabled? do

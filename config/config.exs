@@ -27,9 +27,14 @@ config :concord,
     level: 6
   ],
   # HTTP API configuration
-  api_port: 4000,
-  # localhost
-  api_ip: {127, 0, 0, 1},
+  http: [
+    # Enable HTTP/HTTPS API server (disabled by default)
+    enabled: false,
+    # API server port
+    port: 4000,
+    # API server IP (localhost by default)
+    ip: {127, 0, 0, 1}
+  ],
   # TLS/HTTPS configuration
   tls: [
     # Enable HTTPS instead of HTTP

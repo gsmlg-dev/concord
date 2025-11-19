@@ -40,7 +40,8 @@ defmodule Concord.Web.Supervisor do
   defp get_port do
     case System.get_env("CONCORD_API_PORT") do
       nil ->
-        Application.get_env(:concord, :api_port, 4000)
+        http_config = Application.get_env(:concord, :http, [])
+        Keyword.get(http_config, :port, 4000)
 
       port_str ->
         case Integer.parse(port_str) do
@@ -53,7 +54,10 @@ defmodule Concord.Web.Supervisor do
   defp get_ip do
     case System.get_env("CONCORD_API_IP") do
       nil ->
-        case Application.get_env(:concord, :api_ip, {127, 0, 0, 1}) do
+        http_config = Application.get_env(:concord, :http, [])
+        default_ip = Keyword.get(http_config, :ip, {127, 0, 0, 1})
+
+        case default_ip do
           {a, b, c, d} = ip when a in 0..255 and b in 0..255 and c in 0..255 and d in 0..255 -> ip
           :loopback -> {127, 0, 0, 1}
           :any -> {0, 0, 0, 0}
