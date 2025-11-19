@@ -50,8 +50,8 @@ config :concord,
     # TLS versions to support (default: TLS 1.2 and 1.3)
     versions: [:"tlsv1.2", :"tlsv1.3"]
   ],
-  # Prometheus metrics configuration
-  prometheus_enabled: true,
+  # Prometheus metrics configuration (disabled by default)
+  prometheus_enabled: false,
   prometheus_port: 9568,
   # OpenTelemetry distributed tracing configuration
   # Enable distributed tracing
