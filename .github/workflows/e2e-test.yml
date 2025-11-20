@@ -59,11 +59,15 @@ jobs:
 
       - name: Run E2E Distributed Tests
         run: |
-          echo "Running e2e distributed tests..."
+          echo "⚠️  WARNING: E2E tests currently fail due to LocalCluster/OTP 28 compatibility"
+          echo "The :peer module times out when starting child nodes in OTP 28"
+          echo "See e2e_test/README.md for manual testing instructions"
+          echo ""
+          echo "Running tests to document current failure state..."
+          echo ""
           MIX_ENV=e2e_test mix test e2e_test/distributed/ --trace --max-cases 1
         env:
           MIX_ENV: e2e_test
-        continue-on-error: true
 
       - name: Upload test results
         if: failure()
@@ -139,9 +143,19 @@ jobs:
       - name: Check test results
         run: |
           echo "E2E Distributed Tests: ${{ needs.e2e-distributed.result }}"
+          echo ""
           if [ "${{ needs.e2e-distributed.result }}" != "success" ]; then
             echo "❌ E2E distributed tests failed"
+            echo ""
+            echo "NOTE: Tests are expected to fail due to LocalCluster/OTP 28 compatibility issues"
+            echo "The :peer module (used by LocalCluster 2.x) times out when starting child nodes"
+            echo ""
+            echo "Workaround: Use manual multi-node testing"
+            echo "See: e2e_test/README.md for instructions"
+            echo ""
+            echo "This is a known upstream issue being tracked."
             exit 1
           else
             echo "✅ E2E distributed tests passed"
+            echo "The LocalCluster/OTP 28 compatibility issue appears to be resolved!"
           fi
