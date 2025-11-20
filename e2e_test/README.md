@@ -2,13 +2,11 @@
 
 This directory contains end-to-end tests for Concord that verify distributed behavior across multiple nodes in realistic scenarios.
 
-## ⚠️ Current Status: OTP 28 Compatibility Issue
+## ✅ Status: Working with Manual Node Spawning
 
-**LocalCluster 2.x is experiencing compatibility issues with Erlang/OTP 28.** The `:peer` module (used internally by LocalCluster) times out when attempting to start child nodes, preventing automated e2e tests from running.
+**E2E tests now use manual node spawning via Port instead of LocalCluster** to avoid OTP 28 compatibility issues. Tests spawn actual Erlang VM processes as separate OS processes and connect them via distributed Erlang.
 
-**Workaround:** Use manual multi-node testing (see "Manual Testing" section below) until this is resolved.
-
-**Tracking:** This is a known issue with the `:peer` module in OTP 28 that affects multiple distributed testing tools.
+**Approach:** Tests use `Port.open` to spawn `elixir --name` nodes, connect them with `Node.connect`, and initialize Ra cluster manually. This provides the same multi-node testing capabilities without the LocalCluster timeout issues.
 
 ## Overview
 

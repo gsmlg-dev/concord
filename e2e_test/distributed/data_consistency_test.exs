@@ -6,13 +6,13 @@ defmodule Concord.E2E.DataConsistencyTest do
   @moduletag :distributed
 
   setup do
-    {:ok, nodes, cluster} = ClusterHelper.start_cluster(nodes: 3)
+    {:ok, nodes, ports} = ClusterHelper.start_cluster(nodes: 3)
 
     on_exit(fn ->
-      ClusterHelper.stop_cluster(cluster)
+      ClusterHelper.stop_cluster(ports)
     end)
 
-    %{nodes: nodes, cluster: cluster}
+    %{nodes: nodes, ports: ports}
   end
 
   describe "Data Consistency" do

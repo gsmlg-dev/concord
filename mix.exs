@@ -113,8 +113,7 @@ defmodule Concord.MixProject do
       {:opentelemetry_telemetry, "~> 1.1"},
       # Event streaming with GenStage
       {:gen_stage, "~> 1.2"},
-      # E2E testing
-      {:local_cluster, "~> 2.0", only: [:e2e_test], runtime: false},
+      # E2E testing (note: LocalCluster removed due to OTP 28 compatibility, using manual node spawning)
       {:httpoison, "~> 2.0", only: [:e2e_test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
