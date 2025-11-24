@@ -67,10 +67,39 @@ defmodule Concord.E2E.ClusterHelper do
     # Wait for connections to stabilize
     Process.sleep(1000)
 
-    # Initialize Concord on each node
+    # Initialize Ra and Concord on each node
     Enum.each(nodes, fn node ->
       IO.puts("Initializing Concord on #{node}...")
-      :rpc.call(node, Application, :ensure_all_started, [:concord])
+
+      # Start Ra application first (required for :ra.start_server)
+      case :rpc.call(node, Application, :ensure_all_started, [:ra]) do
+        {:ok, _apps} ->
+          IO.puts("✓ Ra application started on #{node}")
+
+        {:error, reason} ->
+          IO.puts("✗ Failed to start Ra on #{node}: #{inspect(reason)}")
+
+        {:badrpc, reason} ->
+          IO.puts("✗ RPC error starting Ra on #{node}: #{inspect(reason)}")
+      end
+
+      # Start Ra system (required before starting Ra servers)
+      case :rpc.call(node, :ra, :start, []) do
+        :ok ->
+          IO.puts("✓ Ra system started on #{node}")
+
+        {:error, {:already_started, _}} ->
+          IO.puts("✓ Ra system already running on #{node}")
+
+        {:error, reason} ->
+          IO.puts("✗ Failed to start Ra system on #{node}: #{inspect(reason)}")
+
+        {:badrpc, reason} ->
+          IO.puts("✗ RPC error starting Ra system on #{node}: #{inspect(reason)}")
+      end
+
+      # Load Concord application code (but don't start it - we'll manually start Ra servers)
+      :rpc.call(node, Application, :load, [:concord])
     end)
 
     # Initialize Ra cluster on all nodes with full member list
@@ -96,8 +125,11 @@ defmodule Concord.E2E.ClusterHelper do
     IO.puts("Stopping cluster nodes...")
 
     # Close all ports (kills the node processes)
+    # Check if port is still open before closing to avoid errors
     Enum.each(ports, fn port ->
-      Port.close(port)
+      if Port.info(port) != nil do
+        Port.close(port)
+      end
     end)
 
     # Give time for graceful shutdown
@@ -213,10 +245,15 @@ defmodule Concord.E2E.ClusterHelper do
 
       false ->
         # Current node needs to be alive for distributed Erlang
-        # This should already be set by the test runner with --name flag
+        # This should be handled by test_helper.exs or the mix alias
         raise """
         Current node is not alive! E2E tests require distributed Erlang.
-        Run tests with: elixir --name test@127.0.0.1 --cookie test -S mix test e2e_test/
+
+        Use the mix alias:
+          mix test.e2e
+
+        Or run manually:
+          MIX_ENV=e2e_test elixir --name test@127.0.0.1 --cookie test_cookie -S mix test e2e_test/ --no-start
         """
     end
   end
@@ -274,29 +311,33 @@ defmodule Concord.E2E.ClusterHelper do
     # Initialize Ra cluster on each node
     Enum.each(nodes, fn node ->
       node_id = {cluster_name, node}
-      uid = node_id |> Tuple.to_list() |> Enum.join("_") |> String.replace("@", "_")
+      # UID must be a binary (string) - format: "concord_cluster_nodename"
+      uid = "#{cluster_name}_#{node}" |> String.replace("@", "_") |> String.replace(".", "_")
       data_dir = "#{data_dir_base}/#{node}"
 
-      # Stop existing Ra server if running
+      # Try to stop existing Ra server if running
+      # Note: This may fail if Ra system not started yet, which is fine for initial setup
       case :rpc.call(node, :ra, :stop_server, [node_id]) do
         :ok ->
           IO.puts("✓ Stopped existing Ra server on #{node}")
+          Process.sleep(500)
 
         {:error, :not_started} ->
-          IO.puts("⚠ Ra server was not started on #{node}")
+          # Server wasn't running - this is fine for initial setup
+          :ok
 
         {:error, :system_not_started} ->
-          IO.puts("⚠ Ra system not started on #{node}")
+          # Ra system not started yet - this is expected on first run
+          :ok
 
-        {:badrpc, _} = error ->
-          IO.puts("⚠ RPC error stopping Ra on #{node}: #{inspect(error)}")
+        {:badrpc, {:EXIT, {{:try_clause, {:error, :system_not_started}}, _}}} ->
+          # Another form of "system not started" error - also fine
+          :ok
 
         error ->
           IO.puts("⚠ Stop server on #{node} returned: #{inspect(error)}")
+          :ok
       end
-
-      # Wait for shutdown
-      Process.sleep(500)
 
       # Start Ra server with all members
       server_config = %{

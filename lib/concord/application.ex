@@ -142,7 +142,8 @@ defmodule Concord.Application do
     File.mkdir_p!(data_dir)
 
     # Create a proper uid from the node tuple
-    uid = node_id |> Tuple.to_list() |> Enum.join("_") |> String.replace("@", "_")
+    # UID must be a binary (string) - format: "concord_cluster_nodename"
+    uid = "#{cluster_name}_#{node()}" |> String.replace("@", "_") |> String.replace(".", "_")
 
     server_config = %{
       id: node_id,
