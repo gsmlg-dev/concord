@@ -13,10 +13,11 @@ NC='\033[0m' # No Color
 # Set MIX_ENV
 export MIX_ENV=e2e_test
 
-# Function to clean up orphan processes
+# Function to clean up orphan node processes
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up e2e processes...${NC}"
-    pkill -9 -f "concord_e2e" 2>/dev/null || true
+    # Use specific pattern to only kill node processes (concord_e2e1@, concord_e2e2@, etc.)
+    pkill -9 -f "concord_e2e[0-9]+@" 2>/dev/null || true
     rm -rf ./data/e2e_test 2>/dev/null || true
 }
 

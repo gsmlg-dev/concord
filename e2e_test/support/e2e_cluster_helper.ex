@@ -143,8 +143,8 @@ defmodule Concord.E2E.ClusterHelper do
     # Give time for graceful shutdown
     Process.sleep(500)
 
-    # Force kill any remaining processes
-    System.cmd("pkill", ["-9", "-f", "concord_e2e"], stderr_to_stdout: true)
+    # Force kill any remaining node processes (use specific pattern)
+    System.cmd("pkill", ["-9", "-f", "concord_e2e[0-9]+@"], stderr_to_stdout: true)
 
     # Clean up data directories
     cleanup_data_dirs()

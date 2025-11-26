@@ -60,7 +60,7 @@ jobs:
       - name: Run E2E Distributed Tests
         run: |
           echo "Running e2e distributed tests with manual node spawning..."
-          MIX_ENV=e2e_test elixir --name test@127.0.0.1 --cookie concord_e2e_test -S mix test e2e_test/distributed/ --trace
+          ./scripts/run_e2e_tests.sh e2e_test/distributed/
         env:
           MIX_ENV: e2e_test
 

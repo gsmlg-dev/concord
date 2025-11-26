@@ -1,8 +1,10 @@
 # Clean up orphan processes from previous runs
+# Only kill node processes, not the test runner
 defmodule Concord.E2E.Cleanup do
   def kill_orphans do
     IO.puts("Cleaning up orphan e2e processes...")
-    System.cmd("pkill", ["-9", "-f", "concord_e2e"], stderr_to_stdout: true)
+    # Use more specific pattern to only kill node processes (concord_e2e\d+@)
+    System.cmd("pkill", ["-9", "-f", "concord_e2e[0-9]+@"], stderr_to_stdout: true)
     Process.sleep(500)
   end
 end
@@ -45,7 +47,8 @@ end
 # Register cleanup on exit
 System.at_exit(fn _ ->
   IO.puts("\nCleaning up e2e processes on exit...")
-  System.cmd("pkill", ["-9", "-f", "concord_e2e"], stderr_to_stdout: true)
+  # Use specific pattern to only kill node processes
+  System.cmd("pkill", ["-9", "-f", "concord_e2e[0-9]+@"], stderr_to_stdout: true)
 end)
 
 # Start ExUnit with specific configuration for e2e tests
