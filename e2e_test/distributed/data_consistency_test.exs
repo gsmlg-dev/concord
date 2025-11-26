@@ -84,7 +84,7 @@ defmodule Concord.E2E.DataConsistencyTest do
         end
 
       # Perform bulk put
-      :ok = :rpc.call(leader, Concord, :put_many, [bulk_data])
+      {:ok, _results} = :rpc.call(leader, Concord, :put_many, [bulk_data])
 
       # Give time for replication
       Process.sleep(1000)

@@ -24,7 +24,7 @@ defmodule Concord.E2E.NodeFailureTest do
       :ok = :rpc.call(leader, Concord, :put, ["failure:key1", "value1"])
 
       # Kill a follower (not the leader)
-      follower = Enum.find([n1, n2, n3], &(&1 != leader)) |> List.first()
+      follower = Enum.find([n1, n2, n3], &(&1 != leader))
       ClusterHelper.kill_node(follower)
 
       # Wait for cluster to detect failure
