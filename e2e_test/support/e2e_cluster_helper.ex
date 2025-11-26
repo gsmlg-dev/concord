@@ -100,6 +100,10 @@ defmodule Concord.E2E.ClusterHelper do
 
       # Load Concord application code (but don't start it - we'll manually start Ra servers)
       :rpc.call(node, Application, :load, [:concord])
+
+      # Start telemetry apps to avoid handler warnings
+      :rpc.call(node, Application, :ensure_all_started, [:telemetry])
+      :rpc.call(node, Application, :ensure_all_started, [:telemetry_poller])
     end)
 
     # Initialize Ra cluster on all nodes with full member list
@@ -128,12 +132,19 @@ defmodule Concord.E2E.ClusterHelper do
     # Check if port is still open before closing to avoid errors
     Enum.each(ports, fn port ->
       if Port.info(port) != nil do
-        Port.close(port)
+        try do
+          Port.close(port)
+        catch
+          _, _ -> :ok
+        end
       end
     end)
 
     # Give time for graceful shutdown
     Process.sleep(500)
+
+    # Force kill any remaining processes
+    System.cmd("pkill", ["-9", "-f", "concord_e2e"], stderr_to_stdout: true)
 
     # Clean up data directories
     cleanup_data_dirs()
@@ -278,7 +289,8 @@ defmodule Concord.E2E.ClusterHelper do
       "-S",
       "mix",
       "run",
-      "--no-start"
+      "--no-start",
+      "--no-compile"
     ]
 
     # Spawn the node as a separate OS process

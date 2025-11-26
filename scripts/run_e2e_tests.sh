@@ -10,10 +10,28 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${YELLOW}=== Starting E2E Test Suite ===${NC}"
-
 # Set MIX_ENV
 export MIX_ENV=e2e_test
+
+# Function to clean up orphan processes
+cleanup() {
+    echo -e "\n${YELLOW}Cleaning up e2e processes...${NC}"
+    pkill -9 -f "concord_e2e" 2>/dev/null || true
+    rm -rf ./data/e2e_test 2>/dev/null || true
+}
+
+# Trap to ensure cleanup on exit/interrupt
+trap cleanup EXIT INT TERM
+
+# Clean up orphans before starting
+cleanup
+sleep 1
+
+echo -e "${YELLOW}=== Starting E2E Test Suite ===${NC}"
+
+# Pre-compile to avoid build lock contention
+echo -e "${YELLOW}Pre-compiling...${NC}"
+mix compile --force
 
 # Parse arguments
 TEST_PATH="${1:-e2e_test/}"
