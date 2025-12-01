@@ -1,8 +1,9 @@
 [
-  # Ra library and application initialization - no_return warnings are false positives
+  # Ra library and application initialization - type contract mismatches with Ra Erlang types
   ~r/lib\/concord\/application.ex.*no_return/,
   ~r/lib\/concord\/application.ex:137.*:call/,
   ~r/lib\/concord\/application.ex:147.*:call/,
+  ~r/lib\/concord\/application.ex:160.*:call/,
 
   # State machine pattern matches are defensive programming for backward compatibility
   ~r/lib\/concord\/state_machine.ex.*pattern_match/,
