@@ -73,60 +73,8 @@ jobs:
             _build/e2e_test/test-junit-report.xml
             data/e2e_test/
 
-  e2e-docker:
-    name: E2E Docker Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # Only run Docker tests on schedule or manual trigger (slower)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-
-    strategy:
-      fail-fast: false
-      matrix:
-        otp: ['28']
-        elixir: ['1.18']
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: ${{ matrix.elixir }}
-          otp-version: ${{ matrix.otp }}
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-e2e-docker-${{ matrix.otp }}-${{ matrix.elixir }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-e2e-docker-${{ matrix.otp }}-${{ matrix.elixir }}-mix-
-
-      - name: Install dependencies
-        run: |
-          mix local.hex --force
-          mix local.rebar --force
-          MIX_ENV=e2e_test mix deps.get
-
-      - name: Run E2E Docker Tests
-        run: MIX_ENV=e2e_test mix test e2e_test/docker/ --trace
-        env:
-          MIX_ENV: e2e_test
-
-      - name: Upload Docker test results
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-docker-test-results-${{ matrix.otp }}-${{ matrix.elixir }}
-          path: |
-            _build/e2e_test/test-junit-report.xml
+  # NOTE: e2e-docker job removed - no Docker tests exist yet
+  # Add back when e2e_test/docker/ tests are implemented
 
   e2e-summary:
     name: E2E Test Summary
