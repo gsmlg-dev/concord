@@ -36,7 +36,10 @@ mix test.e2e.distributed
 # Run specific e2e test file
 MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs
 
-# Run linting
+# Run linting (credo + dialyzer)
+mix lint
+
+# Run just credo
 mix credo
 
 # Run type checking (first run generates PLT file - slow)
@@ -188,6 +191,13 @@ The configuration follows standard Elixir patterns with environment-specific fil
 - `config/test.exs` - Test configuration with `--no-start` alias for multi-node testing
 - `config/prod.exs` - Production settings with auth enabled and environment variables
 - `config/runtime.exs` - Runtime configuration loaded at startup
+
+### Key Configuration Options
+- `default_read_consistency`: `:eventual`, `:leader` (default), or `:strong`
+- `max_batch_size`: Maximum operations per batch (default: 500)
+- `http.enabled`: Enable HTTP API server (default: false)
+- `prometheus_enabled`: Enable Prometheus metrics (default: false, port 9568)
+- `tracing_enabled`: Enable OpenTelemetry tracing (default: false)
 
 ### Development (config/dev.exs)
 - Auth disabled by default
