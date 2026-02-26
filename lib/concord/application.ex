@@ -129,7 +129,7 @@ defmodule Concord.Application do
   end
 
   defp init_cluster do
-    Process.sleep(1000)
+    wait_for_ra_system()
 
     node_id = node_id()
     cluster_name = :concord_cluster
@@ -179,5 +179,21 @@ defmodule Concord.Application do
 
   defp node_id do
     {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
+  end
+
+  # Wait for the Ra system to be ready instead of a hard-coded sleep.
+  # Polls up to 10 times with 200ms intervals (2s total max).
+  defp wait_for_ra_system(attempts \\ 10)
+  defp wait_for_ra_system(0), do: :ok
+
+  defp wait_for_ra_system(attempts) do
+    case :ra_system.fetch(:default) do
+      {:ok, _} ->
+        :ok
+
+      other when other in [:error, :undefined] ->
+        Process.sleep(200)
+        wait_for_ra_system(attempts - 1)
+    end
   end
 end

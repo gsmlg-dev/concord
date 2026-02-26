@@ -2,61 +2,18 @@ defmodule Concord.MultiTenancy do
   @moduledoc """
   Multi-tenancy support for Concord with resource quotas and usage tracking.
 
-  Provides tenant isolation, resource limits, and usage metrics to support
-  multiple independent tenants on a single Concord cluster.
+  Tenant definitions (id, name, namespace, quotas, RBAC role) are replicated
+  through Raft consensus so they survive restarts and are consistent across nodes.
 
-  ## Features
-
-  - **Tenant Isolation**: Automatic namespace isolation via RBAC ACLs
-  - **Resource Quotas**: Configurable limits per tenant (keys, storage, rate limits)
-  - **Usage Tracking**: Real-time monitoring of resource consumption
-  - **Automatic RBAC Integration**: Auto-creates roles and ACLs for tenants
-  - **Quota Enforcement**: Prevents operations that exceed tenant limits
-
-  ## Tenant Structure
-
-  Each tenant has:
-  - Unique ID (atom)
-  - Display name
-  - Key namespace pattern (e.g., "tenant1:*")
-  - Resource quotas (max_keys, max_storage_bytes, max_ops_per_sec)
-  - Current usage statistics
-  - RBAC role and ACL for isolation
-  - Metadata (created_at, updated_at)
-
-  ## Usage
-
-      # Create a tenant with quotas
-      {:ok, tenant} = Concord.MultiTenancy.create_tenant(
-        :acme_corp,
-        name: "ACME Corporation",
-        max_keys: 10_000,
-        max_storage_bytes: 100_000_000,
-        max_ops_per_sec: 1000
-      )
-
-      # Create a token for the tenant
-      {:ok, token} = Concord.Auth.create_token()
-      :ok = Concord.RBAC.grant_role(token, :tenant_acme_corp)
-
-      # Operations are automatically quota-checked
-      :ok = Concord.put("acme_corp:users:123", %{name: "Alice"}, token: token)
-
-      # Get usage statistics
-      {:ok, usage} = Concord.MultiTenancy.get_usage(:acme_corp)
-
-  ## Quota Enforcement
-
-  Quotas are enforced at operation time:
-  - `max_keys`: Maximum number of keys the tenant can store
-  - `max_storage_bytes`: Maximum total size of values (in bytes)
-  - `max_ops_per_sec`: Rate limit for operations (sliding window)
-
-  When a quota is exceeded, operations return `{:error, :quota_exceeded}`.
+  Usage counters (key_count, storage_bytes, ops_last_second) are **node-local**
+  and not replicated — they track per-node metrics for rate limiting.
   """
 
   alias Concord.RBAC
   require Logger
+
+  @cluster_name :concord_cluster
+  @timeout 5_000
 
   @type tenant_id :: atom()
   @type quota :: non_neg_integer() | :unlimited
@@ -81,35 +38,13 @@ defmodule Concord.MultiTenancy do
         }
 
   @doc """
-  Creates a new tenant with specified quotas and automatic RBAC setup.
-
-  ## Options
-
-  - `:name` - Display name for the tenant (default: stringified ID)
-  - `:namespace` - Key namespace pattern (default: "TENANT_ID:*")
-  - `:max_keys` - Maximum keys allowed (default: 10,000)
-  - `:max_storage_bytes` - Maximum storage in bytes (default: 100MB)
-  - `:max_ops_per_sec` - Maximum operations per second (default: 1,000)
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.create_tenant(:acme, name: "ACME Corp", max_keys: 5000)
-      {:ok, %{id: :acme, name: "ACME Corp", ...}}
-
-      iex> Concord.MultiTenancy.create_tenant(:acme)
-      {:error, :tenant_exists}
-
-  ## Returns
-
-  - `{:ok, tenant}` - Tenant created successfully
-  - `{:error, :tenant_exists}` - Tenant with this ID already exists
-  - `{:error, :invalid_id}` - Tenant ID must be an atom
+  Creates a new tenant with quotas and automatic RBAC setup via Raft consensus.
   """
   @spec create_tenant(tenant_id(), keyword()) :: {:ok, tenant()} | {:error, term()}
   def create_tenant(tenant_id, opts \\ [])
 
   def create_tenant(tenant_id, opts) when is_atom(tenant_id) do
-    # Check if tenant already exists
+    # Check if tenant already exists locally
     case get_tenant(tenant_id) do
       {:ok, _} ->
         {:error, :tenant_exists}
@@ -122,8 +57,9 @@ defmodule Concord.MultiTenancy do
         max_ops = Keyword.get(opts, :max_ops_per_sec, 1_000)
 
         now = DateTime.utc_now()
+        role = tenant_role_name(tenant_id)
 
-        tenant = %{
+        tenant_def = %{
           id: tenant_id,
           name: name,
           namespace: namespace,
@@ -137,39 +73,43 @@ defmodule Concord.MultiTenancy do
             storage_bytes: 0,
             ops_last_second: 0
           },
-          role: tenant_role_name(tenant_id),
+          role: role,
           created_at: now,
           updated_at: now
         }
 
-        # Create tenant-specific RBAC role
-        role = tenant.role
+        # Create RBAC role and ACL (these now go through Raft too)
         :ok = RBAC.create_role(role, [:read, :write, :delete])
-
-        # Create ACL for tenant namespace
         :ok = RBAC.create_acl(namespace, role, [:read, :write, :delete])
 
-        # Store tenant in ETS
-        :ets.insert(:concord_tenants, {tenant_id, tenant})
+        # Store tenant definition through Raft
+        case ra_command({:tenant_create, tenant_id, tenant_def}) do
+          {:ok, {:ok, _tenant}, _} ->
+            Logger.info("Created tenant #{tenant_id} with namespace #{namespace}")
+            {:ok, tenant_def}
 
-        Logger.info("Created tenant #{tenant_id} with namespace #{namespace}")
+          {:ok, {:error, reason}, _} ->
+            {:error, reason}
 
-        {:ok, tenant}
+          {:error, :noproc} ->
+            # Fallback for pre-cluster scenarios
+            :ets.insert(:concord_tenants, {tenant_id, tenant_def})
+            Logger.info("Created tenant #{tenant_id} (local fallback)")
+            {:ok, tenant_def}
+
+          {:timeout, _} ->
+            {:error, :timeout}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 
   def create_tenant(_tenant_id, _opts), do: {:error, :invalid_id}
 
   @doc """
-  Gets tenant information by ID.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.get_tenant(:acme)
-      {:ok, %{id: :acme, ...}}
-
-      iex> Concord.MultiTenancy.get_tenant(:nonexistent)
-      {:error, :not_found}
+  Gets tenant information by ID (reads from ETS).
   """
   @spec get_tenant(tenant_id()) :: {:ok, tenant()} | {:error, :not_found}
   def get_tenant(tenant_id) when is_atom(tenant_id) do
@@ -182,12 +122,7 @@ defmodule Concord.MultiTenancy do
   def get_tenant(_), do: {:error, :invalid_id}
 
   @doc """
-  Lists all tenants in the system.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.list_tenants()
-      {:ok, [%{id: :acme, ...}, %{id: :widgets_inc, ...}]}
+  Lists all tenants (reads from ETS).
   """
   @spec list_tenants() :: {:ok, [tenant()]}
   def list_tenants do
@@ -200,34 +135,33 @@ defmodule Concord.MultiTenancy do
   end
 
   @doc """
-  Deletes a tenant and all associated resources.
-
-  This removes the tenant, its RBAC role and ACL, and revokes the role from all tokens.
-  Note: This does NOT delete the tenant's keys from storage.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.delete_tenant(:acme)
-      :ok
-
-      iex> Concord.MultiTenancy.delete_tenant(:nonexistent)
-      {:error, :not_found}
+  Deletes a tenant and associated RBAC resources via Raft consensus.
+  Does NOT delete the tenant's keys from storage.
   """
   @spec delete_tenant(tenant_id()) :: :ok | {:error, term()}
   def delete_tenant(tenant_id) when is_atom(tenant_id) do
     case get_tenant(tenant_id) do
       {:ok, tenant} ->
-        # Delete RBAC ACL
+        # Delete RBAC resources (goes through Raft)
         :ok = RBAC.delete_acl(tenant.namespace, tenant.role)
-
-        # Delete RBAC role (also revokes from all tokens)
         :ok = RBAC.delete_role(tenant.role)
 
-        # Delete tenant from ETS
-        :ets.delete(:concord_tenants, tenant_id)
+        # Delete tenant through Raft
+        case ra_command({:tenant_delete, tenant_id}) do
+          {:ok, :ok, _} ->
+            Logger.info("Deleted tenant #{tenant_id}")
+            :ok
 
-        Logger.info("Deleted tenant #{tenant_id}")
-        :ok
+          {:error, :noproc} ->
+            :ets.delete(:concord_tenants, tenant_id)
+            :ok
+
+          {:timeout, _} ->
+            {:error, :timeout}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
 
       {:error, :not_found} ->
         {:error, :not_found}
@@ -237,47 +171,38 @@ defmodule Concord.MultiTenancy do
   def delete_tenant(_), do: {:error, :invalid_id}
 
   @doc """
-  Updates tenant quotas.
-
-  ## Options
-
-  - `:max_keys` - Maximum keys allowed
-  - `:max_storage_bytes` - Maximum storage in bytes
-  - `:max_ops_per_sec` - Maximum operations per second
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.update_quota(:acme, :max_keys, 20_000)
-      {:ok, %{id: :acme, quotas: %{max_keys: 20_000, ...}}}
+  Updates tenant quotas via Raft consensus.
   """
   @spec update_quota(tenant_id(), atom(), quota()) :: {:ok, tenant()} | {:error, term()}
   def update_quota(tenant_id, quota_type, value)
       when is_atom(tenant_id) and quota_type in [:max_keys, :max_storage_bytes, :max_ops_per_sec] and
              ((is_integer(value) and value >= 0) or value == :unlimited) do
-    case get_tenant(tenant_id) do
-      {:ok, tenant} ->
-        updated_quotas = Map.put(tenant.quotas, quota_type, value)
-        updated_tenant = %{tenant | quotas: updated_quotas, updated_at: DateTime.utc_now()}
-
-        :ets.insert(:concord_tenants, {tenant_id, updated_tenant})
-
-        Logger.info("Updated #{quota_type} for tenant #{tenant_id} to #{value}")
+    case ra_command({:tenant_update_quota, tenant_id, quota_type, value}) do
+      {:ok, {:ok, updated_tenant}, _} ->
         {:ok, updated_tenant}
 
-      error ->
-        error
+      {:ok, {:error, reason}, _} ->
+        {:error, reason}
+
+      {:error, :noproc} ->
+        fallback_update_quota(tenant_id, quota_type, value)
+
+      {:timeout, _} ->
+        {:error, :timeout}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   def update_quota(_tenant_id, _quota_type, _value), do: {:error, :invalid_arguments}
 
+  # ──────────────────────────────────────────────
+  # Usage tracking (node-local, NOT replicated)
+  # ──────────────────────────────────────────────
+
   @doc """
   Gets current usage statistics for a tenant.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.get_usage(:acme)
-      {:ok, %{key_count: 1234, storage_bytes: 567890, ops_last_second: 45}}
   """
   @spec get_usage(tenant_id()) :: {:ok, map()} | {:error, term()}
   def get_usage(tenant_id) when is_atom(tenant_id) do
@@ -289,16 +214,6 @@ defmodule Concord.MultiTenancy do
 
   @doc """
   Checks if an operation is within tenant quotas.
-
-  This should be called before performing operations to ensure quotas aren't exceeded.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.check_quota(:acme, :write, key_size: 100)
-      :ok
-
-      iex> Concord.MultiTenancy.check_quota(:acme, :write, key_size: 999_999_999)
-      {:error, :quota_exceeded}
   """
   @spec check_quota(tenant_id(), :read | :write | :delete, keyword()) ::
           :ok | {:error, :quota_exceeded | :not_found}
@@ -307,19 +222,16 @@ defmodule Concord.MultiTenancy do
     case get_tenant(tenant_id) do
       {:ok, tenant} ->
         cond do
-          # Check key count quota for writes
           operation == :write and tenant.quotas.max_keys != :unlimited and
               tenant.usage.key_count >= tenant.quotas.max_keys ->
             {:error, :quota_exceeded}
 
-          # Check storage quota for writes
           operation == :write and tenant.quotas.max_storage_bytes != :unlimited ->
             additional_size = Keyword.get(opts, :value_size, 0)
 
             if tenant.usage.storage_bytes + additional_size > tenant.quotas.max_storage_bytes do
               {:error, :quota_exceeded}
             else
-              # Storage is OK, but still need to check rate limit
               if tenant.quotas.max_ops_per_sec != :unlimited and
                    tenant.usage.ops_last_second >= tenant.quotas.max_ops_per_sec do
                 {:error, :quota_exceeded}
@@ -328,7 +240,6 @@ defmodule Concord.MultiTenancy do
               end
             end
 
-          # Check rate limit (for non-writes or unlimited storage)
           tenant.quotas.max_ops_per_sec != :unlimited and
               tenant.usage.ops_last_second >= tenant.quotas.max_ops_per_sec ->
             {:error, :quota_exceeded}
@@ -343,14 +254,7 @@ defmodule Concord.MultiTenancy do
   end
 
   @doc """
-  Records an operation for usage tracking.
-
-  This updates the tenant's usage statistics and should be called after successful operations.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.record_operation(:acme, :write, key_delta: 1, storage_delta: 256)
-      :ok
+  Records an operation for usage tracking (node-local, direct ETS update).
   """
   @spec record_operation(tenant_id(), :read | :write | :delete, keyword()) ::
           :ok | {:error, term()}
@@ -374,15 +278,12 @@ defmodule Concord.MultiTenancy do
         :ok
 
       _ ->
-        # If tenant doesn't exist, silently ignore (not all operations are tenant-scoped)
         :ok
     end
   end
 
   @doc """
-  Resets the per-second operation counter for all tenants.
-
-  This should be called periodically (every second) to implement rate limiting.
+  Resets the per-second operation counter for all tenants (node-local).
   """
   @spec reset_rate_counters() :: :ok
   def reset_rate_counters do
@@ -398,18 +299,9 @@ defmodule Concord.MultiTenancy do
 
   @doc """
   Extracts tenant ID from a key based on namespace pattern.
-
-  ## Examples
-
-      iex> Concord.MultiTenancy.tenant_from_key("acme:users:123")
-      {:ok, :acme}
-
-      iex> Concord.MultiTenancy.tenant_from_key("invalid_key")
-      {:error, :no_tenant}
   """
   @spec tenant_from_key(String.t()) :: {:ok, tenant_id()} | {:error, :no_tenant}
   def tenant_from_key(key) when is_binary(key) do
-    # Try to extract tenant ID from key (assumes pattern "tenant_id:*")
     case String.split(key, ":", parts: 2) do
       [tenant_prefix | _] ->
         tenant_id =
@@ -432,11 +324,31 @@ defmodule Concord.MultiTenancy do
 
   @doc false
   def init_tables do
-    :ets.new(:concord_tenants, [:set, :public, :named_table])
+    if :ets.whereis(:concord_tenants) == :undefined do
+      :ets.new(:concord_tenants, [:set, :public, :named_table])
+    end
+
     :ok
   end
 
-  # Private Functions
+  # Private
 
   defp tenant_role_name(tenant_id), do: :"tenant_#{tenant_id}"
+
+  defp ra_command(cmd) do
+    :ra.process_command({@cluster_name, node()}, cmd, @timeout)
+  end
+
+  defp fallback_update_quota(tenant_id, quota_type, value) do
+    case get_tenant(tenant_id) do
+      {:ok, tenant} ->
+        updated_quotas = Map.put(tenant.quotas, quota_type, value)
+        updated_tenant = %{tenant | quotas: updated_quotas, updated_at: DateTime.utc_now()}
+        :ets.insert(:concord_tenants, {tenant_id, updated_tenant})
+        {:ok, updated_tenant}
+
+      error ->
+        error
+    end
+  end
 end

@@ -199,17 +199,49 @@ defmodule Concord do
 
       start_time = System.monotonic_time()
 
+      # If a condition function is provided, evaluate it PRE-CONSENSUS
+      # and convert to a CAS (compare-and-swap) operation with :expected.
+      # This keeps anonymous functions out of the Raft log.
       result =
-        case command(
-               {:put_if, key, compressed_value, expires_at, expected, condition_fn},
-               timeout
-             ) do
-          {:ok, :ok, _} -> :ok
-          {:ok, {:error, :condition_failed}, _} -> {:error, :condition_failed}
-          {:ok, {:error, :not_found}, _} -> {:error, :not_found}
-          {:timeout, _} -> {:error, :timeout}
-          {:error, :noproc} -> {:error, :cluster_not_ready}
-          {:error, reason} -> {:error, reason}
+        cond do
+          expected != nil ->
+            # Direct CAS — no functions in the command
+            case command({:put_if, key, compressed_value, expires_at, expected}, timeout) do
+              {:ok, :ok, _} -> :ok
+              {:ok, {:error, reason}, _} -> {:error, reason}
+              {:timeout, _} -> {:error, :timeout}
+              {:error, :noproc} -> {:error, :cluster_not_ready}
+              {:error, reason} -> {:error, reason}
+            end
+
+          condition_fn != nil ->
+            # Evaluate condition pre-consensus, then CAS
+            case get(key, Keyword.take(opts, [:token, :timeout, :consistency])) do
+              {:ok, current_value} ->
+                if condition_fn.(current_value) do
+                  case command(
+                         {:put_if, key, compressed_value, expires_at, current_value},
+                         timeout
+                       ) do
+                    {:ok, :ok, _} -> :ok
+                    {:ok, {:error, reason}, _} -> {:error, reason}
+                    {:timeout, _} -> {:error, :timeout}
+                    {:error, :noproc} -> {:error, :cluster_not_ready}
+                    {:error, reason} -> {:error, reason}
+                  end
+                else
+                  {:error, :condition_failed}
+                end
+
+              {:error, :not_found} ->
+                {:error, :not_found}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          true ->
+            {:error, :missing_condition}
         end
 
       duration = System.monotonic_time() - start_time
@@ -256,14 +288,42 @@ defmodule Concord do
 
       start_time = System.monotonic_time()
 
+      # Evaluate condition functions pre-consensus (same pattern as put_if)
       result =
-        case command({:delete_if, key, expected, condition_fn}, timeout) do
-          {:ok, :ok, _} -> :ok
-          {:ok, {:error, :condition_failed}, _} -> {:error, :condition_failed}
-          {:ok, {:error, :not_found}, _} -> {:error, :not_found}
-          {:timeout, _} -> {:error, :timeout}
-          {:error, :noproc} -> {:error, :cluster_not_ready}
-          {:error, reason} -> {:error, reason}
+        cond do
+          expected != nil ->
+            case command({:delete_if, key, expected, nil}, timeout) do
+              {:ok, :ok, _} -> :ok
+              {:ok, {:error, reason}, _} -> {:error, reason}
+              {:timeout, _} -> {:error, :timeout}
+              {:error, :noproc} -> {:error, :cluster_not_ready}
+              {:error, reason} -> {:error, reason}
+            end
+
+          condition_fn != nil ->
+            case get(key, Keyword.take(opts, [:token, :timeout, :consistency])) do
+              {:ok, current_value} ->
+                if condition_fn.(current_value) do
+                  case command({:delete_if, key, current_value, nil}, timeout) do
+                    {:ok, :ok, _} -> :ok
+                    {:ok, {:error, reason}, _} -> {:error, reason}
+                    {:timeout, _} -> {:error, :timeout}
+                    {:error, :noproc} -> {:error, :cluster_not_ready}
+                    {:error, reason} -> {:error, reason}
+                  end
+                else
+                  {:error, :condition_failed}
+                end
+
+              {:error, :not_found} ->
+                {:error, :not_found}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          true ->
+            {:error, :missing_condition}
         end
 
       duration = System.monotonic_time() - start_time
@@ -604,6 +664,7 @@ defmodule Concord do
       consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
 
+      # Use the query path (not a write command) for reads
       result =
         case query({:get_many, keys}, timeout, consistency) do
           {:ok, {{_index, _term}, query_result}, _} ->

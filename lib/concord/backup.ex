@@ -336,21 +336,36 @@ defmodule Concord.Backup do
   defp apply_backup(%{metadata: metadata, data: snapshot_data}) do
     Logger.info("Applying backup from #{metadata.timestamp}, #{metadata.entry_count} entries")
 
-    # Clear current data
-    :ets.delete_all_objects(:concord_store)
+    # Route backup restore through Raft consensus so all nodes are consistent
+    server_id = {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
 
-    # Insert backup data
-    Enum.each(snapshot_data, fn {key, value} ->
-      :ets.insert(:concord_store, {key, value})
-    end)
+    case :ra.process_command(server_id, {:restore_backup, snapshot_data}, 30_000) do
+      {:ok, :ok, _} ->
+        :ok
 
-    :telemetry.execute(
-      [:concord, :backup, :restored],
-      %{entry_count: metadata.entry_count},
-      %{timestamp: metadata.timestamp, node: metadata.node}
-    )
+      {:error, :noproc} ->
+        # Fallback: cluster not ready — apply directly to local ETS
+        Logger.warning("Cluster not ready, applying backup to local ETS only")
+        :ets.delete_all_objects(:concord_store)
 
-    :ok
+        Enum.each(snapshot_data, fn {key, value} ->
+          :ets.insert(:concord_store, {key, value})
+        end)
+
+        :telemetry.execute(
+          [:concord, :backup, :restored],
+          %{entry_count: metadata.entry_count},
+          %{timestamp: metadata.timestamp, node: metadata.node}
+        )
+
+        :ok
+
+      {:timeout, _} ->
+        {:error, :timeout}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp get_backup_info(backup_path) do

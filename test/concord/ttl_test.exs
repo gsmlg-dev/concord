@@ -81,7 +81,10 @@ defmodule Concord.TTLTest do
         StateMachine.apply(meta, {:put, "test_key", "test_value", expires_at}, state)
 
       assert result == :ok
-      assert new_state == state
+      # State indexes should be unchanged; only command_count increments
+      {:concord_kv, %{indexes: indexes}} = new_state
+      {:concord_kv, %{indexes: orig_indexes}} = state
+      assert indexes == orig_indexes
     end
 
     test "apply/3 handles backward compatibility put without TTL", %{state: state} do
@@ -91,7 +94,9 @@ defmodule Concord.TTLTest do
         StateMachine.apply(meta, {:put, "test_key", "test_value"}, state)
 
       assert result == :ok
-      assert new_state == state
+      {:concord_kv, %{indexes: indexes}} = new_state
+      {:concord_kv, %{indexes: orig_indexes}} = state
+      assert indexes == orig_indexes
     end
 
     test "apply/3 handles touch operation", %{state: state} do
@@ -105,7 +110,9 @@ defmodule Concord.TTLTest do
       {new_state, result, _effects} = StateMachine.apply(meta, {:touch, "test_key", 1800}, state)
 
       assert result == :ok
-      assert new_state == state
+      {:concord_kv, %{indexes: indexes}} = new_state
+      {:concord_kv, %{indexes: orig_indexes}} = state
+      assert indexes == orig_indexes
     end
 
     test "apply/3 handles touch on non-existent key", %{state: state} do
@@ -115,7 +122,9 @@ defmodule Concord.TTLTest do
         StateMachine.apply(meta, {:touch, "non_existent", 1800}, state)
 
       assert result == {:error, :not_found}
-      assert new_state == state
+      {:concord_kv, %{indexes: indexes}} = new_state
+      {:concord_kv, %{indexes: orig_indexes}} = state
+      assert indexes == orig_indexes
     end
 
     test "query/2 handles get with TTL filtering", %{state: state} do

@@ -10,53 +10,30 @@ defmodule Concord.Index do
 
   - **Automatic Maintenance**: Indexes update automatically on put/delete
   - **Multiple Indexes**: Support for multiple indexes per store
-  - **Custom Extractors**: Flexible field extraction via functions
+  - **Declarative Extractors**: Define indexes with data specs (safe for Raft replication)
+  - **Backward Compatible**: Anonymous functions still accepted during migration
   - **Efficient Lookups**: O(1) lookup by indexed value
   - **Multi-value Support**: Index multiple values per key (e.g., tags)
 
-  ## Usage
+  ## Declarative Extractor Specs (Recommended)
 
-      # Create an index on user emails
-      :ok = Concord.Index.create("users_by_email", fn user -> user.email end)
+      # Index on a map key
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
-      # Store some users
-      :ok = Concord.put("user:1", %{name: "Alice", email: "alice@example.com"})
-      :ok = Concord.put("user:2", %{name: "Bob", email: "bob@example.com"})
+      # Index on a nested path
+      :ok = Concord.Index.create("by_city", {:nested, [:address, :city]})
 
-      # Look up by email
-      {:ok, keys} = Concord.Index.lookup("users_by_email", "alice@example.com")
-      # => {:ok, ["user:1"]}
+      # Index on the raw value
+      :ok = Concord.Index.create("by_value", {:identity})
 
-      # Get the actual values
-      {:ok, users} = Concord.get_many(keys)
+  ## Legacy Function Extractors (Deprecated)
 
-  ## Index Extractors
-
-  The extractor function receives the decompressed value and should return:
-  - A single indexable term (string, number, atom)
-  - A list of indexable terms (for multi-value indexes)
-  - `nil` to skip indexing this value
-
-      # Single value index
-      Concord.Index.create("by_status", fn order -> order.status end)
-
-      # Multi-value index (tags)
-      Concord.Index.create("by_tag", fn post -> post.tags end)
-
-      # Conditional indexing
-      Concord.Index.create("active_users", fn user ->
-        if user.active, do: user.id, else: nil
-      end)
-
-  ## Limitations
-
-  - Indexes are stored in-memory only (ETS tables)
-  - Index definitions must be recreated after cluster restart
-  - Extractor functions are stored as terms (use simple functions)
-  - Reindexing existing data requires calling `reindex/1`
+      # Still works but stores anonymous functions in Raft log — unsafe across upgrades
+      :ok = Concord.Index.create("by_email", fn u -> u.email end)
   """
 
   alias Concord.StateMachine
+  alias Concord.Index.Extractor
 
   @timeout 5_000
   @cluster_name :concord_cluster
@@ -64,8 +41,8 @@ defmodule Concord.Index do
   @typedoc "Index name (unique identifier)"
   @type index_name :: String.t()
 
-  @typedoc "Function that extracts index value(s) from a stored value"
-  @type extractor :: (term() -> index_value() | [index_value()] | nil)
+  @typedoc "Extractor: declarative spec or legacy function"
+  @type extractor :: Extractor.spec() | (term() -> term())
 
   @typedoc "Value to index (must be comparable)"
   @type index_value :: term()
@@ -73,34 +50,20 @@ defmodule Concord.Index do
   @doc """
   Creates a new secondary index.
 
-  The extractor function is called for each value to determine what to index.
-  By default, existing keys are NOT automatically indexed - use the `:reindex`
-  option to index existing data.
+  Accepts either a declarative extractor spec (recommended) or a legacy
+  anonymous function (deprecated — unsafe across code upgrades).
+
+  ## Declarative Specs (Recommended)
+
+      :ok = Concord.Index.create("by_email", {:map_get, :email})
+      :ok = Concord.Index.create("by_city", {:nested, [:address, :city]})
+      :ok = Concord.Index.create("by_value", {:identity})
+      :ok = Concord.Index.create("by_first", {:element, 0})
 
   ## Options
 
   - `:reindex` - If true, reindex all existing keys (default: false)
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-
-  ## Examples
-
-      # Simple field extraction
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
-
-      # Multi-value index
-      :ok = Concord.Index.create("posts_by_tag", fn p -> p.tags end)
-
-      # Reindex existing data
-      :ok = Concord.Index.create("by_category", fn p -> p.category end, reindex: true)
-
-  ## Returns
-
-  - `:ok` - Index created successfully
-  - `{:error, :index_exists}` - Index with this name already exists
-  - `{:error, :invalid_name}` - Index name is invalid
-  - `{:error, :invalid_extractor}` - Extractor is not a function
-  - `{:error, :timeout}` - Operation timed out
-  - `{:error, :cluster_not_ready}` - Cluster not initialized
   """
   @spec create(index_name(), extractor(), keyword()) :: :ok | {:error, term()}
   def create(name, extractor, opts \\ []) do
@@ -137,19 +100,6 @@ defmodule Concord.Index do
 
   @doc """
   Drops an existing secondary index.
-
-  This removes the index definition and frees the associated ETS table.
-
-  ## Examples
-
-      :ok = Concord.Index.drop("users_by_email")
-
-  ## Returns
-
-  - `:ok` - Index dropped successfully
-  - `{:error, :not_found}` - Index does not exist
-  - `{:error, :timeout}` - Operation timed out
-  - `{:error, :cluster_not_ready}` - Cluster not initialized
   """
   @spec drop(index_name(), keyword()) :: :ok | {:error, term()}
   def drop(name, opts \\ []) do
@@ -168,22 +118,6 @@ defmodule Concord.Index do
 
   @doc """
   Looks up keys by indexed value.
-
-  Returns all keys whose indexed value matches the given lookup value.
-
-  ## Examples
-
-      {:ok, keys} = Concord.Index.lookup("users_by_email", "alice@example.com")
-      # => {:ok, ["user:1", "user:42"]}
-
-      # Get the actual values
-      {:ok, users} = Concord.get_many(keys)
-
-  ## Returns
-
-  - `{:ok, keys}` - List of keys with matching index value (may be empty)
-  - `{:error, :not_found}` - Index does not exist
-  - `{:error, :cluster_not_ready}` - Cluster not initialized
   """
   @spec lookup(index_name(), index_value(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def lookup(name, value, opts \\ []) do
@@ -202,18 +136,6 @@ defmodule Concord.Index do
 
   @doc """
   Lists all secondary indexes.
-
-  Returns a list of index names.
-
-  ## Examples
-
-      {:ok, indexes} = Concord.Index.list()
-      # => {:ok, ["users_by_email", "posts_by_tag"]}
-
-  ## Returns
-
-  - `{:ok, index_names}` - List of index names
-  - `{:error, :cluster_not_ready}` - Cluster not initialized
   """
   @spec list(keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def list(opts \\ []) do
@@ -231,48 +153,30 @@ defmodule Concord.Index do
 
   @doc """
   Rebuilds an index from all existing keys.
-
-  This scans all keys in the store and reindexes them. Useful when:
-  - The index was created without the `:reindex` option
-  - You want to rebuild the index after data changes
-
-  ## Examples
-
-      :ok = Concord.Index.reindex("users_by_email")
-
-  ## Returns
-
-  - `:ok` - Reindexing completed
-  - `{:error, :not_found}` - Index does not exist
-  - `{:error, :timeout}` - Operation timed out
-  - `{:error, :cluster_not_ready}` - Cluster not initialized
+  Uses the declarative extractor spec stored in the state machine.
   """
   @spec reindex(index_name(), keyword()) :: :ok | {:error, term()}
   def reindex(name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     server_id = {@cluster_name, node()}
 
-    # Get all keys and reindex them
     with {:ok, pairs} <- Concord.get_all(),
          {:ok, indexes} <- list(timeout: timeout) do
       if name in indexes do
-        # Get the extractor for this index
         query_fun = fn state ->
           StateMachine.query({:get_index_extractor, name}, state)
         end
 
         case :ra.consistent_query(server_id, query_fun, timeout) do
-          {:ok, {:ok, extractor}, _} when is_function(extractor) ->
-            # Clear the index
+          {:ok, {:ok, extractor}, _} ->
             table_name = index_table_name(name)
 
             if :ets.whereis(table_name) != :undefined do
               :ets.delete_all_objects(table_name)
             end
 
-            # Reindex all pairs
             Enum.each(pairs, fn {key, value} ->
-              index_value(table_name, key, value, extractor)
+              Extractor.index_value(table_name, key, value, extractor)
             end)
 
             :ok
@@ -293,79 +197,23 @@ defmodule Concord.Index do
     String.to_atom("concord_index_#{index_name}")
   end
 
+  # Delegate to Extractor module for index operations
   @doc false
   def index_value(table_name, key, value, extractor) do
-    case extractor.(value) do
-      nil ->
-        :ok
-
-      index_values when is_list(index_values) ->
-        Enum.each(index_values, fn idx_val ->
-          add_to_index(table_name, idx_val, key)
-        end)
-
-      index_value ->
-        add_to_index(table_name, index_value, key)
-    end
-  rescue
-    # Silently ignore extractor errors
-    _ -> :ok
+    Extractor.index_value(table_name, key, value, extractor)
   end
 
   @doc false
   def remove_from_index(table_name, key, value, extractor) do
-    case extractor.(value) do
-      nil ->
-        :ok
-
-      index_values when is_list(index_values) ->
-        Enum.each(index_values, fn idx_val ->
-          remove_key_from_index(table_name, idx_val, key)
-        end)
-
-      index_value ->
-        remove_key_from_index(table_name, index_value, key)
-    end
-  rescue
-    # Silently ignore extractor errors
-    _ -> :ok
-  end
-
-  defp add_to_index(table_name, index_value, key) do
-    if :ets.whereis(table_name) != :undefined do
-      case :ets.lookup(table_name, index_value) do
-        [{^index_value, keys}] ->
-          if key not in keys do
-            :ets.insert(table_name, {index_value, [key | keys]})
-          end
-
-        [] ->
-          :ets.insert(table_name, {index_value, [key]})
-      end
-    end
-  end
-
-  defp remove_key_from_index(table_name, index_value, key) do
-    if :ets.whereis(table_name) != :undefined do
-      case :ets.lookup(table_name, index_value) do
-        [{^index_value, keys}] ->
-          new_keys = List.delete(keys, key)
-
-          if new_keys == [] do
-            :ets.delete(table_name, index_value)
-          else
-            :ets.insert(table_name, {index_value, new_keys})
-          end
-
-        [] ->
-          :ok
-      end
-    end
+    Extractor.remove_from_index(table_name, key, value, extractor)
   end
 
   defp validate_index_name(name) when is_binary(name) and byte_size(name) > 0, do: :ok
   defp validate_index_name(_), do: {:error, :invalid_name}
 
   defp validate_extractor(extractor) when is_function(extractor, 1), do: :ok
-  defp validate_extractor(_), do: {:error, :invalid_extractor}
+
+  defp validate_extractor(extractor) do
+    if Extractor.valid?(extractor), do: :ok, else: {:error, :invalid_extractor}
+  end
 end
