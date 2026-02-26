@@ -4,574 +4,120 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Concord is a distributed, strongly-consistent **embedded** key-value store built in Elixir using the Raft consensus algorithm. It's a CP (Consistent + Partition-tolerant) system designed to be included as a dependency in Elixir applications, providing distributed coordination, configuration management, and service discovery with microsecond-level performance (600K-870K ops/sec).
-
-**Key Design Philosophy**: Concord is an embedded database that starts with your application - no separate infrastructure needed. Think SQLite for distributed coordination.
+Concord is a distributed, strongly-consistent **embedded** key-value store built in Elixir using the Raft consensus algorithm (Ra library). CP system — think SQLite for distributed coordination. Starts with your application, no separate infrastructure.
 
 ## Development Commands
 
-### Building and Testing
 ```bash
-# Compile the project
-mix compile
+mix compile                    # Build
+mix test                       # Unit tests (uses --no-start alias)
+mix test test/concord_test.exs # Single file
+mix test test/concord_test.exs:42  # Single test by line
+mix test --cover               # Coverage (threshold: 40%)
+mix lint                       # Credo + Dialyzer
+mix credo                      # Linter only (max line length: 120)
+mix dialyzer                   # Type checking (first run is slow — builds PLT)
 
-# Run unit tests (fast, isolated)
-mix test
+# E2E tests — separate MIX_ENV, spawns real Erlang nodes
+mix test.e2e                   # All e2e tests
+mix test.e2e.distributed       # Distributed subset only
+MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs  # Specific
 
-# Run specific test file
-mix test test/concord_test.exs
-
-# Run specific test by line number
-mix test test/concord_test.exs:42
-
-# Run with coverage
-mix test --cover
-
-# Run e2e tests (multi-node, distributed scenarios)
-mix test.e2e
-
-# Run only distributed e2e tests
-mix test.e2e.distributed
-
-# Run specific e2e test file
-MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs
-
-# Run linting (credo + dialyzer)
-mix lint
-
-# Run just credo
-mix credo
-
-# Run type checking (first run generates PLT file - slow)
-mix dialyzer
-
-# Start HTTP API server in development
-mix start
-
-# Start HTTP API server with specific port
-CONCORD_API_PORT=8080 mix start
+mix start                      # HTTP API server (dev)
 ```
 
-### Cluster Management
-```bash
-# Start multiple nodes (separate terminals)
-iex --name n1@127.0.0.1 --cookie secret -S mix
-iex --name n2@127.0.0.1 --cookie secret -S mix
-iex --name n3@127.0.0.1 --cookie secret -S mix
+## Architecture
 
-# Check cluster status
-mix concord.cluster status
+### State Machine (V3) — The Core
 
-# List cluster members
-mix concord.cluster members
+`Concord.StateMachine` implements `:ra_machine`. This is the most critical file in the project.
 
-# Create authentication token
-mix concord.cluster token create
-
-# Revoke a token
-mix concord.cluster token revoke <token>
-
-# Generate self-signed TLS certificates for development
-mix concord.gen.cert
-
-# Generate with custom options
-mix concord.gen.cert --out priv/cert --host myhost.local --days 730
+**State shape:**
+```elixir
+{:concord_kv, %{
+  indexes: %{name => extractor_spec},
+  tokens: %{token => permissions},
+  roles: %{role => permissions},
+  role_grants: %{token => [roles]},
+  acls: [{pattern, role, permissions}],
+  tenants: %{tenant_id => tenant_definition},
+  command_count: non_neg_integer()
+}}
 ```
 
-### TLS/HTTPS Configuration
-```bash
-# Enable HTTPS in config/dev.exs or config/prod.exs
-config :concord, :tls,
-  enabled: true,
-  certfile: "priv/cert/selfsigned.pem",
-  keyfile: "priv/cert/selfsigned_key.pem"
+**Correctness invariants — do NOT violate these:**
 
-# For production, use CA-signed certificates:
-config :concord, :tls,
-  enabled: true,
-  certfile: "/etc/letsencrypt/live/yourdomain.com/fullchain.pem",
-  keyfile: "/etc/letsencrypt/live/yourdomain.com/privkey.pem",
-  cacertfile: "/etc/letsencrypt/live/yourdomain.com/chain.pem"  # Optional: for client cert verification
-```
+1. **Deterministic replay**: `apply/3` is a pure function of `(meta, command, state)`. Time comes from `meta.system_time` (leader-assigned milliseconds), never `System.system_time`. The helper `meta_time(meta)` converts to seconds.
 
-### Testing with Multiple Nodes
-The test suite is configured with `--no-start` alias to avoid automatic cluster startup, allowing proper multi-node testing scenarios.
+2. **No anonymous functions in Raft state/log**: Index extractors use declarative specs (`Concord.Index.Extractor`) — tuples like `{:map_get, :email}`, `{:nested, [:address, :city]}`, `{:identity}`, `{:element, n}`. Anonymous functions cause `:badfun` on deserialization across code versions.
 
-### Code Quality
-- **Linting**: Credo is configured with a custom ruleset in `.credo.exs` with max line length of 120
-- **Type Checking**: Dialyzer is configured for static analysis with PLT files in `plts/dialyzer.plt`
-- **Coverage**: Test coverage threshold is set to 40% with detailed summaries
+3. **All mutations through Raft**: Auth tokens, RBAC roles/grants/ACLs, tenant definitions, and backup restores all route through `:ra.process_command` as state machine commands. Direct ETS writes are only acceptable as fallbacks when the cluster isn't ready yet (`:noproc`).
 
-## Architecture Overview
+4. **ETS tables are materialized views**: Rebuilt from authoritative Raft state on `snapshot_installed/4`. Never the source of truth.
 
-### Core Components
-- **Concord** (`lib/concord.ex`) - Main client API module with all public functions
-- **Concord.Application** - Supervisor tree starting Ra cluster, HTTP server, telemetry, etc.
-- **Concord.StateMachine** - Raft state machine (`:ra_machine` behavior) implementing KV store
-  - Version 2 (includes secondary index support)
-  - Stores data in ETS table `:concord_store`
-  - State format: `{:concord_kv, %{indexes: map()}}`
-  - Handles compression/decompression transparently
-- **Concord.Auth** - Token-based authentication with ETS token store
-- **Concord.Telemetry** - Metrics emission for all operations
-- **Concord.Prometheus** - Prometheus metrics exporter (port 9568)
-- **Concord.Tracing** - OpenTelemetry distributed tracing integration
-- **Concord.AuditLog** - Immutable compliance audit logging
-- **Concord.Compression** - Automatic value compression (zlib/gzip)
-- **Concord.TTL** - Time-to-live key expiration management
-- **Concord.Backup** - Snapshot-based backup and restore
-- **Concord.Query** - Advanced query language (pattern matching, ranges, predicates)
-- **Concord.Index** - Secondary indexes for value-based lookups
-- **Concord.EventStream** - Real-time CDC event streaming with GenStage
-- **Concord.Web** - HTTP/HTTPS API with OpenAPI/Swagger (Plug + Bandit)
-  - TLS/HTTPS support with configurable certificates
-  - Secure cipher suites (TLS 1.2 and 1.3)
-  - Optional client certificate verification
+5. **Snapshots via `release_cursor` effect**: Ra does NOT have a `snapshot/1` callback. Snapshots are emitted every 1000 commands as `{:release_cursor, index, state}` effects. The state passed includes ETS data captured by `build_release_cursor_state/1`.
 
-### Key Dependencies
-- **ra** - Raft consensus algorithm implementation
-- **libcluster** - Automatic node discovery via gossip protocol
-- **telemetry** - Metrics and observability framework
-- **jason** - JSON serialization for data storage
-- **plug_crypto** - Cryptographic utilities for secure token generation
+6. **Pre-consensus evaluation**: `put_if`/`delete_if` evaluate condition functions at the API layer, then convert to CAS commands with `expected: current_value` before entering the Raft log.
 
 ### Data Flow
-1. **Write Operations**:
-   - Client API (`Concord.put/3`) → Auth verification → Command validation
-   - → `:ra.process_command({:concord_cluster, node()}, command, timeout)`
-   - → Raft leader → Quorum replication → `StateMachine.apply_command/3`
-   - → ETS insert + Index updates + Telemetry events
 
-2. **Read Operations**:
-   - Client API (`Concord.get/2`) → Auth verification
-   - → `:ra.consistent_query` or `:ra.local_query` (based on consistency level)
-   - → `StateMachine.query/2` → ETS lookup → Decompress → Return value
+**Writes**: `Concord.put/3` → Auth → `:ra.process_command({:concord_cluster, node()}, cmd, timeout)` → Leader replicates → `StateMachine.apply_command/3` → ETS insert + index update + telemetry
 
-3. **Cluster Management**:
-   - libcluster gossip → Automatic node discovery → Raft cluster membership
-   - Ra handles leader election, log replication, and snapshots automatically
+**Reads**: `Concord.get/2` → Auth → `:ra.consistent_query` or `:ra.local_query` → `StateMachine.query/2` → ETS lookup → decompress → return
 
-### Critical Implementation Details
+**Key detail**: Ra wraps query results as `{:ok, {:ok, result}, leader_info}`. Always unwrap the nested tuple. Server ID format is `{:concord_cluster, node()}`.
 
-**State Machine Behavior:**
-- All operations must go through Raft consensus (via `process_command`) for writes
-- Reads use `consistent_query` (linearizable) or `local_query` (eventual consistency)
-- Server ID format: `{:concord_cluster, node()}` - NOT `{Concord.StateMachine, node()}`
-- Query functions return `{:ok, result}`, which Ra wraps as `{:ok, {:ok, result}, leader_info}`
-- Always unwrap the nested result when calling Ra queries
+### Module Responsibilities
 
-**Compression:**
-- Values are compressed before storage if > threshold (default 1KB)
-- State machine decompresses automatically via `Concord.Compression.decompress/1`
-- Index extractors receive decompressed values
+| Module | Role |
+|--------|------|
+| `Concord` | Public API — all client-facing functions |
+| `Concord.StateMachine` | Ra state machine — commands, queries, snapshots |
+| `Concord.Application` | Supervisor tree — Ra cluster, HTTP, telemetry |
+| `Concord.Auth` | Token auth — mutations via Raft commands |
+| `Concord.RBAC` | Roles, grants, ACLs — mutations via Raft commands |
+| `Concord.MultiTenancy` | Tenant definitions via Raft; usage counters node-local |
+| `Concord.Index` | Secondary indexes using `Index.Extractor` specs |
+| `Concord.Index.Extractor` | Declarative extractor specs (no closures) |
+| `Concord.Backup` | Backup/restore — restore submits `{:restore_backup, entries}` via Raft |
+| `Concord.TTL` | Key expiration — GenServer for periodic cleanup |
+| `Concord.Web` | HTTP/HTTPS API (Plug + Bandit) |
 
-**Index Updates:**
-- Indexes update automatically on put/delete in state machine
-- Each index has its own ETS table: `:concord_index_#{index_name}`
-- Index definitions stored in state: `%{indexes: %{name => extractor_fn}}`
+### Adding a New Feature
 
-### State Machine Details
-The `Concord.StateMachine` implements the `:ra_machine` behavior and uses:
-- ETS table `:concord_store` for in-memory storage
-- Telemetry events for all operations
-- Snapshot support for recovery
-- Query functions for reads (bypass Raft log for performance)
+1. **API layer** (`lib/concord.ex` or `lib/concord/feature.ex`): Validate inputs, call `:ra.process_command` for writes or `:ra.consistent_query` for reads. Handle nested Ra result tuples.
 
-### Authentication System
-- Token-based authentication using secure crypto
-- ETS-based token store for fast lookups
-- Per-environment configuration
-- Token creation and revocation operations
+2. **State machine command** (`lib/concord/state_machine.ex`): Add `apply_command/3` clause. Return `{{:concord_kv, new_state}, result, effects}`. Use `meta_time(meta)` for timestamps. Emit telemetry.
+
+3. **State machine query** (`lib/concord/state_machine.ex`): Add `query/2` clause. Return `{:ok, result}`. No state modification.
+
+4. **Tests**: `test/concord/feature_test.exs`, `async: false`, use `Concord.TestHelper.start_test_cluster()` in setup, clean up ETS between tests.
+
+## Testing Notes
+
+- All tests use `async: false` — Ra cluster is shared state
+- `--no-start` alias prevents auto-starting the application; tests call `start_test_cluster()` explicitly
+- E2E tests use `MIX_ENV=e2e_test` with separate config (`config/e2e_test.exs`)
+- When testing state machine directly, `apply/3` increments `command_count` on every call — don't assert exact state equality, pattern-match on the fields you care about
 
 ## Configuration
 
-The configuration follows standard Elixir patterns with environment-specific files:
-- `config/config.exs` - Base configuration with cluster name and libcluster topology
-- `config/dev.exs` - Development settings with auth disabled and local data directory
-- `config/test.exs` - Test configuration with `--no-start` alias for multi-node testing
-- `config/prod.exs` - Production settings with auth enabled and environment variables
-- `config/runtime.exs` - Runtime configuration loaded at startup
+- `config/runtime.exs` — Data directory: prod uses `CONCORD_DATA_DIR` env var (default `/var/lib/concord/data/`), dev/test use `/tmp`
+- `default_read_consistency`: `:eventual`, `:leader` (default), `:strong`
+- Auth disabled in dev, enabled in prod
+- HTTP API, Prometheus, and OpenTelemetry tracing are opt-in
 
-### Key Configuration Options
-- `default_read_consistency`: `:eventual`, `:leader` (default), or `:strong`
-- `max_batch_size`: Maximum operations per batch (default: 500)
-- `http.enabled`: Enable HTTP API server (default: false)
-- `prometheus_enabled`: Enable Prometheus metrics (default: false, port 9568)
-- `tracing_enabled`: Enable OpenTelemetry tracing (default: false)
+## Commit Conventions
 
-### Development (config/dev.exs)
-- Auth disabled by default
-- Local data directory: `./data/dev`
-- Debug logging enabled
+Semantic prefixes: `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`
 
-### Production (config/prod.exs)
-- Auth enabled by default
-- Environment variable configuration
-- Info logging level
+Do NOT include "Generated with Claude Code" or "Co-Authored-By: Claude" in commits.
 
-## Testing Strategy
+## Design Documentation
 
-### Unit Tests (`test/`)
-
-Fast, isolated tests for individual components:
-
-- **Unit Tests**: Basic CRUD operations, validation (e.g., `test/concord_test.exs`)
-- **Feature Tests**: TTL, compression, bulk operations, queries, indexes
-- **Auth Tests**: Token management, authorization flows
-- **RBAC Tests**: Role management, ACL rules, permission checking (`test/concord/rbac_test.exs` - 34 tests)
-- **Multi-Tenancy Tests**: Tenant lifecycle, quotas, usage tracking (`test/concord/multi_tenancy_test.exs` - 41 tests)
-- **Telemetry Tests**: Event emission verification
-
-**Important Testing Notes:**
-- Tests use `Concord.TestHelper.start_test_cluster()` to initialize Ra cluster
-- Each test should clean up data in setup block to avoid pollution
-- Some tests may need `Process.sleep/1` to wait for cluster initialization
-- The `--no-start` alias prevents automatic application startup during tests
-- State machine version changes require cluster restart or data cleanup
-- Tests run with `async: false` to avoid Ra cluster conflicts
-
-### E2E Tests (`e2e_test/`)
-
-**Separate test suite** for distributed, multi-node scenarios:
-
-- **Leader Election**: Raft leader election and failover (`e2e_test/distributed/leader_election_test.exs`)
-- **Network Partitions**: Split-brain, quorum behavior, partition healing (`e2e_test/distributed/network_partition_test.exs`)
-- **Data Consistency**: Replication, concurrent writes, TTL consistency (`e2e_test/distributed/data_consistency_test.exs`)
-- **Node Failures**: Crash tolerance, recovery, log replay (`e2e_test/distributed/node_failure_test.exs`)
-
-**E2E Testing Environment:**
-- Uses `MIX_ENV=e2e_test` (separate from unit tests)
-- Spawns actual Erlang nodes with LocalCluster (3-5 nodes per test)
-- Longer execution time: ~5 minutes for full suite
-- Resource intensive: ~1GB RAM, requires EPMD running
-- See `e2e_test/README.md` for detailed documentation
-
-**Running E2E Tests:**
-```bash
-# Run all e2e tests
-mix test.e2e
-
-# Run only distributed tests
-mix test.e2e.distributed
-
-# Run specific e2e test
-MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs
-
-# Run with verbose output
-MIX_ENV=e2e_test mix test e2e_test/ --trace
-```
-
-### Performance Tests
-
-**Running Performance Benchmarks:**
-```bash
-# Run all benchmarks
-mix run run_benchmarks.exs
-
-# Run specific benchmark
-mix run test/performance/kv_operations_benchmark.exs
-```
-
-## Operational Notes
-
-### Performance Characteristics
-- **Writes**: ~5-20ms (requires quorum)
-- **Reads**: ~1-5ms (leader query + ETS lookup)
-- **Storage**: In-memory only (limited by RAM)
-- **Keys**: Max 1024 bytes
-- **Values**: No hard limit (consider memory usage)
-
-### Common Troubleshooting
-- Check Erlang cookie consistency across nodes
-- Verify network connectivity between nodes
-- Monitor Raft commit index for cluster health
-- Track leader changes via telemetry events
-
-### Important File Locations
-- Raft logs and snapshots: `{data_dir}/` (default: `./data/dev` in development, `./data/e2e_test` in e2e tests)
-- Ra data directory: `nonode@nohost/` (gitignored - test artifacts)
-- ETS tables:
-  - `:concord_store` - Main KV storage
-  - `:concord_index_*` - Per-index tables
-  - `:concord_roles`, `:concord_role_grants`, `:concord_acls` - RBAC tables
-  - `:concord_tenants` - Multi-tenancy table
-  - `:concord_tokens` - Authentication tokens
-- Telemetry events: `[:concord, :api, :*]`, `[:concord, :operation, :*]`, `[:concord, :state, :*]`
-- Cluster management tasks: `lib/mix/tasks/concord.ex`
-- HTTP API: `lib/concord/web/` (router, controllers, OpenAPI spec)
-- Audit logs: `audit_logs/` directory (JSONL format)
-- RBAC module: `lib/concord/rbac.ex`
-- Multi-tenancy: `lib/concord/multi_tenancy.ex`, `lib/concord/multi_tenancy/rate_limiter.ex`
-- **E2E Tests**: `e2e_test/` directory (separate from `test/`)
-  - `e2e_test/support/e2e_cluster_helper.ex` - Multi-node cluster utilities
-  - `e2e_test/distributed/` - Distributed system tests
-  - `config/e2e_test.exs` - E2E test configuration
-
-## Feature-Specific Guidance
-
-### Adding New Features
-
-When implementing new features in Concord, follow this pattern:
-
-1. **API Module** (`lib/concord/feature.ex`):
-   - Public API functions with proper typespecs
-   - Validate inputs before sending to state machine
-   - Use `@cluster_name` constant for server ID
-   - Call `:ra.process_command` for writes, `:ra.consistent_query` for reads
-   - Handle Ra's nested result tuples: `{:ok, {:ok, result}, leader_info}`
-
-2. **State Machine Commands** (`lib/concord/state_machine.ex`):
-   - Add `apply_command/3` clause for new commands
-   - Update state carefully (it's replicated via Raft)
-   - Emit telemetry events with timing and metadata
-   - Return format: `{{:concord_kv, new_state}, result, effects}`
-
-3. **State Machine Queries** (`lib/concord/state_machine.ex`):
-   - Add `query/2` clause for read operations
-   - Queries don't modify state, bypass Raft log
-   - Return format: `{:ok, result}`
-
-4. **Tests**:
-   - Create `test/concord/feature_test.exs`
-   - Use `Concord.TestHelper.start_test_cluster()` in setup
-   - Clean up data between tests
-   - Mark as `async: false`
-
-5. **Documentation**:
-   - Add section to README.md with examples
-   - Update module documentation
-   - Consider adding to HTTP API if applicable
-
-### Working with RBAC (Role-Based Access Control)
-
-Concord includes a comprehensive RBAC system for fine-grained access control.
-
-**Core Concepts:**
-- **Roles**: Collections of permissions (admin, editor, viewer, none, or custom)
-- **Permissions**: Individual capabilities (read, write, delete, admin, *)
-- **ACL Rules**: Per-key pattern restrictions (e.g., "users:*" for namespace isolation)
-- **Token-Role Mapping**: Many-to-many relationship between tokens and roles
-
-**Predefined Roles:**
-```elixir
-:admin   -> [:*]                      # All permissions
-:editor  -> [:read, :write, :delete]  # Standard CRUD
-:viewer  -> [:read]                   # Read-only access
-:none    -> []                        # No permissions
-```
-
-**Usage Examples:**
-
-```elixir
-# Create custom role
-:ok = Concord.RBAC.create_role(:developer, [:read, :write])
-
-# Grant role to token
-{:ok, token} = Concord.Auth.create_token()
-:ok = Concord.RBAC.grant_role(token, :developer)
-
-# Check permission
-:ok = Concord.RBAC.check_permission(token, :write, "config:app")
-
-# Create ACL for namespace isolation
-:ok = Concord.RBAC.create_acl("users:*", :viewer, [:read])
-
-# Multiple roles grant additive permissions
-:ok = Concord.RBAC.grant_role(token, :viewer)  # Read access
-:ok = Concord.RBAC.grant_role(token, :editor) # Now has read+write+delete
-
-# Revoke role
-:ok = Concord.RBAC.revoke_role(token, :editor)
-```
-
-**CLI Commands:**
-```bash
-# Create custom role
-mix concord.cluster role create developer read,write
-
-# Grant role to token
-mix concord.cluster role grant <token> developer
-
-# List all roles
-mix concord.cluster role list
-
-# Create ACL for key pattern
-mix concord.cluster acl create "users:*" viewer read
-
-# List all ACLs
-mix concord.cluster acl list
-```
-
-**ACL Behavior:**
-- When ACLs exist for a role, they RESTRICT access to matching patterns only
-- Multiple ACLs for same role are combined with OR logic
-- Wildcard patterns: `*` matches any characters (`"tenant1:*"` matches all tenant1 keys)
-- For multi-tenant isolation, each tenant should have its own role
-
-**Implementation Details:**
-- Located in `lib/concord/rbac.ex`
-- ETS tables: `:concord_roles`, `:concord_role_grants`, `:concord_acls`
-- 34 comprehensive tests in `test/concord/rbac_test.exs`
-- Backward compatible with simple token permissions
-
-### Working with Multi-Tenancy
-
-Concord provides complete multi-tenancy support with resource isolation and quotas.
-
-**Key Features:**
-- Automatic namespace isolation via RBAC
-- Resource quotas (keys, storage, rate limits)
-- Real-time usage tracking
-- Per-tenant metrics and billing data
-
-**Tenant Structure:**
-```elixir
-%{
-  id: :acme,                           # Unique tenant identifier
-  name: "ACME Corporation",            # Display name
-  namespace: "acme:*",                 # Key namespace pattern
-  role: :tenant_acme,                  # Auto-created RBAC role
-  quotas: %{
-    max_keys: 10_000,                  # Maximum keys
-    max_storage_bytes: 100_000_000,    # 100MB storage limit
-    max_ops_per_sec: 1_000             # Rate limit
-  },
-  usage: %{
-    key_count: 0,                      # Current key count
-    storage_bytes: 0,                  # Current storage usage
-    ops_last_second: 0                 # Current rate (resets every second)
-  },
-  created_at: ~U[2025-10-29 12:00:00Z],
-  updated_at: ~U[2025-10-29 12:00:00Z]
-}
-```
-
-**Usage Examples:**
-
-```elixir
-# Create tenant with quotas
-{:ok, tenant} = Concord.MultiTenancy.create_tenant(:acme,
-  name: "ACME Corporation",
-  max_keys: 10_000,
-  max_storage_bytes: 100_000_000,  # 100MB
-  max_ops_per_sec: 1_000
-)
-
-# Create token and grant tenant access
-{:ok, token} = Concord.Auth.create_token()
-:ok = Concord.RBAC.grant_role(token, :tenant_acme)
-
-# Check quota before operation
-:ok = Concord.MultiTenancy.check_quota(:acme, :write, value_size: 256)
-
-# Perform operation (with automatic namespace)
-:ok = Concord.put("acme:users:123", %{name: "Alice"}, token: token)
-
-# Record operation for usage tracking
-:ok = Concord.MultiTenancy.record_operation(:acme, :write,
-  key_delta: 1,
-  storage_delta: 256
-)
-
-# Get usage statistics
-{:ok, usage} = Concord.MultiTenancy.get_usage(:acme)
-# => %{key_count: 1, storage_bytes: 256, ops_last_second: 1}
-
-# Update quotas
-{:ok, _} = Concord.MultiTenancy.update_quota(:acme, :max_keys, 20_000)
-
-# Extract tenant from key
-{:ok, :acme} = Concord.MultiTenancy.tenant_from_key("acme:users:123")
-```
-
-**CLI Commands:**
-```bash
-# Create tenant
-mix concord.cluster tenant create acme \
-  --name="ACME Corporation" \
-  --max-keys=10000 \
-  --max-storage=100000000 \
-  --max-ops=1000
-
-# List all tenants with usage
-mix concord.cluster tenant list
-
-# Show tenant usage statistics
-mix concord.cluster tenant usage acme
-
-# Update quota
-mix concord.cluster tenant quota acme max_keys 20000
-
-# Delete tenant (keeps keys in storage)
-mix concord.cluster tenant delete acme
-```
-
-**Quota Enforcement:**
-- Quotas are checked BEFORE operations via `check_quota/3`
-- Operations return `{:error, :quota_exceeded}` when limits reached
-- Rate limiting uses sliding 1-second window (auto-reset by GenServer)
-- Set quotas to `:unlimited` to disable limits
-
-**Multi-Tenant Isolation Pattern:**
-```elixir
-# Each tenant gets unique role
-{:ok, tenant1} = MultiTenancy.create_tenant(:tenant1)  # Creates :tenant_tenant1 role
-{:ok, tenant2} = MultiTenancy.create_tenant(:tenant2)  # Creates :tenant_tenant2 role
-
-# Tokens can only access their tenant's namespace
-{:ok, token1} = Auth.create_token()
-:ok = RBAC.grant_role(token1, :tenant_tenant1)
-
-{:ok, token2} = Auth.create_token()
-:ok = RBAC.grant_role(token2, :tenant_tenant2)
-
-# Token1 can access tenant1:* but NOT tenant2:*
-:ok = RBAC.check_permission(token1, :write, "tenant1:data")
-{:error, :forbidden} = RBAC.check_permission(token1, :write, "tenant2:data")
-```
-
-**Implementation Details:**
-- Located in `lib/concord/multi_tenancy.ex` and `lib/concord/multi_tenancy/rate_limiter.ex`
-- ETS table: `:concord_tenants`
-- Rate limiter GenServer resets counters every second
-- 41 comprehensive tests in `test/concord/multi_tenancy_test.exs`
-- Integrates with RBAC for automatic role/ACL creation
-
-### Working with Secondary Indexes
-
-**Status**: ✅ Fully implemented and tested (22 tests passing)
-
-Secondary indexes enable value-based lookups with custom extractor functions.
-
-**Usage Examples:**
-```elixir
-# Create index with extractor function
-extractor = fn value -> Map.get(value, :email) end
-:ok = Concord.Index.create_index(:user_email, extractor)
-
-# Put data (index updates automatically)
-:ok = Concord.put("user:1", %{name: "Alice", email: "alice@example.com"})
-
-# Query by indexed value
-{:ok, ["user:1"]} = Concord.Index.query_index(:user_email, "alice@example.com")
-```
-
-**Implementation:**
-- Located in `lib/concord/index.ex`
-- Each index has its own ETS table: `:concord_index_#{name}`
-- Indexes update automatically on put/delete operations
-- Test with `MIX_ENV=test mix test test/concord/index_test.exs`
-
-### Committing Changes
-
-**Semantic Commit Messages:**
-- `feat:` - New features
-- `fix:` - Bug fixes
-- `docs:` - Documentation updates
-- `chore:` - Maintenance tasks
-- `test:` - Test additions/fixes
-- `refactor:` - Code restructuring
-
-**IMPORTANT**: User has requested NOT to include:
-- "Generated with [Claude Code]" footer
-- "Co-Authored-By: Claude" trailers
+See `docs/` for architectural documents:
+- `docs/ArchitecturalAudit.md` — Audit of correctness issues and their fixes
+- `docs/CorrectRaftStateMachinePattern.md` — V3 migration design and rationale
+- `docs/DESIGN.md` — Original design blueprint
+- `docs/API_DESIGN.md` — HTTP API design
+- `docs/API_USAGE_EXAMPLES.md` — HTTP API usage examples
