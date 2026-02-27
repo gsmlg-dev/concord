@@ -18,9 +18,8 @@ defmodule Concord.MixProject do
         main: "readme",
         extras: [
           "README.md",
-          "API_DESIGN.md",
-          "PERFORMANCE_SUMMARY.md",
-          "PERFORMANCE_ANALYSIS.md",
+          "docs/API_DESIGN.md",
+          "docs/DESIGN.md",
           "CHANGELOG.md",
           "LICENSE"
         ],
@@ -30,12 +29,9 @@ defmodule Concord.MixProject do
             "README.md",
             "LICENSE"
           ],
-          "API Documentation": [
-            "API_DESIGN.md"
-          ],
-          Performance: [
-            "PERFORMANCE_SUMMARY.md",
-            "PERFORMANCE_ANALYSIS.md"
+          "Architecture": [
+            "docs/DESIGN.md",
+            "docs/API_DESIGN.md"
           ],
           "Release Notes": [
             "CHANGELOG.md"
@@ -76,9 +72,7 @@ defmodule Concord.MixProject do
         "README.md",
         "LICENSE",
         "CHANGELOG.md",
-        "API_DESIGN.md",
-        "PERFORMANCE_SUMMARY.md",
-        "PERFORMANCE_ANALYSIS.md",
+        "docs",
         "openapi.json",
         "run_benchmarks.exs",
         "config",
