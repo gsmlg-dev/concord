@@ -18,7 +18,14 @@ defmodule Concord.MixProject do
         main: "readme",
         extras: [
           "README.md",
+          "docs/getting-started.md",
+          "docs/elixir-guide.md",
           "docs/API_DESIGN.md",
+          "docs/API_USAGE_EXAMPLES.md",
+          "docs/observability.md",
+          "docs/backup-restore.md",
+          "docs/configuration.md",
+          "docs/deployment.md",
           "docs/DESIGN.md",
           "CHANGELOG.md",
           "LICENSE"
@@ -27,14 +34,25 @@ defmodule Concord.MixProject do
         groups_for_extras: [
           "Getting Started": [
             "README.md",
-            "LICENSE"
+            "docs/getting-started.md"
           ],
-          "Architecture": [
-            "docs/DESIGN.md",
-            "docs/API_DESIGN.md"
+          Guides: [
+            "docs/elixir-guide.md",
+            "docs/observability.md",
+            "docs/backup-restore.md",
+            "docs/configuration.md",
+            "docs/deployment.md"
+          ],
+          "HTTP API": [
+            "docs/API_DESIGN.md",
+            "docs/API_USAGE_EXAMPLES.md"
+          ],
+          Architecture: [
+            "docs/DESIGN.md"
           ],
           "Release Notes": [
-            "CHANGELOG.md"
+            "CHANGELOG.md",
+            "LICENSE"
           ]
         ]
       ],
