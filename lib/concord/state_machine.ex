@@ -44,7 +44,7 @@ defmodule Concord.StateMachine do
   # Extract deterministic timestamp in seconds from Ra metadata.
   # Ra's system_time is milliseconds set by the leader at proposal time.
   defp meta_time(meta) do
-    ms = Map.get(meta, :system_time, System.system_time(:millisecond))
+    ms = Map.get(meta, :system_time, 0)
     div(ms, 1000)
   end
 
@@ -221,9 +221,19 @@ defmodule Concord.StateMachine do
               if expired?(current_expires_at, now) do
                 {:error, :not_found}
               else
-                if Compression.decompress(current_value) == expected do
+                old_decompressed = Compression.decompress(current_value)
+
+                if old_decompressed == expected do
                   formatted_value = format_value(value, expires_at)
                   :ets.insert(:concord_store, {key, formatted_value})
+
+                  update_indexes_on_put(
+                    data,
+                    key,
+                    old_decompressed,
+                    Compression.decompress(value)
+                  )
+
                   :ok
                 else
                   {:error, :condition_failed}
@@ -262,8 +272,10 @@ defmodule Concord.StateMachine do
 
     result =
       check_conditional_operation(key, expected, condition_fn, now, fn ->
+        old_value = get_decompressed_value(key)
         formatted_value = format_value(value, expires_at)
         :ets.insert(:concord_store, {key, formatted_value})
+        update_indexes_on_put(data, key, old_value, Compression.decompress(value))
         :ok
       end)
 
@@ -284,7 +296,13 @@ defmodule Concord.StateMachine do
 
     result =
       check_conditional_operation(key, expected, condition_fn, now, fn ->
+        old_value = get_decompressed_value(key)
         :ets.delete(:concord_store, key)
+
+        if old_value != nil do
+          remove_from_all_indexes(data, key, old_value)
+        end
+
         :ok
       end)
 
@@ -390,7 +408,7 @@ defmodule Concord.StateMachine do
       :ok ->
         results = execute_put_many_batch(operations, data)
 
-        case Enum.find(results, fn {status, _} -> status == :error end) do
+        case Enum.find(results, fn {_key, result} -> match?({:error, _}, result) end) do
           nil ->
             duration = System.monotonic_time() - start_time
 

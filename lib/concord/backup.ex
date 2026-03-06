@@ -33,6 +33,10 @@ defmodule Concord.Backup do
 
   require Logger
 
+  alias Concord.Compression
+  alias Concord.Index
+  alias Concord.Index.Extractor
+
   @backup_extension ".backup"
   @default_backup_dir "./backups"
 
@@ -337,7 +341,8 @@ defmodule Concord.Backup do
     filename = "concord_backup_#{timestamp}#{@backup_extension}"
     backup_path = Path.join(backup_dir, filename)
 
-    encoded = :erlang.term_to_binary(backup_data, [:compressed | if(compress, do: [], else: [])])
+    opts = if compress, do: [:compressed], else: []
+    encoded = :erlang.term_to_binary(backup_data, opts)
 
     case File.write(backup_path, encoded) do
       :ok -> {:ok, backup_path}
@@ -438,6 +443,30 @@ defmodule Concord.Backup do
         :ets.insert(:concord_tenants, {id, tenant})
       end)
     end
+
+    # Rebuild index ETS tables from index definitions and KV data
+    indexes = Map.get(snapshot_data, :indexes, %{})
+    kv_data = Map.get(snapshot_data, :kv_data, [])
+
+    Enum.each(indexes, fn {name, extractor} ->
+      table = Index.index_table_name(name)
+
+      if :ets.whereis(table) == :undefined do
+        :ets.new(table, [:bag, :public, :named_table])
+      else
+        :ets.delete_all_objects(table)
+      end
+
+      Enum.each(kv_data, fn {key, stored} ->
+        value =
+          case stored do
+            %{value: v} -> Compression.decompress(v)
+            _ -> stored
+          end
+
+        Extractor.index_value(table, key, value, extractor)
+      end)
+    end)
 
     :telemetry.execute(
       [:concord, :backup, :restored],

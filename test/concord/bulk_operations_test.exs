@@ -73,20 +73,22 @@ defmodule Concord.BulkOperationsTest do
     end
 
     test "apply_command handles get_many", %{state: state} do
-      meta = %{index: 1}
+      now_ms = System.system_time(:millisecond)
+      now_s = div(now_ms, 1000)
+      meta = %{index: 1, system_time: now_ms}
 
       # Setup some data
       :ets.insert(:concord_store, {"key1", %{value: "value1", expires_at: nil}})
 
       :ets.insert(
         :concord_store,
-        {"key2", %{value: "value2", expires_at: System.system_time(:second) + 3600}}
+        {"key2", %{value: "value2", expires_at: now_s + 3600}}
       )
 
       # Expired
       :ets.insert(
         :concord_store,
-        {"key3", %{value: "value3", expires_at: System.system_time(:second) - 1}}
+        {"key3", %{value: "value3", expires_at: now_s - 1}}
       )
 
       {new_state, result, _effects} =
@@ -126,12 +128,13 @@ defmodule Concord.BulkOperationsTest do
     end
 
     test "apply_command handles touch_many", %{state: state} do
-      meta = %{index: 1}
-      current_time = System.system_time(:second)
+      now_ms = System.system_time(:millisecond)
+      now_s = div(now_ms, 1000)
+      meta = %{index: 1, system_time: now_ms}
 
       # Setup some data with existing TTL
-      :ets.insert(:concord_store, {"key1", format_value("value1", current_time + 100)})
-      :ets.insert(:concord_store, {"key2", format_value("value2", current_time + 200)})
+      :ets.insert(:concord_store, {"key1", format_value("value1", now_s + 100)})
+      :ets.insert(:concord_store, {"key2", format_value("value2", now_s + 200)})
       # No TTL
       :ets.insert(:concord_store, {"key3", format_value("value3", nil)})
 
@@ -141,13 +144,11 @@ defmodule Concord.BulkOperationsTest do
       assert result == {:ok, [{"key1", :ok}, {"key2", :ok}]}
       assert new_state == state
 
-      # Verify TTLs were extended - check they're greater than original time
+      # Verify TTLs were extended — now_s + additional_ttl
       [{_, updated1}] = :ets.lookup(:concord_store, "key1")
       [{_, updated2}] = :ets.lookup(:concord_store, "key2")
-      # Extended beyond original
-      assert updated1.expires_at > current_time + 100
-      # Extended beyond original
-      assert updated2.expires_at > current_time + 200
+      assert updated1.expires_at == now_s + 3600
+      assert updated2.expires_at == now_s + 7200
     end
 
     test "apply_command handles touch_many with non-existent keys", %{state: state} do
@@ -273,6 +274,70 @@ defmodule Concord.BulkOperationsTest do
       # First email should be removed, second should be present
       assert :ets.lookup(table, "first@test.com") == []
       assert :ets.lookup(table, "second@test.com") == [{"second@test.com", ["user:1"]}]
+    end
+
+    test "put_if (5-tuple CAS) updates secondary indexes", %{state: state} do
+      meta = %{index: 1}
+
+      # Create index
+      {state_with_index, :ok, _} =
+        StateMachine.apply_command(meta, {:create_index, "by_email", {:map_get, :email}}, state)
+
+      # Insert initial record
+      {state2, :ok, _} =
+        StateMachine.apply_command(
+          %{index: 2},
+          {:put, "user:1", %{email: "old@test.com"}, nil},
+          state_with_index
+        )
+
+      table = Concord.Index.index_table_name("by_email")
+      assert :ets.lookup(table, "old@test.com") == [{"old@test.com", ["user:1"]}]
+
+      # Use put_if CAS to update — expected matches the current value
+      {_state3, :ok, _} =
+        StateMachine.apply_command(
+          %{index: 3},
+          {:put_if, "user:1", %{email: "new@test.com"}, nil, %{email: "old@test.com"}},
+          state2
+        )
+
+      # Old index entry removed, new one present
+      assert :ets.lookup(table, "old@test.com") == []
+      assert :ets.lookup(table, "new@test.com") == [{"new@test.com", ["user:1"]}]
+    end
+
+    test "delete_if removes entries from secondary indexes", %{state: state} do
+      meta = %{index: 1}
+
+      # Create index
+      {state_with_index, :ok, _} =
+        StateMachine.apply_command(meta, {:create_index, "by_email", {:map_get, :email}}, state)
+
+      # Insert a record
+      {state2, :ok, _} =
+        StateMachine.apply_command(
+          %{index: 2},
+          {:put, "user:1", %{email: "alice@test.com"}, nil},
+          state_with_index
+        )
+
+      table = Concord.Index.index_table_name("by_email")
+      assert :ets.lookup(table, "alice@test.com") == [{"alice@test.com", ["user:1"]}]
+
+      # delete_if with a condition function that matches
+      condition_fn = fn _value -> true end
+
+      {_state3, :ok, _} =
+        StateMachine.apply_command(
+          %{index: 3},
+          {:delete_if, "user:1", nil, condition_fn},
+          state2
+        )
+
+      # Key deleted and index entry removed
+      assert :ets.lookup(:concord_store, "user:1") == []
+      assert :ets.lookup(table, "alice@test.com") == []
     end
 
     test "query handles get_many", %{state: state} do
