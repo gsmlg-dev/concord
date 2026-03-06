@@ -285,7 +285,9 @@ defmodule Concord.RBAC do
 
   defp fallback_create_role(role, permissions) do
     case get_role(role) do
-      {:ok, _} -> {:error, :role_exists}
+      {:ok, _} ->
+        {:error, :role_exists}
+
       {:error, :not_found} ->
         :ets.insert(:concord_roles, {role, permissions})
         :ok

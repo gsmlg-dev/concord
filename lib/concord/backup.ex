@@ -332,21 +332,6 @@ defmodule Concord.Backup do
     {:ok, backup}
   end
 
-  # V1 backward compatibility: bare list of KV tuples
-  defp build_backup(snapshot_data) when is_list(snapshot_data) do
-    metadata = %{
-      timestamp: DateTime.utc_now(),
-      node: node(),
-      cluster_name: Application.get_env(:concord, :cluster_name, :concord_cluster),
-      entry_count: length(snapshot_data),
-      memory_bytes: :erlang.external_size(snapshot_data),
-      version: Application.spec(:concord, :vsn) |> to_string(),
-      checksum: compute_checksum(snapshot_data)
-    }
-
-    {:ok, %{metadata: metadata, data: snapshot_data}}
-  end
-
   defp write_backup(backup_dir, backup_data, compress) do
     timestamp = DateTime.utc_now() |> DateTime.to_iso8601(:basic) |> String.replace(":", "")
     filename = "concord_backup_#{timestamp}#{@backup_extension}"

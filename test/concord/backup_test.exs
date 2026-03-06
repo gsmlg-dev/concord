@@ -14,7 +14,10 @@ defmodule Concord.BackupTest do
 
       backup_state = %{
         version: 2,
-        kv_data: [{"key1", %{value: "val1", expires_at: nil}}, {"key2", %{value: "val2", expires_at: nil}}],
+        kv_data: [
+          {"key1", %{value: "val1", expires_at: nil}},
+          {"key2", %{value: "val2", expires_at: nil}}
+        ],
         tokens: %{"tok1" => %{permissions: [:read, :write]}},
         roles: %{admin: %{permissions: [:read, :write, :admin]}},
         role_grants: %{"tok1" => [:admin]},
@@ -39,7 +42,10 @@ defmodule Concord.BackupTest do
 
       # Verify RBAC roles in state
       assert data.roles == %{admin: %{permissions: [:read, :write, :admin]}}
-      assert :ets.lookup(:concord_roles, :admin) == [{:admin, %{permissions: [:read, :write, :admin]}}]
+
+      assert :ets.lookup(:concord_roles, :admin) == [
+               {:admin, %{permissions: [:read, :write, :admin]}}
+             ]
 
       # Verify role grants
       assert data.role_grants == %{"tok1" => [:admin]}
@@ -51,7 +57,10 @@ defmodule Concord.BackupTest do
 
       # Verify tenants
       assert data.tenants == %{"tenant1" => %{id: "tenant1", namespace: "t1:*"}}
-      assert :ets.lookup(:concord_tenants, "tenant1") == [{"tenant1", %{id: "tenant1", namespace: "t1:*"}}]
+
+      assert :ets.lookup(:concord_tenants, "tenant1") == [
+               {"tenant1", %{id: "tenant1", namespace: "t1:*"}}
+             ]
     end
 
     test "V2 restore_backup with indexes rebuilds index ETS", %{state: state} do
@@ -75,7 +84,8 @@ defmodule Concord.BackupTest do
       backup_state = %{
         version: 2,
         kv_data: [
-          {"user:1", %{value: :erlang.term_to_binary(%{email: "alice@test.com"}), expires_at: nil}},
+          {"user:1",
+           %{value: :erlang.term_to_binary(%{email: "alice@test.com"}), expires_at: nil}},
           {"user:2", %{value: :erlang.term_to_binary(%{email: "bob@test.com"}), expires_at: nil}}
         ],
         tokens: %{},
@@ -135,7 +145,9 @@ defmodule Concord.BackupTest do
       # Old data should be gone
       assert :ets.lookup(:concord_store, "old_key") == []
       # New data should be present
-      assert :ets.lookup(:concord_store, "new_key") == [{"new_key", %{value: "new_val", expires_at: nil}}]
+      assert :ets.lookup(:concord_store, "new_key") == [
+               {"new_key", %{value: "new_val", expires_at: nil}}
+             ]
     end
   end
 end

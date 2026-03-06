@@ -188,10 +188,10 @@ defmodule Concord.Application do
 
   defp wait_for_ra_system(attempts) do
     case :ra_system.fetch(:default) do
-      {:ok, _} ->
+      %{} ->
         :ok
 
-      other when other in [:error, :undefined] ->
+      _ ->
         Process.sleep(200)
         wait_for_ra_system(attempts - 1)
     end

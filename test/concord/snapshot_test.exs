@@ -224,7 +224,11 @@ defmodule Concord.SnapshotTest do
 
       # 6. ACL
       {s7, _, _} =
-        StateMachine.apply_command(%{index: 7}, {:rbac_create_acl, "snap:*", :snaprole, [:read]}, s6)
+        StateMachine.apply_command(
+          %{index: 7},
+          {:rbac_create_acl, "snap:*", :snaprole, [:read]},
+          s6
+        )
 
       # 7. Tenant
       {s8, _, _} =

@@ -21,7 +21,13 @@ defmodule Concord.DeterminismTest do
   defp clear_ets do
     :ets.delete_all_objects(:concord_store)
 
-    for table <- [:concord_tokens, :concord_roles, :concord_role_grants, :concord_acls, :concord_tenants] do
+    for table <- [
+          :concord_tokens,
+          :concord_roles,
+          :concord_role_grants,
+          :concord_acls,
+          :concord_tenants
+        ] do
       if :ets.whereis(table) != :undefined, do: :ets.delete_all_objects(table)
     end
 
