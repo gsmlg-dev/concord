@@ -12,7 +12,7 @@
 ## Key Features
 
 - **Strong Consistency** — Raft consensus ensures all nodes agree on data
-- **600K-870K ops/sec** — 1-7us latency for typical operations
+- **High Performance** — ETS-backed reads with microsecond-level latency
 - **Embedded Design** — Starts with your app, no external infrastructure
 - **HTTP REST API** — Complete API with OpenAPI/Swagger documentation
 - **Configurable Consistency** — Choose eventual, leader, or strong per operation
@@ -81,13 +81,7 @@ iex --name n3@127.0.0.1 --cookie concord -S mix  # Terminal 3
 
 ## Performance
 
-| Operation | Throughput | Latency |
-|-----------|-----------|---------|
-| Small Values (100B) | 621K-870K ops/sec | 1-2us |
-| Medium Values (1KB) | 134K-151K ops/sec | 6-7us |
-| TTL Operations | 943K-25M ops/sec | 0.04-1us |
-| HTTP Health Check | 5K req/sec | 197us |
-| Memory Overhead | ~10 bytes per item | — |
+Performance varies significantly depending on hardware, cluster size, network topology, and consistency level. ETS-backed reads are inherently fast, but actual throughput and latency depend on your deployment. Run `mix run benchmarks/run_benchmarks.exs` on your own hardware to get representative numbers.
 
 ## When to Use Concord
 
@@ -101,6 +95,14 @@ iex --name n3@127.0.0.1 --cookie concord -S mix  # Terminal 3
 | API Response Cache | Great |
 | Primary Database | Avoid (use PostgreSQL) |
 | Large Blob Storage | Avoid (use S3) |
+
+## Known Limitations
+
+- **Bootstrap ETS Fallback**: Auth, RBAC, and tenant data written via ETS fallback during the bootstrap window (before a Raft cluster forms) is not replicated. Once the cluster establishes quorum, subsequent writes go through Raft consensus normally.
+
+- **Node-Local Rate Limiting**: Multi-tenancy rate limiting is tracked per-node. A tenant can exceed its configured quota by up to N× across N nodes in the cluster.
+
+- **Query TTL Clock Sensitivity**: TTL expiration checks in queries use wall-clock time (`System.system_time`) which may differ from leader-assigned time (`meta.system_time`) during clock drift between nodes.
 
 ## Comparison
 

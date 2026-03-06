@@ -16,10 +16,10 @@ defmodule Concord.E2E.NetworkPartitionTest do
   end
 
   describe "Network Partition" do
-    # Note: Network partition tests are inherently unstable in this test environment
-    # because the test runner node can get disconnected by Erlang's global registry
-    # when it tries to prevent overlapping partitions. Skip these tests in CI.
-    @tag :skip
+    # Note: Network partition tests use Node.disconnect/1 which can trigger
+    # Erlang global registry conflicts that disconnect the test runner.
+    # Run these tests manually: MIX_ENV=e2e_test mix test --only unstable
+    @tag :unstable
     test "majority partition continues to serve requests", %{nodes: nodes} do
       # Create 3-2 partition (majority has 3 nodes)
       {majority, minority} = ClusterHelper.partition_network(nodes, {3, 2})
@@ -41,7 +41,7 @@ defmodule Concord.E2E.NetworkPartitionTest do
       IO.puts("✓ Majority partition (#{length(majority)} nodes) continues to serve requests")
     end
 
-    @tag :skip
+    @tag :unstable
     test "minority partition cannot serve writes during partition", %{nodes: nodes} do
       # Create 3-2 partition
       {_majority, minority} = ClusterHelper.partition_network(nodes, {3, 2})
@@ -60,7 +60,7 @@ defmodule Concord.E2E.NetworkPartitionTest do
       IO.puts("✓ Minority partition correctly rejects writes (no quorum)")
     end
 
-    @tag :skip
+    @tag :unstable
     test "cluster recovers after partition heals", %{nodes: nodes} do
       # Create partition
       {majority, _minority} = ClusterHelper.partition_network(nodes, {3, 2})
@@ -88,7 +88,7 @@ defmodule Concord.E2E.NetworkPartitionTest do
       IO.puts("✓ Cluster recovered and data converged after partition healed")
     end
 
-    @tag :skip
+    @tag :unstable
     test "no split-brain after partition heals", %{nodes: nodes} do
       # Create partition
       {majority, _minority} = ClusterHelper.partition_network(nodes, {3, 2})

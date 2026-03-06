@@ -88,6 +88,162 @@ All read operations emit telemetry events with the consistency level:
 )
 ```
 
+## Query Consistency Levels
+
+Each read consistency level maps to a different Ra query primitive, which determines the guarantees and latency characteristics of the read.
+
+### Ra Query Mapping
+
+| Consistency | Ra Primitive | Guarantee |
+|------------|-------------|-----------|
+| `:strong` | `:ra.consistent_query/3` | Linearizable. The leader confirms it still holds leadership via a quorum heartbeat before responding. Highest latency, but the result is guaranteed to reflect all previously acknowledged writes. |
+| `:leader` | `:ra.leader_query/3` | Leader-consistent. Reads from the current leader without a quorum check. The leader may have been deposed but not yet realized it, so a brief window of staleness is possible during leadership transitions. This is the default. |
+| `:eventual` | `:ra.local_query/3` | Eventual consistency. Reads from any cluster member (selected via `select_read_replica/0`). May return stale data but provides the lowest latency and distributes read load across the cluster. |
+
+### Per-Operation Override
+
+Every read function in the `Concord` module accepts the `:consistency` option:
+
+```elixir
+Concord.get("key", consistency: :strong)
+Concord.get_many(["k1", "k2"], consistency: :eventual)
+Concord.get_with_ttl("key", consistency: :leader)
+Concord.ttl("key", consistency: :eventual)
+Concord.get_all(consistency: :strong)
+Concord.get_all_with_ttl(consistency: :eventual)
+Concord.status(consistency: :leader)
+```
+
+### Query Module Consistency
+
+`Concord.Query` functions (`keys/1`, `where/1`, `count/1`, `delete_where/1`) do **not** currently accept a `:consistency` option. They delegate to `Concord.get_all/1` and `Concord.get_many/2` using whatever default consistency is configured globally. To control consistency for query operations, set the default in your config:
+
+```elixir
+config :concord,
+  default_read_consistency: :leader  # :eventual, :leader, or :strong
+```
+
+### Index Lookups
+
+`Concord.Index.lookup/3` always uses `:ra.consistent_query/3` (equivalent to `:strong` consistency) regardless of the global default. This ensures index lookups return results consistent with the latest writes.
+
+## Secondary Indexes
+
+Secondary indexes enable efficient value-based lookups without scanning all keys. Concord maintains indexes automatically as values are inserted, updated, and deleted.
+
+### Extractor Specs
+
+Indexes are defined using declarative extractor specs -- plain tuples that describe how to extract the indexed value from stored data. There are four supported spec types:
+
+**`{:map_get, key}` -- Flat map field**
+
+Extracts a single top-level key from a map value using `Map.get/2`:
+
+```elixir
+# Given stored values like %{email: "alice@example.com", name: "Alice"}
+Concord.Index.create("users_by_email", {:map_get, :email})
+
+# After inserting data:
+Concord.put("user:1", %{email: "alice@example.com", name: "Alice"})
+Concord.put("user:2", %{email: "bob@example.com", name: "Bob"})
+
+# Look up by indexed value:
+{:ok, ["user:1"]} = Concord.Index.lookup("users_by_email", "alice@example.com")
+```
+
+**`{:nested, path}` -- Nested map path**
+
+Extracts a value from a nested map structure using `get_in/2`:
+
+```elixir
+# Given stored values like %{address: %{city: "Portland", state: "OR"}}
+Concord.Index.create("users_by_city", {:nested, [:address, :city]})
+
+Concord.put("user:1", %{name: "Alice", address: %{city: "Portland", state: "OR"}})
+Concord.put("user:2", %{name: "Bob", address: %{city: "Seattle", state: "WA"}})
+
+{:ok, ["user:1"]} = Concord.Index.lookup("users_by_city", "Portland")
+```
+
+**`{:identity}` -- Raw value**
+
+Indexes the entire stored value as-is. Useful when values are simple scalars (strings, integers):
+
+```elixir
+Concord.Index.create("by_status", {:identity})
+
+Concord.put("order:1", "pending")
+Concord.put("order:2", "shipped")
+Concord.put("order:3", "pending")
+
+{:ok, ["order:1", "order:3"]} = Concord.Index.lookup("by_status", "pending")
+```
+
+**`{:element, n}` -- Tuple element**
+
+Extracts the nth element (zero-indexed) from a tuple value:
+
+```elixir
+# Given stored values like {"electronics", "laptop", 999}
+Concord.Index.create("by_category", {:element, 0})
+
+Concord.put("product:1", {"electronics", "laptop", 999})
+Concord.put("product:2", {"clothing", "shirt", 29})
+Concord.put("product:3", {"electronics", "phone", 799})
+
+{:ok, ["product:1", "product:3"]} = Concord.Index.lookup("by_category", "electronics")
+```
+
+### Managing Indexes
+
+```elixir
+# Create an index
+:ok = Concord.Index.create("users_by_email", {:map_get, :email})
+
+# Create an index and rebuild it from all existing data
+:ok = Concord.Index.create("users_by_email", {:map_get, :email}, reindex: true)
+
+# List all indexes
+{:ok, index_names} = Concord.Index.list()
+
+# Look up keys by indexed value
+{:ok, keys} = Concord.Index.lookup("users_by_email", "alice@example.com")
+
+# Rebuild an index from scratch
+:ok = Concord.Index.reindex("users_by_email")
+
+# Drop an index
+:ok = Concord.Index.drop("users_by_email")
+```
+
+### Multi-Value Indexing
+
+When the extractor returns a list, each element is indexed separately. This is useful for tagging:
+
+```elixir
+Concord.Index.create("by_tag", {:map_get, :tags})
+
+Concord.put("post:1", %{title: "Elixir Tips", tags: ["elixir", "programming"]})
+Concord.put("post:2", %{title: "Raft Consensus", tags: ["distributed", "elixir"]})
+
+{:ok, ["post:1", "post:2"]} = Concord.Index.lookup("by_tag", "elixir")
+{:ok, ["post:2"]} = Concord.Index.lookup("by_tag", "distributed")
+```
+
+### Warning: No Anonymous Functions
+
+Do not use anonymous functions as extractors. They cause `:badfun` errors on deserialization across code versions. Always use declarative tuple specs.
+
+```elixir
+# BAD -- will break after code upgrades or on other cluster nodes
+Concord.Index.create("by_email", fn user -> user.email end)
+
+# GOOD -- safe for Raft replication and snapshots
+Concord.Index.create("by_email", {:map_get, :email})
+```
+
+Anonymous functions are serialized into the Raft log and snapshots. When a node loads a snapshot produced by a different code version, the function reference is invalid and Ra raises a `:badfun` error. Declarative specs are plain data (tuples of atoms, binaries, and integers) and are always safe to deserialize.
+
 ## Conditional Updates (Compare-and-Swap)
 
 Atomic conditional operations for CAS, distributed locks, and optimistic concurrency control.

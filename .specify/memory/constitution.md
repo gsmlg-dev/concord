@@ -3,16 +3,14 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 0.0.0 → 1.0.0 (initial ratification)
-Modified principles: N/A (initial)
+Version change: 1.0.0 → 1.1.0
+Modified principles: None renamed
 Added sections:
-  - Core Principles (7 principles)
-  - Architectural Constraints
-  - Development Workflow
-  - Governance
-Removed sections: N/A
+  - Principle VIII: Deterministic State Machine (6 correctness invariants)
+Removed sections: None
 Templates requiring updates:
-  - .specify/templates/plan-template.md ✅ (Constitution Check section compatible)
+  - .specify/templates/plan-template.md ✅ (Constitution Check section is
+    dynamic — new principle auto-included)
   - .specify/templates/spec-template.md ✅ (Requirements section compatible)
   - .specify/templates/tasks-template.md ✅ (Phase structure compatible)
 Follow-up TODOs: None
@@ -22,39 +20,53 @@ Follow-up TODOs: None
 
 ### I. Consistency First
 
-All write operations MUST go through Raft consensus to ensure strong consistency across the cluster. The system is designed as a CP (Consistent + Partition-tolerant) system where:
+All write operations MUST go through Raft consensus to ensure strong
+consistency across the cluster. The system is designed as a CP
+(Consistent + Partition-tolerant) system where:
 
 - Writes require quorum acknowledgment before returning success
-- Reads default to leader consistency but support configurable consistency levels (`:eventual`, `:leader`, `:strong`)
-- No operation may sacrifice consistency for availability during network partitions
+- Reads default to leader consistency but support configurable
+  consistency levels (`:eventual`, `:leader`, `:strong`)
+- No operation may sacrifice consistency for availability during
+  network partitions
 
-**Rationale**: As a distributed coordination system, incorrect data is worse than unavailable data. Applications relying on Concord for configuration, feature flags, or coordination require absolute certainty about data accuracy.
+**Rationale**: As a distributed coordination system, incorrect data is
+worse than unavailable data. Applications relying on Concord for
+configuration, feature flags, or coordination require absolute
+certainty about data accuracy.
 
 ### II. Embedded by Design
 
-Concord MUST function as an embedded library that starts with the host application. This means:
+Concord MUST function as an embedded library that starts with the host
+application. This means:
 
 - No separate infrastructure or external processes required
 - Application lifecycle controls Concord lifecycle
-- Configuration follows Elixir conventions (config files, environment variables)
+- Configuration follows Elixir conventions (config files, environment
+  variables)
 - Zero operational overhead for single-node development
 
-**Rationale**: Lowering the barrier to entry enables adoption. Developers should be able to add distributed coordination to their apps as easily as adding any other dependency.
+**Rationale**: Lowering the barrier to entry enables adoption.
+Developers should be able to add distributed coordination to their
+apps as easily as adding any other dependency.
 
 ### III. Performance Without Compromise
 
-The system MUST maintain microsecond-level performance for reads and low-millisecond performance for writes:
+The system MUST maintain microsecond-level performance for reads and
+low-millisecond performance for writes:
 
-- Read operations: target <10μs for ETS lookups
+- Read operations: target <10us for ETS lookups
 - Write operations: target <20ms for quorum commits
 - Throughput: maintain 600K+ ops/sec under load
 - All performance-critical paths MUST avoid blocking operations
 
-**Rationale**: A coordination layer that introduces latency becomes a bottleneck. Performance MUST be a feature, not an afterthought.
+**Rationale**: A coordination layer that introduces latency becomes a
+bottleneck. Performance MUST be a feature, not an afterthought.
 
 ### IV. Observability as Infrastructure
 
-Every operation MUST emit telemetry events. Observability is not optional:
+Every operation MUST emit telemetry events. Observability is not
+optional:
 
 - All API operations emit `[:concord, :api, :*]` events
 - All internal operations emit `[:concord, :operation, :*]` events
@@ -62,30 +74,38 @@ Every operation MUST emit telemetry events. Observability is not optional:
 - OpenTelemetry tracing MUST be available for distributed debugging
 - Prometheus metrics MUST be exportable
 
-**Rationale**: Distributed systems are inherently harder to debug. Without comprehensive observability, production issues become impossible to diagnose.
+**Rationale**: Distributed systems are inherently harder to debug.
+Without comprehensive observability, production issues become
+impossible to diagnose.
 
 ### V. Secure Defaults
 
 Security MUST be enabled by default in production environments:
 
 - Authentication required for all operations when `auth_enabled: true`
-- Token-based authentication with cryptographically secure token generation
+- Token-based authentication with cryptographically secure token
+  generation
 - RBAC (Role-Based Access Control) for fine-grained permissions
 - TLS support for transport security
 - Audit logging for compliance requirements
 
-**Rationale**: Security vulnerabilities in coordination systems can compromise entire application fleets. Secure-by-default prevents accidental exposure.
+**Rationale**: Security vulnerabilities in coordination systems can
+compromise entire application fleets. Secure-by-default prevents
+accidental exposure.
 
 ### VI. Test-Driven Quality
 
 All features MUST have corresponding tests before merge:
 
 - Unit tests for isolated component behavior
-- E2E tests for distributed scenarios (leader election, network partitions, node failures)
+- E2E tests for distributed scenarios (leader election, network
+  partitions, node failures)
 - Tests run with `async: false` to avoid Ra cluster conflicts
 - State machine changes require cluster restart verification
 
-**Rationale**: Distributed systems have subtle failure modes. Comprehensive testing is the only way to maintain confidence in correctness.
+**Rationale**: Distributed systems have subtle failure modes.
+Comprehensive testing is the only way to maintain confidence in
+correctness.
 
 ### VII. API Stability
 
@@ -94,9 +114,53 @@ Public API changes MUST follow semantic versioning:
 - MAJOR: Breaking changes to `Concord.*` public functions
 - MINOR: New features, new optional parameters
 - PATCH: Bug fixes, performance improvements
-- State machine version changes MUST be backward compatible or include migration paths
+- State machine version changes MUST be backward compatible or include
+  migration paths
 
-**Rationale**: Applications depend on Concord for critical coordination. Breaking changes without warning erode trust.
+**Rationale**: Applications depend on Concord for critical
+coordination. Breaking changes without warning erode trust.
+
+### VIII. Deterministic State Machine
+
+The Ra state machine (`Concord.StateMachine`) MUST remain
+deterministic and serialization-safe at all times. These six invariants
+are non-negotiable:
+
+1. **Deterministic replay**: `apply/3` MUST be a pure function of
+   `(meta, command, state)`. Time MUST come from `meta.system_time`
+   (leader-assigned milliseconds), NEVER from `System.system_time` or
+   any other wall-clock source. Use `meta_time(meta)` to convert to
+   seconds.
+
+2. **No anonymous functions in Raft state or log**: Index extractors,
+   conditions, and any data entering the Raft log MUST use declarative
+   specs (tuples like `{:map_get, :email}`, `{:nested, [:a, :b]}`,
+   `{:identity}`, `{:element, n}`). Closures cause `:badfun` on
+   deserialization across code versions or nodes.
+
+3. **All mutations through Raft**: Auth tokens, RBAC roles/grants/ACLs,
+   tenant definitions, backup restores, and any other state change MUST
+   route through `:ra.process_command`. Direct ETS writes are ONLY
+   acceptable as fallback when the cluster is not yet ready (`:noproc`).
+
+4. **ETS tables are materialized views**: ETS is rebuilt from
+   authoritative Raft state on `snapshot_installed/4`. ETS MUST NEVER
+   be treated as the source of truth.
+
+5. **Snapshots via `release_cursor` effect**: Ra does NOT have a
+   `snapshot/1` callback. Snapshots MUST be emitted every 1000 commands
+   as `{:release_cursor, index, state}` effects. The state MUST include
+   ETS data captured by `build_release_cursor_state/1`.
+
+6. **Pre-consensus evaluation**: `put_if`/`delete_if` MUST evaluate
+   condition functions at the API layer, then convert to CAS commands
+   with `expected: current_value` before entering the Raft log. This
+   keeps the log deterministic.
+
+**Rationale**: Violating any of these invariants causes state
+divergence between Raft replicas, data corruption on log replay, or
+deserialization failures across nodes. These are the most critical
+rules in the entire codebase.
 
 ## Architectural Constraints
 
@@ -118,10 +182,16 @@ Public API changes MUST follow semantic versioning:
 
 ### Data Flow Invariants
 
-1. All writes flow through: Client API → Auth → Validation → `:ra.process_command` → State Machine → ETS
-2. Reads may bypass Raft log via `:ra.consistent_query` or `:ra.local_query`
-3. Server ID format MUST be `{:concord_cluster, node()}` (not module-based)
-4. Query functions return `{:ok, result}`; Ra wraps as `{:ok, {:ok, result}, leader_info}`
+1. All writes flow through: Client API -> Auth -> Validation ->
+   `:ra.process_command` -> State Machine -> ETS
+2. Reads may bypass Raft log via `:ra.consistent_query` or
+   `:ra.local_query`
+3. Server ID format MUST be `{:concord_cluster, node()}`
+   (not module-based)
+4. Query functions return `{:ok, result}`; Ra wraps as
+   `{:ok, {:ok, result}, leader_info}`
+5. State machine correctness invariants per Principle VIII MUST be
+   enforced at every layer
 
 ## Development Workflow
 
@@ -141,17 +211,20 @@ Public API changes MUST follow semantic versioning:
 
 ### Commit Standards
 
-- Semantic commit messages: `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`
+- Semantic commit messages: `feat:`, `fix:`, `docs:`, `chore:`,
+  `test:`, `refactor:`
 - No auto-generated footers (Claude Code, Co-Authored-By)
 - Each commit should be atomic and independently reversible
 
 ## Governance
 
-This constitution supersedes all other development practices for the Concord project.
+This constitution supersedes all other development practices for the
+Concord project.
 
 ### Amendment Process
 
-1. Propose changes via pull request to `.specify/memory/constitution.md`
+1. Propose changes via pull request to
+   `.specify/memory/constitution.md`
 2. Document rationale for each change
 3. Update dependent templates if principles change
 4. Increment version according to semantic rules
@@ -159,7 +232,10 @@ This constitution supersedes all other development practices for the Concord pro
 ### Compliance
 
 - All PRs MUST verify adherence to Core Principles
-- Complexity additions MUST be justified against Principle VII (simplicity via API stability)
+- Complexity additions MUST be justified against Principle VII
+  (simplicity via API stability)
+- State machine changes MUST be reviewed against Principle VIII
+  invariants
 - Constitution violations require explicit exception documentation
 
 ### Version Policy
@@ -168,4 +244,4 @@ This constitution supersedes all other development practices for the Concord pro
 - MINOR: New principle or section added
 - PATCH: Clarifications, wording improvements
 
-**Version**: 1.0.0 | **Ratified**: 2025-12-03 | **Last Amended**: 2025-12-03
+**Version**: 1.1.0 | **Ratified**: 2025-12-03 | **Last Amended**: 2026-03-03

@@ -63,7 +63,7 @@ defmodule Concord.MixProject do
         flags: [],
         list_unused_filters: false
       ],
-      test_coverage: [summary: [threshold: 40]]
+      test_coverage: [summary: [threshold: 50]]
     ]
   end
 
@@ -117,7 +117,6 @@ defmodule Concord.MixProject do
       {:plug_crypto, "~> 1.2"},
       {:plug, "~> 1.15"},
       {:bandit, "~> 1.5"},
-      {:plug_cowboy, "~> 2.6"},
       # OpenTelemetry distributed tracing
       {:opentelemetry_api, "~> 1.3"},
       {:opentelemetry, "~> 1.4"},

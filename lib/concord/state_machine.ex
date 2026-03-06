@@ -336,34 +336,29 @@ defmodule Concord.StateMachine do
     start_time = System.monotonic_time()
     now = meta_time(meta)
 
-    all_keys = :ets.select(:concord_store, [{{:"$1", :"$2"}, [], [:"$1"]}])
+    # Single-pass: fetch all entries as {key, stored_data} tuples at once,
+    # then filter and delete expired ones — O(N) instead of O(3N).
+    all_entries = :ets.tab2list(:concord_store)
 
-    expired_keys =
-      Enum.filter(all_keys, fn key ->
-        case :ets.lookup(:concord_store, key) do
-          [{^key, stored_data}] ->
-            case extract_value(stored_data) do
-              {_value, expires_at} -> expired?(expires_at, now)
-              _ -> false
+    {deleted_count, scanned_count} =
+      Enum.reduce(all_entries, {0, 0}, fn {key, stored_data}, {deleted, scanned} ->
+        case extract_value(stored_data) do
+          {value, expires_at} when expires_at != nil ->
+            if expired?(expires_at, now) do
+              decompressed = Compression.decompress(value)
+
+              if decompressed != nil do
+                remove_from_all_indexes(data, key, decompressed)
+              end
+
+              :ets.delete(:concord_store, key)
+              {deleted + 1, scanned + 1}
+            else
+              {deleted, scanned + 1}
             end
 
-          [] ->
-            false
-        end
-      end)
-
-    deleted_count =
-      Enum.reduce(expired_keys, 0, fn key, acc ->
-        # Remove from indexes before deleting
-        old_value = get_decompressed_value(key)
-
-        if old_value != nil do
-          remove_from_all_indexes(data, key, old_value)
-        end
-
-        case :ets.delete(:concord_store, key) do
-          true -> acc + 1
-          false -> acc
+          _ ->
+            {deleted, scanned + 1}
         end
       end)
 
@@ -376,7 +371,7 @@ defmodule Concord.StateMachine do
         operation: :cleanup_expired,
         index: Map.get(meta, :index),
         deleted_count: deleted_count,
-        scanned_keys: length(all_keys)
+        scanned_keys: scanned_count
       }
     )
 
@@ -393,7 +388,7 @@ defmodule Concord.StateMachine do
 
     case validate_put_many_operations(operations) do
       :ok ->
-        results = execute_put_many_batch(operations)
+        results = execute_put_many_batch(operations, data)
 
         case Enum.find(results, fn {status, _} -> status == :error end) do
           nil ->
@@ -720,6 +715,46 @@ defmodule Concord.StateMachine do
   # BACKUP RESTORE COMMAND
   # ══════════════════════════════════════════════
 
+  # V2 backup format: map with all state categories
+  def apply_command(meta, {:restore_backup, %{version: 2} = backup_state}, {:concord_kv, data}) do
+    start_time = System.monotonic_time()
+
+    # Restore KV data
+    :ets.delete_all_objects(:concord_store)
+
+    Enum.each(Map.get(backup_state, :kv_data, []), fn entry ->
+      :ets.insert(:concord_store, entry)
+    end)
+
+    # Restore all state categories into the Raft state map
+    new_data =
+      data
+      |> Map.put(:tokens, Map.get(backup_state, :tokens, %{}))
+      |> Map.put(:roles, Map.get(backup_state, :roles, %{}))
+      |> Map.put(:role_grants, Map.get(backup_state, :role_grants, %{}))
+      |> Map.put(:acls, Map.get(backup_state, :acls, []))
+      |> Map.put(:tenants, Map.get(backup_state, :tenants, %{}))
+      |> Map.put(:indexes, Map.get(backup_state, :indexes, %{}))
+
+    # Rebuild all ETS tables from the restored state
+    rebuild_auth_ets(new_data)
+    rebuild_rbac_ets(new_data)
+    rebuild_tenant_ets(new_data)
+    rebuild_all_index_ets(Map.get(new_data, :indexes, %{}))
+
+    duration = System.monotonic_time() - start_time
+    kv_count = length(Map.get(backup_state, :kv_data, []))
+
+    :telemetry.execute(
+      [:concord, :backup, :restored],
+      %{entry_count: kv_count, duration: duration},
+      %{index: Map.get(meta, :index)}
+    )
+
+    {{:concord_kv, new_data}, :ok, []}
+  end
+
+  # V1 backup format: bare list of KV entries (backward compatible)
   def apply_command(meta, {:restore_backup, kv_entries}, {:concord_kv, data})
       when is_list(kv_entries) do
     start_time = System.monotonic_time()
@@ -1093,6 +1128,24 @@ defmodule Concord.StateMachine do
     end)
   end
 
+  defp rebuild_auth_ets(data) do
+    ensure_ets_table(:concord_tokens)
+    :ets.delete_all_objects(:concord_tokens)
+
+    Enum.each(Map.get(data, :tokens, %{}), fn {token, perms} ->
+      :ets.insert(:concord_tokens, {token, perms})
+    end)
+  end
+
+  defp rebuild_tenant_ets(data) do
+    ensure_ets_table(:concord_tenants)
+    :ets.delete_all_objects(:concord_tenants)
+
+    Enum.each(Map.get(data, :tenants, %{}), fn {id, tenant} ->
+      :ets.insert(:concord_tenants, {id, tenant})
+    end)
+  end
+
   # ══════════════════════════════════════════════
   # VERSION
   # ══════════════════════════════════════════════
@@ -1251,22 +1304,32 @@ defmodule Concord.StateMachine do
 
   defp validate_put_operation(_), do: {:error, :invalid_operation_format}
 
-  defp execute_put_many_batch(operations) do
+  defp execute_put_many_batch(operations, data) do
     Enum.map(operations, fn
       {key, value, expires_at} ->
+        old_value = get_decompressed_value(key)
         formatted_value = format_value(value, expires_at)
 
         case :ets.insert(:concord_store, {key, formatted_value}) do
-          true -> {key, :ok}
-          _ -> {key, {:error, :insert_failed}}
+          true ->
+            update_indexes_on_put(data, key, old_value, Compression.decompress(value))
+            {key, :ok}
+
+          _ ->
+            {key, {:error, :insert_failed}}
         end
 
       {key, value} ->
+        old_value = get_decompressed_value(key)
         formatted_value = format_value(value, nil)
 
         case :ets.insert(:concord_store, {key, formatted_value}) do
-          true -> {key, :ok}
-          _ -> {key, {:error, :insert_failed}}
+          true ->
+            update_indexes_on_put(data, key, old_value, Compression.decompress(value))
+            {key, :ok}
+
+          _ ->
+            {key, {:error, :insert_failed}}
         end
 
       _ ->

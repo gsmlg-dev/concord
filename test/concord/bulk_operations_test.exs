@@ -160,6 +160,121 @@ defmodule Concord.BulkOperationsTest do
       assert new_state == state
     end
 
+    test "put_many updates secondary indexes for all entries", %{state: state} do
+      meta = %{index: 1}
+
+      # Create an index on the :email field
+      {state_with_index, :ok, _} =
+        StateMachine.apply_command(meta, {:create_index, "by_email", {:map_get, :email}}, state)
+
+      # Batch insert records with email fields
+      operations = [
+        {"user:1", %{email: "alice@test.com", name: "Alice"}, nil},
+        {"user:2", %{email: "bob@test.com", name: "Bob"}, nil},
+        {"user:3", %{email: "carol@test.com", name: "Carol"}, nil}
+      ]
+
+      {_new_state, {:ok, results}, _} =
+        StateMachine.apply_command(%{index: 2}, {:put_many, operations}, state_with_index)
+
+      assert length(results) == 3
+      assert Enum.all?(results, fn {_k, status} -> status == :ok end)
+
+      # Verify all entries are discoverable via the secondary index
+      table = Concord.Index.index_table_name("by_email")
+      assert :ets.lookup(table, "alice@test.com") == [{"alice@test.com", ["user:1"]}]
+      assert :ets.lookup(table, "bob@test.com") == [{"bob@test.com", ["user:2"]}]
+      assert :ets.lookup(table, "carol@test.com") == [{"carol@test.com", ["user:3"]}]
+    end
+
+    test "put_many overwrites update index entries correctly", %{state: state} do
+      meta = %{index: 1}
+
+      # Create index and insert initial data
+      {state_with_index, :ok, _} =
+        StateMachine.apply_command(meta, {:create_index, "by_email", {:map_get, :email}}, state)
+
+      # Insert initial record
+      {state2, :ok, _} =
+        StateMachine.apply_command(
+          %{index: 2},
+          {:put, "user:1", %{email: "old@test.com", name: "Alice"}, nil},
+          state_with_index
+        )
+
+      table = Concord.Index.index_table_name("by_email")
+      assert :ets.lookup(table, "old@test.com") == [{"old@test.com", ["user:1"]}]
+
+      # Overwrite via put_many with new email
+      operations = [{"user:1", %{email: "new@test.com", name: "Alice Updated"}, nil}]
+
+      {_new_state, {:ok, _results}, _} =
+        StateMachine.apply_command(%{index: 3}, {:put_many, operations}, state2)
+
+      # Old index entry removed, new one present
+      assert :ets.lookup(table, "old@test.com") == []
+      assert :ets.lookup(table, "new@test.com") == [{"new@test.com", ["user:1"]}]
+    end
+
+    test "put_many with entries missing indexed field skips gracefully", %{state: state} do
+      meta = %{index: 1}
+
+      {state_with_index, :ok, _} =
+        StateMachine.apply_command(meta, {:create_index, "by_email", {:map_get, :email}}, state)
+
+      # Mix of records with and without the indexed field
+      operations = [
+        {"user:1", %{email: "alice@test.com", name: "Alice"}, nil},
+        {"user:2", %{name: "Bob (no email)"}, nil},
+        {"user:3", %{email: "carol@test.com", name: "Carol"}, nil}
+      ]
+
+      {_new_state, {:ok, results}, _} =
+        StateMachine.apply_command(%{index: 2}, {:put_many, operations}, state_with_index)
+
+      # All inserts succeed
+      assert length(results) == 3
+      assert Enum.all?(results, fn {_k, status} -> status == :ok end)
+
+      # Only records with email appear in the index
+      table = Concord.Index.index_table_name("by_email")
+      assert :ets.lookup(table, "alice@test.com") == [{"alice@test.com", ["user:1"]}]
+      assert :ets.lookup(table, "carol@test.com") == [{"carol@test.com", ["user:3"]}]
+      # No entry for Bob
+      assert :ets.tab2list(table) |> Enum.filter(fn {_k, v} -> v == "user:2" end) == []
+    end
+
+    test "put_many with empty list is a no-op", %{state: state} do
+      meta = %{index: 1}
+
+      {new_state, result, _effects} =
+        StateMachine.apply_command(meta, {:put_many, []}, state)
+
+      assert result == {:ok, []}
+      assert new_state == state
+    end
+
+    test "put_many with duplicate keys keeps last occurrence in index", %{state: state} do
+      meta = %{index: 1}
+
+      {state_with_index, :ok, _} =
+        StateMachine.apply_command(meta, {:create_index, "by_email", {:map_get, :email}}, state)
+
+      # Same key appears twice with different email values
+      operations = [
+        {"user:1", %{email: "first@test.com", name: "First"}, nil},
+        {"user:1", %{email: "second@test.com", name: "Second"}, nil}
+      ]
+
+      {_new_state, {:ok, _results}, _} =
+        StateMachine.apply_command(%{index: 2}, {:put_many, operations}, state_with_index)
+
+      table = Concord.Index.index_table_name("by_email")
+      # First email should be removed, second should be present
+      assert :ets.lookup(table, "first@test.com") == []
+      assert :ets.lookup(table, "second@test.com") == [{"second@test.com", ["user:1"]}]
+    end
+
     test "query handles get_many", %{state: state} do
       # Setup some data
       :ets.insert(:concord_store, {"key1", %{value: "value1", expires_at: nil}})
