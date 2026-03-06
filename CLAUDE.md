@@ -121,3 +121,10 @@ See `docs/` for architectural documents:
 - `docs/DESIGN.md` — Original design blueprint
 - `docs/API_DESIGN.md` — HTTP API design
 - `docs/API_USAGE_EXAMPLES.md` — HTTP API usage examples
+
+## Active Technologies
+- Elixir 1.18 / OTP 28 + Ra 2.17.1 (Raft), libcluster 3.5.0, Bandit 1.8.0, Plug 1.18.1 (001-fix-review-issues)
+- ETS (in-memory) with Ra snapshots for persistence (001-fix-review-issues)
+
+## Recent Changes
+- 001-fix-review-issues: Added Elixir 1.18 / OTP 28 + Ra 2.17.1 (Raft), libcluster 3.5.0, Bandit 1.8.0, Plug 1.18.1

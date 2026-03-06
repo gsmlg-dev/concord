@@ -224,8 +224,9 @@ defmodule Concord.TTLTest do
     end
 
     test "apply/3 handles cleanup_expired", %{state: state} do
-      meta = %{index: 1}
-      current_time = System.system_time(:second)
+      now_ms = System.system_time(:millisecond)
+      current_time = div(now_ms, 1000)
+      meta = %{index: 1, system_time: now_ms}
 
       # Insert test data
       :ets.insert(

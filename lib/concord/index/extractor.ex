@@ -52,7 +52,10 @@ defmodule Concord.Index.Extractor do
   def extract({:map_get, key}, value) when is_map(value), do: Map.get(value, key)
   def extract({:nested, keys}, value) when is_map(value), do: get_in(value, keys)
   def extract({:identity}, value), do: value
-  def extract({:element, n}, value) when is_tuple(value) and tuple_size(value) > n, do: elem(value, n)
+
+  def extract({:element, n}, value) when is_tuple(value) and tuple_size(value) > n,
+    do: elem(value, n)
+
   # Backward compatibility: evaluate anonymous functions during migration
   def extract(extractor, value) when is_function(extractor, 1) do
     extractor.(value)

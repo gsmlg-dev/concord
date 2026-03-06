@@ -205,40 +205,16 @@ defmodule Concord do
       result =
         cond do
           expected != nil ->
-            # Direct CAS — no functions in the command
-            case command({:put_if, key, compressed_value, expires_at, expected}, timeout) do
-              {:ok, :ok, _} -> :ok
-              {:ok, {:error, reason}, _} -> {:error, reason}
-              {:timeout, _} -> {:error, :timeout}
-              {:error, :noproc} -> {:error, :cluster_not_ready}
-              {:error, reason} -> {:error, reason}
-            end
+            unwrap_command_result({:put_if, key, compressed_value, expires_at, expected}, timeout)
 
           condition_fn != nil ->
-            # Evaluate condition pre-consensus, then CAS
-            case get(key, Keyword.take(opts, [:token, :timeout, :consistency])) do
-              {:ok, current_value} ->
-                if condition_fn.(current_value) do
-                  case command(
-                         {:put_if, key, compressed_value, expires_at, current_value},
-                         timeout
-                       ) do
-                    {:ok, :ok, _} -> :ok
-                    {:ok, {:error, reason}, _} -> {:error, reason}
-                    {:timeout, _} -> {:error, :timeout}
-                    {:error, :noproc} -> {:error, :cluster_not_ready}
-                    {:error, reason} -> {:error, reason}
-                  end
-                else
-                  {:error, :condition_failed}
-                end
-
-              {:error, :not_found} ->
-                {:error, :not_found}
-
-              {:error, reason} ->
-                {:error, reason}
-            end
+            evaluate_condition_then_cas(
+              key,
+              fn current -> {:put_if, key, compressed_value, expires_at, current} end,
+              condition_fn,
+              opts,
+              timeout
+            )
 
           true ->
             {:error, :missing_condition}
@@ -288,39 +264,19 @@ defmodule Concord do
 
       start_time = System.monotonic_time()
 
-      # Evaluate condition functions pre-consensus (same pattern as put_if)
       result =
         cond do
           expected != nil ->
-            case command({:delete_if, key, expected, nil}, timeout) do
-              {:ok, :ok, _} -> :ok
-              {:ok, {:error, reason}, _} -> {:error, reason}
-              {:timeout, _} -> {:error, :timeout}
-              {:error, :noproc} -> {:error, :cluster_not_ready}
-              {:error, reason} -> {:error, reason}
-            end
+            unwrap_command_result({:delete_if, key, expected, nil}, timeout)
 
           condition_fn != nil ->
-            case get(key, Keyword.take(opts, [:token, :timeout, :consistency])) do
-              {:ok, current_value} ->
-                if condition_fn.(current_value) do
-                  case command({:delete_if, key, current_value, nil}, timeout) do
-                    {:ok, :ok, _} -> :ok
-                    {:ok, {:error, reason}, _} -> {:error, reason}
-                    {:timeout, _} -> {:error, :timeout}
-                    {:error, :noproc} -> {:error, :cluster_not_ready}
-                    {:error, reason} -> {:error, reason}
-                  end
-                else
-                  {:error, :condition_failed}
-                end
-
-              {:error, :not_found} ->
-                {:error, :not_found}
-
-              {:error, reason} ->
-                {:error, reason}
-            end
+            evaluate_condition_then_cas(
+              key,
+              fn current -> {:delete_if, key, current, nil} end,
+              condition_fn,
+              opts,
+              timeout
+            )
 
           true ->
             {:error, :missing_condition}
@@ -804,6 +760,32 @@ defmodule Concord do
 
   defp command(cmd, timeout) do
     :ra.process_command(server_id(), cmd, timeout)
+  end
+
+  defp unwrap_command_result(cmd, timeout) do
+    case command(cmd, timeout) do
+      {:ok, :ok, _} -> :ok
+      {:ok, {:error, reason}, _} -> {:error, reason}
+      {:timeout, _} -> {:error, :timeout}
+      {:error, :noproc} -> {:error, :cluster_not_ready}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Evaluate a condition function pre-consensus, then issue a CAS command.
+  # Keeps anonymous functions out of the Raft log.
+  defp evaluate_condition_then_cas(key, build_cmd, condition_fn, opts, timeout) do
+    case get(key, Keyword.take(opts, [:token, :timeout, :consistency])) do
+      {:ok, current_value} ->
+        if condition_fn.(current_value) do
+          unwrap_command_result(build_cmd.(current_value), timeout)
+        else
+          {:error, :condition_failed}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp query(query, timeout, consistency) do

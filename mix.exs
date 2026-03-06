@@ -18,7 +18,14 @@ defmodule Concord.MixProject do
         main: "readme",
         extras: [
           "README.md",
+          "docs/getting-started.md",
+          "docs/elixir-guide.md",
           "docs/API_DESIGN.md",
+          "docs/API_USAGE_EXAMPLES.md",
+          "docs/observability.md",
+          "docs/backup-restore.md",
+          "docs/configuration.md",
+          "docs/deployment.md",
           "docs/DESIGN.md",
           "CHANGELOG.md",
           "LICENSE"
@@ -27,14 +34,25 @@ defmodule Concord.MixProject do
         groups_for_extras: [
           "Getting Started": [
             "README.md",
-            "LICENSE"
+            "docs/getting-started.md"
           ],
-          "Architecture": [
-            "docs/DESIGN.md",
-            "docs/API_DESIGN.md"
+          Guides: [
+            "docs/elixir-guide.md",
+            "docs/observability.md",
+            "docs/backup-restore.md",
+            "docs/configuration.md",
+            "docs/deployment.md"
+          ],
+          "HTTP API": [
+            "docs/API_DESIGN.md",
+            "docs/API_USAGE_EXAMPLES.md"
+          ],
+          Architecture: [
+            "docs/DESIGN.md"
           ],
           "Release Notes": [
-            "CHANGELOG.md"
+            "CHANGELOG.md",
+            "LICENSE"
           ]
         ]
       ],
@@ -45,7 +63,7 @@ defmodule Concord.MixProject do
         flags: [],
         list_unused_filters: false
       ],
-      test_coverage: [summary: [threshold: 40]]
+      test_coverage: [summary: [threshold: 50]]
     ]
   end
 
@@ -99,7 +117,6 @@ defmodule Concord.MixProject do
       {:plug_crypto, "~> 1.2"},
       {:plug, "~> 1.15"},
       {:bandit, "~> 1.5"},
-      {:plug_cowboy, "~> 2.6"},
       # OpenTelemetry distributed tracing
       {:opentelemetry_api, "~> 1.3"},
       {:opentelemetry, "~> 1.4"},

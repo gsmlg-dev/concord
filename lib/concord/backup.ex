@@ -33,6 +33,10 @@ defmodule Concord.Backup do
 
   require Logger
 
+  alias Concord.Compression
+  alias Concord.Index
+  alias Concord.Index.Extractor
+
   @backup_extension ".backup"
   @default_backup_dir "./backups"
 
@@ -272,11 +276,25 @@ defmodule Concord.Backup do
   defp get_cluster_snapshot do
     server_id = {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
 
-    case :ra.consistent_query(server_id, fn state -> {:concord_kv, state} end) do
-      {:ok, {:concord_kv, _state}, _leader} ->
-        # Get snapshot from ETS table
-        data = :ets.tab2list(:concord_store)
-        {:ok, data}
+    query_fn = fn {:concord_kv, data} ->
+      # Read KV data from ETS within the consistent query context
+      kv_data = :ets.tab2list(:concord_store)
+
+      %{
+        version: 2,
+        kv_data: kv_data,
+        tokens: Map.get(data, :tokens, %{}),
+        roles: Map.get(data, :roles, %{}),
+        role_grants: Map.get(data, :role_grants, %{}),
+        acls: Map.get(data, :acls, []),
+        tenants: Map.get(data, :tenants, %{}),
+        indexes: Map.get(data, :indexes, %{})
+      }
+    end
+
+    case :ra.consistent_query(server_id, query_fn) do
+      {:ok, %{version: 2} = snapshot, _leader} ->
+        {:ok, snapshot}
 
       {:error, reason} ->
         {:error, reason}
@@ -286,14 +304,27 @@ defmodule Concord.Backup do
     end
   end
 
-  defp build_backup(snapshot_data) do
+  defp build_backup(%{version: 2} = snapshot_data) do
+    kv_count = length(Map.get(snapshot_data, :kv_data, []))
+    token_count = map_size(Map.get(snapshot_data, :tokens, %{}))
+    role_count = map_size(Map.get(snapshot_data, :roles, %{}))
+    tenant_count = map_size(Map.get(snapshot_data, :tenants, %{}))
+
     metadata = %{
       timestamp: DateTime.utc_now(),
       node: node(),
       cluster_name: Application.get_env(:concord, :cluster_name, :concord_cluster),
-      entry_count: length(snapshot_data),
+      entry_count: kv_count,
+      state_categories: [:kv, :auth, :rbac, :tenants, :indexes],
+      state_counts: %{
+        kv: kv_count,
+        tokens: token_count,
+        roles: role_count,
+        tenants: tenant_count
+      },
       memory_bytes: :erlang.external_size(snapshot_data),
       version: Application.spec(:concord, :vsn) |> to_string(),
+      format_version: 2,
       checksum: compute_checksum(snapshot_data)
     }
 
@@ -310,7 +341,8 @@ defmodule Concord.Backup do
     filename = "concord_backup_#{timestamp}#{@backup_extension}"
     backup_path = Path.join(backup_dir, filename)
 
-    encoded = :erlang.term_to_binary(backup_data, [:compressed | if(compress, do: [], else: [])])
+    opts = if compress, do: [:compressed], else: []
+    encoded = :erlang.term_to_binary(backup_data, opts)
 
     case File.write(backup_path, encoded) do
       :ok -> {:ok, backup_path}
@@ -346,19 +378,7 @@ defmodule Concord.Backup do
       {:error, :noproc} ->
         # Fallback: cluster not ready — apply directly to local ETS
         Logger.warning("Cluster not ready, applying backup to local ETS only")
-        :ets.delete_all_objects(:concord_store)
-
-        Enum.each(snapshot_data, fn {key, value} ->
-          :ets.insert(:concord_store, {key, value})
-        end)
-
-        :telemetry.execute(
-          [:concord, :backup, :restored],
-          %{entry_count: metadata.entry_count},
-          %{timestamp: metadata.timestamp, node: metadata.node}
-        )
-
-        :ok
+        apply_backup_to_local_ets(snapshot_data, metadata)
 
       {:timeout, _} ->
         {:error, :timeout}
@@ -366,6 +386,112 @@ defmodule Concord.Backup do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # V2 format fallback: restore all state categories to their respective ETS tables
+  defp apply_backup_to_local_ets(%{version: 2} = snapshot_data, metadata) do
+    # KV data
+    :ets.delete_all_objects(:concord_store)
+
+    Enum.each(Map.get(snapshot_data, :kv_data, []), fn entry ->
+      :ets.insert(:concord_store, entry)
+    end)
+
+    # Auth tokens
+    if :ets.whereis(:concord_tokens) != :undefined do
+      :ets.delete_all_objects(:concord_tokens)
+
+      Enum.each(Map.get(snapshot_data, :tokens, %{}), fn {token, perms} ->
+        :ets.insert(:concord_tokens, {token, perms})
+      end)
+    end
+
+    # RBAC roles
+    if :ets.whereis(:concord_roles) != :undefined do
+      :ets.delete_all_objects(:concord_roles)
+
+      Enum.each(Map.get(snapshot_data, :roles, %{}), fn {role, perms} ->
+        :ets.insert(:concord_roles, {role, perms})
+      end)
+    end
+
+    # RBAC role grants
+    if :ets.whereis(:concord_role_grants) != :undefined do
+      :ets.delete_all_objects(:concord_role_grants)
+
+      Enum.each(Map.get(snapshot_data, :role_grants, %{}), fn {token, roles} ->
+        Enum.each(roles, fn role ->
+          :ets.insert(:concord_role_grants, {token, role})
+        end)
+      end)
+    end
+
+    # ACLs
+    if :ets.whereis(:concord_acls) != :undefined do
+      :ets.delete_all_objects(:concord_acls)
+
+      Enum.each(Map.get(snapshot_data, :acls, []), fn {pattern, role, perms} ->
+        :ets.insert(:concord_acls, {pattern, role, perms})
+      end)
+    end
+
+    # Tenants
+    if :ets.whereis(:concord_tenants) != :undefined do
+      :ets.delete_all_objects(:concord_tenants)
+
+      Enum.each(Map.get(snapshot_data, :tenants, %{}), fn {id, tenant} ->
+        :ets.insert(:concord_tenants, {id, tenant})
+      end)
+    end
+
+    # Rebuild index ETS tables from index definitions and KV data
+    indexes = Map.get(snapshot_data, :indexes, %{})
+    kv_data = Map.get(snapshot_data, :kv_data, [])
+
+    Enum.each(indexes, fn {name, extractor} ->
+      table = Index.index_table_name(name)
+
+      if :ets.whereis(table) == :undefined do
+        :ets.new(table, [:bag, :public, :named_table])
+      else
+        :ets.delete_all_objects(table)
+      end
+
+      Enum.each(kv_data, fn {key, stored} ->
+        value =
+          case stored do
+            %{value: v} -> Compression.decompress(v)
+            _ -> stored
+          end
+
+        Extractor.index_value(table, key, value, extractor)
+      end)
+    end)
+
+    :telemetry.execute(
+      [:concord, :backup, :restored],
+      %{entry_count: metadata.entry_count},
+      %{timestamp: metadata.timestamp, node: metadata.node}
+    )
+
+    :ok
+  end
+
+  # V1 format fallback: just KV data
+  defp apply_backup_to_local_ets(snapshot_data, metadata) when is_list(snapshot_data) do
+    :ets.delete_all_objects(:concord_store)
+
+    Enum.each(snapshot_data, fn {key, value} ->
+      :ets.insert(:concord_store, {key, value})
+    end)
+
+    :telemetry.execute(
+      [:concord, :backup, :restored],
+      %{entry_count: metadata.entry_count},
+      %{timestamp: metadata.timestamp, node: metadata.node}
+    )
+
+    :ok
   end
 
   defp get_backup_info(backup_path) do

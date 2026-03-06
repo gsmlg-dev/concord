@@ -32,8 +32,8 @@ defmodule Concord.Index do
       :ok = Concord.Index.create("by_email", fn u -> u.email end)
   """
 
-  alias Concord.StateMachine
   alias Concord.Index.Extractor
+  alias Concord.StateMachine
 
   @timeout 5_000
   @cluster_name :concord_cluster
