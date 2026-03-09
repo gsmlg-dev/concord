@@ -138,11 +138,10 @@ jobs:
 
           ### Features
 
-          - Distributed, strongly-consistent embedded key-value store
-          - Raft consensus algorithm via Ra
-          - 600K+ ops/sec performance
-          - HTTP REST API with OpenAPI documentation
-          - Token-based authentication and RBAC
+          - Embedded distributed key-value store for Elixir
+          - Raft consensus via Ra for strong consistency
+          - Secondary indexes with declarative extractors
           - TTL support, compression, and bulk operations
+          - Backup/restore and snapshot support
         draft: false
         prerelease: ${{ contains(steps.version.outputs.version, '-') }}
