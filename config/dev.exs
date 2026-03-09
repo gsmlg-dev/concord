@@ -2,7 +2,6 @@ import Config
 
 config :concord,
   data_dir: "./data/dev",
-  auth_enabled: false,
   http: [
     enabled: true,
     port: 4000,

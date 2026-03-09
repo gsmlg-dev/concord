@@ -3,7 +3,7 @@ defmodule Concord.StateMachine do
   The Raft state machine for Concord (Version 3).
 
   Implements the `:ra_machine` behavior to provide a replicated key-value store
-  with TTL support, secondary indexes, auth tokens, RBAC, and multi-tenancy.
+  with TTL support and secondary indexes.
 
   ## Correctness Guarantees
 
@@ -16,11 +16,6 @@ defmodule Concord.StateMachine do
 
       {:concord_kv, %{
         indexes: %{name => extractor_spec},
-        tokens: %{token => permissions},
-        roles: %{role => permissions},
-        role_grants: %{token => [roles]},
-        acls: [{pattern, role, permissions}],
-        tenants: %{tenant_id => tenant_definition},
         command_count: non_neg_integer()
       }}
 
@@ -70,11 +65,6 @@ defmodule Concord.StateMachine do
   defp default_state_fields do
     %{
       indexes: %{},
-      tokens: %{},
-      roles: %{},
-      role_grants: %{},
-      acls: [],
-      tenants: %{},
       command_count: 0
     }
   end
@@ -90,11 +80,6 @@ defmodule Concord.StateMachine do
   @impl :ra_machine
   def init(_config) do
     ensure_ets_table(:concord_store, [:set, :public, :named_table])
-    ensure_ets_table(:concord_tokens, [:set, :public, :named_table])
-    ensure_ets_table(:concord_roles, [:set, :public, :named_table])
-    ensure_ets_table(:concord_role_grants, [:bag, :public, :named_table])
-    ensure_ets_table(:concord_acls, [:bag, :public, :named_table])
-    ensure_ets_table(:concord_tenants, [:set, :public, :named_table])
 
     {:concord_kv, default_state_fields()}
   end
@@ -530,206 +515,6 @@ defmodule Concord.StateMachine do
   end
 
   # ══════════════════════════════════════════════
-  # AUTH TOKEN COMMANDS
-  # ══════════════════════════════════════════════
-
-  def apply_command(_meta, {:auth_create_token, token, permissions}, {:concord_kv, data}) do
-    tokens = Map.get(data, :tokens, %{})
-    new_tokens = Map.put(tokens, token, permissions)
-    new_data = Map.put(data, :tokens, new_tokens)
-
-    # Sync to ETS for fast lookups
-    :ets.insert(:concord_tokens, {token, permissions})
-
-    {{:concord_kv, new_data}, {:ok, token}, []}
-  end
-
-  def apply_command(_meta, {:auth_revoke_token, token}, {:concord_kv, data}) do
-    tokens = Map.get(data, :tokens, %{})
-    new_tokens = Map.delete(tokens, token)
-
-    # Also remove role grants for this token
-    role_grants = Map.get(data, :role_grants, %{})
-    new_grants = Map.delete(role_grants, token)
-
-    new_data =
-      data
-      |> Map.put(:tokens, new_tokens)
-      |> Map.put(:role_grants, new_grants)
-
-    # Sync to ETS
-    :ets.delete(:concord_tokens, token)
-    :ets.match_delete(:concord_role_grants, {token, :_})
-
-    {{:concord_kv, new_data}, :ok, []}
-  end
-
-  # ══════════════════════════════════════════════
-  # RBAC COMMANDS
-  # ══════════════════════════════════════════════
-
-  def apply_command(_meta, {:rbac_create_role, role, permissions}, {:concord_kv, data}) do
-    roles = Map.get(data, :roles, %{})
-
-    if Map.has_key?(roles, role) do
-      {{:concord_kv, data}, {:error, :role_exists}, []}
-    else
-      new_roles = Map.put(roles, role, permissions)
-      new_data = Map.put(data, :roles, new_roles)
-
-      :ets.insert(:concord_roles, {role, permissions})
-
-      {{:concord_kv, new_data}, :ok, []}
-    end
-  end
-
-  def apply_command(_meta, {:rbac_delete_role, role}, {:concord_kv, data}) do
-    roles = Map.get(data, :roles, %{})
-
-    if Map.has_key?(roles, role) do
-      new_roles = Map.delete(roles, role)
-
-      # Remove all grants for this role
-      role_grants = Map.get(data, :role_grants, %{})
-
-      new_grants =
-        Enum.reduce(role_grants, %{}, fn {token, token_roles}, acc ->
-          filtered = List.delete(token_roles, role)
-
-          if filtered == [] do
-            acc
-          else
-            Map.put(acc, token, filtered)
-          end
-        end)
-
-      new_data =
-        data
-        |> Map.put(:roles, new_roles)
-        |> Map.put(:role_grants, new_grants)
-
-      :ets.delete(:concord_roles, role)
-      :ets.match_delete(:concord_role_grants, {:_, role})
-
-      {{:concord_kv, new_data}, :ok, []}
-    else
-      {{:concord_kv, data}, {:error, :not_found}, []}
-    end
-  end
-
-  def apply_command(_meta, {:rbac_grant_role, token, role}, {:concord_kv, data}) do
-    role_grants = Map.get(data, :role_grants, %{})
-    existing = Map.get(role_grants, token, [])
-
-    if role in existing do
-      {{:concord_kv, data}, :ok, []}
-    else
-      new_grants = Map.put(role_grants, token, [role | existing])
-      new_data = Map.put(data, :role_grants, new_grants)
-
-      :ets.insert(:concord_role_grants, {token, role})
-
-      {{:concord_kv, new_data}, :ok, []}
-    end
-  end
-
-  def apply_command(_meta, {:rbac_revoke_role, token, role}, {:concord_kv, data}) do
-    role_grants = Map.get(data, :role_grants, %{})
-    existing = Map.get(role_grants, token, [])
-    new_list = List.delete(existing, role)
-
-    new_grants =
-      if new_list == [] do
-        Map.delete(role_grants, token)
-      else
-        Map.put(role_grants, token, new_list)
-      end
-
-    new_data = Map.put(data, :role_grants, new_grants)
-
-    :ets.match_delete(:concord_role_grants, {token, role})
-
-    {{:concord_kv, new_data}, :ok, []}
-  end
-
-  def apply_command(_meta, {:rbac_create_acl, pattern, role, permissions}, {:concord_kv, data}) do
-    acls = Map.get(data, :acls, [])
-    new_acls = [{pattern, role, permissions} | acls]
-    new_data = Map.put(data, :acls, new_acls)
-
-    :ets.insert(:concord_acls, {pattern, role, permissions})
-
-    {{:concord_kv, new_data}, :ok, []}
-  end
-
-  def apply_command(_meta, {:rbac_delete_acl, pattern, role}, {:concord_kv, data}) do
-    acls = Map.get(data, :acls, [])
-    new_acls = Enum.reject(acls, fn {p, r, _perms} -> p == pattern and r == role end)
-    new_data = Map.put(data, :acls, new_acls)
-
-    :ets.match_delete(:concord_acls, {pattern, role, :_})
-
-    {{:concord_kv, new_data}, :ok, []}
-  end
-
-  # ══════════════════════════════════════════════
-  # TENANT COMMANDS
-  # ══════════════════════════════════════════════
-
-  def apply_command(_meta, {:tenant_create, tenant_id, tenant_def}, {:concord_kv, data}) do
-    tenants = Map.get(data, :tenants, %{})
-
-    if Map.has_key?(tenants, tenant_id) do
-      {{:concord_kv, data}, {:error, :tenant_exists}, []}
-    else
-      new_tenants = Map.put(tenants, tenant_id, tenant_def)
-      new_data = Map.put(data, :tenants, new_tenants)
-
-      :ets.insert(:concord_tenants, {tenant_id, tenant_def})
-
-      {{:concord_kv, new_data}, {:ok, tenant_def}, []}
-    end
-  end
-
-  def apply_command(_meta, {:tenant_delete, tenant_id}, {:concord_kv, data}) do
-    tenants = Map.get(data, :tenants, %{})
-
-    if Map.has_key?(tenants, tenant_id) do
-      new_tenants = Map.delete(tenants, tenant_id)
-      new_data = Map.put(data, :tenants, new_tenants)
-
-      :ets.delete(:concord_tenants, tenant_id)
-
-      {{:concord_kv, new_data}, :ok, []}
-    else
-      {{:concord_kv, data}, {:error, :not_found}, []}
-    end
-  end
-
-  def apply_command(
-        _meta,
-        {:tenant_update_quota, tenant_id, quota_type, value},
-        {:concord_kv, data}
-      ) do
-    tenants = Map.get(data, :tenants, %{})
-
-    case Map.get(tenants, tenant_id) do
-      nil ->
-        {{:concord_kv, data}, {:error, :not_found}, []}
-
-      tenant ->
-        updated_quotas = Map.put(tenant.quotas, quota_type, value)
-        updated_tenant = %{tenant | quotas: updated_quotas}
-        new_tenants = Map.put(tenants, tenant_id, updated_tenant)
-        new_data = Map.put(data, :tenants, new_tenants)
-
-        :ets.insert(:concord_tenants, {tenant_id, updated_tenant})
-
-        {{:concord_kv, new_data}, {:ok, updated_tenant}, []}
-    end
-  end
-
-  # ══════════════════════════════════════════════
   # BACKUP RESTORE COMMAND
   # ══════════════════════════════════════════════
 
@@ -744,20 +529,12 @@ defmodule Concord.StateMachine do
       :ets.insert(:concord_store, entry)
     end)
 
-    # Restore all state categories into the Raft state map
+    # Restore index definitions into the Raft state map
     new_data =
       data
-      |> Map.put(:tokens, Map.get(backup_state, :tokens, %{}))
-      |> Map.put(:roles, Map.get(backup_state, :roles, %{}))
-      |> Map.put(:role_grants, Map.get(backup_state, :role_grants, %{}))
-      |> Map.put(:acls, Map.get(backup_state, :acls, []))
-      |> Map.put(:tenants, Map.get(backup_state, :tenants, %{}))
       |> Map.put(:indexes, Map.get(backup_state, :indexes, %{}))
 
-    # Rebuild all ETS tables from the restored state
-    rebuild_auth_ets(new_data)
-    rebuild_rbac_ets(new_data)
-    rebuild_tenant_ets(new_data)
+    # Rebuild index ETS tables from the restored state
     rebuild_all_index_ets(Map.get(new_data, :indexes, %{}))
 
     duration = System.monotonic_time() - start_time
@@ -1102,66 +879,6 @@ defmodule Concord.StateMachine do
       end)
     end)
 
-    # Rebuild auth tokens ETS
-    ensure_ets_table(:concord_tokens)
-    :ets.delete_all_objects(:concord_tokens)
-
-    Enum.each(Map.get(data, :tokens, %{}), fn {token, perms} ->
-      :ets.insert(:concord_tokens, {token, perms})
-    end)
-
-    # Rebuild RBAC ETS tables
-    rebuild_rbac_ets(data)
-
-    # Rebuild tenant ETS
-    ensure_ets_table(:concord_tenants)
-    :ets.delete_all_objects(:concord_tenants)
-
-    Enum.each(Map.get(data, :tenants, %{}), fn {id, tenant} ->
-      :ets.insert(:concord_tenants, {id, tenant})
-    end)
-  end
-
-  defp rebuild_rbac_ets(data) do
-    ensure_ets_table(:concord_roles)
-    ensure_ets_table(:concord_role_grants, [:bag, :public, :named_table])
-    ensure_ets_table(:concord_acls, [:bag, :public, :named_table])
-
-    :ets.delete_all_objects(:concord_roles)
-    :ets.delete_all_objects(:concord_role_grants)
-    :ets.delete_all_objects(:concord_acls)
-
-    Enum.each(Map.get(data, :roles, %{}), fn {role, perms} ->
-      :ets.insert(:concord_roles, {role, perms})
-    end)
-
-    Enum.each(Map.get(data, :role_grants, %{}), fn {token, roles} ->
-      Enum.each(roles, fn role ->
-        :ets.insert(:concord_role_grants, {token, role})
-      end)
-    end)
-
-    Enum.each(Map.get(data, :acls, []), fn {pattern, role, perms} ->
-      :ets.insert(:concord_acls, {pattern, role, perms})
-    end)
-  end
-
-  defp rebuild_auth_ets(data) do
-    ensure_ets_table(:concord_tokens)
-    :ets.delete_all_objects(:concord_tokens)
-
-    Enum.each(Map.get(data, :tokens, %{}), fn {token, perms} ->
-      :ets.insert(:concord_tokens, {token, perms})
-    end)
-  end
-
-  defp rebuild_tenant_ets(data) do
-    ensure_ets_table(:concord_tenants)
-    :ets.delete_all_objects(:concord_tenants)
-
-    Enum.each(Map.get(data, :tenants, %{}), fn {id, tenant} ->
-      :ets.insert(:concord_tenants, {id, tenant})
-    end)
   end
 
   # ══════════════════════════════════════════════

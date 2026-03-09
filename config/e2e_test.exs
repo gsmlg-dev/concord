@@ -3,8 +3,7 @@ import Config
 # E2E test configuration
 config :concord,
   cluster_name: :concord_cluster,
-  data_dir: "./data/e2e_test",
-  auth_enabled: false
+  data_dir: "./data/e2e_test"
 
 # Libcluster configuration - gossip strategy for multi-node testing
 config :libcluster,

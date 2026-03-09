@@ -7,19 +7,19 @@ defmodule Concord do
 
   ## Examples
 
-      iex> Concord.put("user:123", %{name: "Alice"}, token: "secret-token")
+      iex> Concord.put("user:123", %{name: "Alice"})
       :ok
 
-      iex> Concord.get("user:123", token: "secret-token")
+      iex> Concord.get("user:123")
       {:ok, %{name: "Alice"}}
 
-      iex> Concord.delete("user:123", token: "secret-token")
+      iex> Concord.delete("user:123")
       :ok
   """
 
   require Logger
 
-  alias Concord.{Auth, Compression, StateMachine, TTL}
+  alias Concord.{Compression, StateMachine, TTL}
 
   @timeout 5_000
   @cluster_name :concord_cluster
@@ -33,13 +33,11 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:ttl` - Time-to-live in seconds (default: nil for no expiration)
   - `:compress` - Override automatic compression (true/false)
   """
   def put(key, value, opts \\ []) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key),
+    with :ok <- validate_key(key),
          :ok <- validate_ttl_option(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       ttl_option = Keyword.get(opts, :ttl)
@@ -76,15 +74,13 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:consistency` - Read consistency level (default: :leader)
     - `:eventual` - Fastest, may return stale data (reads from any node)
     - `:leader` - Balanced, reads from leader node
     - `:strong` - Linearizable reads with heartbeat verification (slowest)
   """
   def get(key, opts \\ []) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key) do
+    with :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
@@ -128,11 +124,9 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
-  """
+"""
   def delete(key, opts \\ []) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key) do
+    with :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
 
@@ -165,7 +159,6 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:ttl` - Time-to-live in seconds for the new value
   - `:compress` - Override automatic compression (true/false)
 
@@ -185,8 +178,7 @@ defmodule Concord do
       )
   """
   def put_if(key, value, opts) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key),
+    with :ok <- validate_key(key),
          :ok <- validate_ttl_option(opts),
          :ok <- validate_condition_opts(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
@@ -255,8 +247,7 @@ defmodule Concord do
       )
   """
   def delete_if(key, opts) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key),
+    with :ok <- validate_key(key),
          :ok <- validate_condition_opts(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       expected = Keyword.get(opts, :expected)
@@ -300,20 +291,17 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:consistency` - Read consistency level (default: :leader)
   """
   def get_all(opts \\ []) do
-    with :ok <- check_auth(opts) do
-      timeout = Keyword.get(opts, :timeout, @timeout)
-      consistency = Keyword.get(opts, :consistency, default_consistency())
+    timeout = Keyword.get(opts, :timeout, @timeout)
+    consistency = Keyword.get(opts, :consistency, default_consistency())
 
-      case query(:get_all, timeout, consistency) do
-        {:ok, {{_index, _term}, query_result}, _} -> query_result
-        {:timeout, _} -> {:error, :timeout}
-        {:error, :noproc} -> {:error, :cluster_not_ready}
-        {:error, reason} -> {:error, reason}
-      end
+    case query(:get_all, timeout, consistency) do
+      {:ok, {{_index, _term}, query_result}, _} -> query_result
+      {:timeout, _} -> {:error, :timeout}
+      {:error, :noproc} -> {:error, :cluster_not_ready}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -367,7 +355,7 @@ defmodule Concord do
   - `:token` - Authentication token (required if auth is enabled)
 
   ## Examples
-      iex> Concord.put_with_ttl("cache:user:123", %{data: "value"}, 3600, token: "token")
+      iex> Concord.put_with_ttl("cache:user:123", %{data: "value"}, 3600)
       :ok
   """
   def put_with_ttl(key, value, ttl_seconds, opts \\ [])
@@ -383,13 +371,12 @@ defmodule Concord do
   - `:token` - Authentication token (required if auth is enabled)
 
   ## Examples
-      iex> Concord.touch("cache:user:123", 1800, token: "token")
+      iex> Concord.touch("cache:user:123", 1800)
       :ok
   """
   def touch(key, additional_ttl_seconds, opts \\ [])
       when is_integer(additional_ttl_seconds) and additional_ttl_seconds > 0 do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key) do
+    with :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
 
@@ -422,16 +409,14 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
-      iex> Concord.ttl("cache:user:123", token: "token")
+      iex> Concord.ttl("cache:user:123")
       {:ok, 1800}
   """
   def ttl(key, opts \\ []) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key) do
+    with :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
@@ -468,16 +453,14 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
-      iex> Concord.get_with_ttl("cache:user:123", token: "token")
+      iex> Concord.get_with_ttl("cache:user:123")
       {:ok, {%{data: "value"}, 1800}}
   """
   def get_with_ttl(key, opts \\ []) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_key(key) do
+    with :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
@@ -515,7 +498,6 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
@@ -523,16 +505,14 @@ defmodule Concord do
       {:ok, %{"key1" => %{value: "val1", ttl: 3600}, "key2" => %{value: "val2", ttl: nil}}}
   """
   def get_all_with_ttl(opts \\ []) do
-    with :ok <- check_auth(opts) do
-      timeout = Keyword.get(opts, :timeout, @timeout)
-      consistency = Keyword.get(opts, :consistency, default_consistency())
+    timeout = Keyword.get(opts, :timeout, @timeout)
+    consistency = Keyword.get(opts, :consistency, default_consistency())
 
-      case query(:get_all_with_ttl, timeout, consistency) do
-        {:ok, {{_index, _term}, query_result}, _} -> query_result
-        {:timeout, _} -> {:error, :timeout}
-        {:error, :noproc} -> {:error, :cluster_not_ready}
-        {:error, reason} -> {:error, reason}
-      end
+    case query(:get_all_with_ttl, timeout, consistency) do
+      {:ok, {{_index, _term}, query_result}, _} -> query_result
+      {:timeout, _} -> {:error, :timeout}
+      {:error, :noproc} -> {:error, :cluster_not_ready}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -546,12 +526,11 @@ defmodule Concord do
   - `:token` - Authentication token (required if auth is enabled)
 
   ## Examples
-      iex> Concord.put_many([{"key1", "value1"}, {"key2", "value2"}], token: "token")
+      iex> Concord.put_many([{"key1", "value1"}, {"key2", "value2"}])
       {:ok, %{"key1" => :ok, "key2" => :ok}}
   """
   def put_many(operations, opts \\ []) when is_list(operations) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_batch_size(operations),
+    with :ok <- validate_batch_size(operations),
          :ok <- validate_put_operations(operations) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
@@ -586,7 +565,7 @@ defmodule Concord do
   - `:token` - Authentication token (required if auth is enabled)
 
   ## Examples
-      iex> Concord.put_many_with_ttl([{"key1", "value1"}, {"key2", "value2"}], 3600, token: "token")
+      iex> Concord.put_many_with_ttl([{"key1", "value1"}, {"key2", "value2"}], 3600)
       {:ok, %{"key1" => :ok, "key2" => :ok}}
   """
   def put_many_with_ttl(operations, ttl_seconds, opts \\ [])
@@ -605,16 +584,14 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:token` - Authentication token (required if auth is enabled)
   - `:consistency` - Read consistency level (default: :leader)
 
   ## Examples
-      iex> Concord.get_many(["key1", "key2"], token: "token")
+      iex> Concord.get_many(["key1", "key2"])
       {:ok, %{"key1" => {:ok, "value1"}, "key2" => {:error, :not_found}}}
   """
   def get_many(keys, opts \\ []) when is_list(keys) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_batch_size(keys),
+    with :ok <- validate_batch_size(keys),
          :ok <- validate_keys(keys) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
@@ -658,12 +635,11 @@ defmodule Concord do
   - `:token` - Authentication token (required if auth is enabled)
 
   ## Examples
-      iex> Concord.delete_many(["key1", "key2"], token: "token")
+      iex> Concord.delete_many(["key1", "key2"])
       {:ok, %{"key1" => :ok, "key2" => :ok}}
   """
   def delete_many(keys, opts \\ []) when is_list(keys) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_batch_size(keys),
+    with :ok <- validate_batch_size(keys),
          :ok <- validate_keys(keys) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
@@ -692,12 +668,11 @@ defmodule Concord do
   - `:token` - Authentication token (required if auth is enabled)
 
   ## Examples
-      iex> Concord.touch_many([{"key1", 1800}, {"key2", 3600}], token: "token")
+      iex> Concord.touch_many([{"key1", 1800}, {"key2", 3600}])
       {:ok, %{"key1" => :ok, "key2" => :ok}}
   """
   def touch_many(operations, opts \\ []) when is_list(operations) do
-    with :ok <- check_auth(opts),
-         :ok <- validate_batch_size(operations),
+    with :ok <- validate_batch_size(operations),
          :ok <- validate_touch_operations(operations) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
@@ -775,7 +750,7 @@ defmodule Concord do
   # Evaluate a condition function pre-consensus, then issue a CAS command.
   # Keeps anonymous functions out of the Raft log.
   defp evaluate_condition_then_cas(key, build_cmd, condition_fn, opts, timeout) do
-    case get(key, Keyword.take(opts, [:token, :timeout, :consistency])) do
+    case get(key, Keyword.take(opts, [:timeout, :consistency])) do
       {:ok, current_value} ->
         if condition_fn.(current_value) do
           unwrap_command_result(build_cmd.(current_value), timeout)
@@ -885,15 +860,6 @@ defmodule Concord do
       true -> Compression.compress(value, force: true)
       false -> value
       nil -> Compression.compress(value)
-    end
-  end
-
-  defp check_auth(opts) do
-    if Application.get_env(:concord, :auth_enabled, false) do
-      token = Keyword.get(opts, :token)
-      Auth.verify_token(token)
-    else
-      :ok
     end
   end
 

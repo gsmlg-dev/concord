@@ -16,7 +16,7 @@ defmodule Concord.Web.APIController do
     with {:ok, key} <- validate_key(key),
          {:ok, body} <- read_and_parse_body(conn),
          {:ok, params} <- validate_put_params(body) do
-      case Concord.put(key, params.value, token_opts(conn)) do
+      case Concord.put(key, params.value, []) do
         :ok ->
           send_success_response(conn, 200, %{"status" => "ok"})
 
@@ -37,9 +37,9 @@ defmodule Concord.Web.APIController do
 
         result =
           if with_ttl do
-            Concord.get_with_ttl(key, token_opts(conn))
+            Concord.get_with_ttl(key, [])
           else
-            Concord.get(key, token_opts(conn))
+            Concord.get(key, [])
           end
 
         case result do
@@ -71,7 +71,7 @@ defmodule Concord.Web.APIController do
   def delete(conn, key) do
     case validate_key(key) do
       {:ok, key} ->
-        case Concord.delete(key, token_opts(conn)) do
+        case Concord.delete(key, []) do
           :ok ->
             send_success_response(conn, 200, %{"status" => "ok"})
 
@@ -91,7 +91,7 @@ defmodule Concord.Web.APIController do
     with {:ok, key} <- validate_key(key),
          {:ok, body} <- read_and_parse_body(conn),
          {:ok, ttl} <- validate_ttl_param(body) do
-      case Concord.touch(key, ttl, token_opts(conn)) do
+      case Concord.touch(key, ttl, []) do
         :ok ->
           send_success_response(conn, 200, %{"status" => "ok"})
 
@@ -108,7 +108,7 @@ defmodule Concord.Web.APIController do
   def ttl(conn, key) do
     case validate_key(key) do
       {:ok, key} ->
-        case Concord.ttl(key, token_opts(conn)) do
+        case Concord.ttl(key, []) do
           {:ok, ttl} ->
             send_success_response(conn, 200, %{
               "status" => "ok",
@@ -142,7 +142,7 @@ defmodule Concord.Web.APIController do
           end
         end)
 
-      case Concord.put_many(transformed_ops, token_opts(conn)) do
+      case Concord.put_many(transformed_ops, []) do
         {:ok, results} ->
           send_success_response(conn, 200, %{
             "status" => "ok",
@@ -169,7 +169,7 @@ defmodule Concord.Web.APIController do
           # When TTL is requested, fetch each key individually with TTL
           results =
             Enum.map(keys, fn key ->
-              case Concord.get_with_ttl(key, token_opts(conn)) do
+              case Concord.get_with_ttl(key, []) do
                 {:ok, {value, ttl}} -> {key, {:ok, {value, ttl}}}
                 {:error, reason} -> {key, {:error, reason}}
               end
@@ -178,7 +178,7 @@ defmodule Concord.Web.APIController do
 
           {:ok, results}
         else
-          Concord.get_many(keys, token_opts(conn))
+          Concord.get_many(keys, [])
         end
 
       case result do
@@ -204,7 +204,7 @@ defmodule Concord.Web.APIController do
   def delete_bulk(conn) do
     with {:ok, body} <- read_and_parse_body(conn),
          {:ok, keys} <- validate_bulk_keys(body) do
-      case Concord.delete_many(keys, token_opts(conn)) do
+      case Concord.delete_many(keys, []) do
         {:ok, results} ->
           # Transform map results to list format expected by API
           api_results = transform_bulk_delete_results(results)
@@ -233,7 +233,7 @@ defmodule Concord.Web.APIController do
           {key, ttl}
         end)
 
-      case Concord.touch_many(transformed_ops, token_opts(conn)) do
+      case Concord.touch_many(transformed_ops, []) do
         {:ok, results} ->
           send_success_response(conn, 200, %{
             "status" => "ok",
@@ -258,9 +258,9 @@ defmodule Concord.Web.APIController do
 
     result =
       if with_ttl do
-        Concord.get_all_with_ttl(token_opts(conn))
+        Concord.get_all_with_ttl([])
       else
-        Concord.get_all(token_opts(conn))
+        Concord.get_all([])
       end
 
     case result do
@@ -526,13 +526,6 @@ defmodule Concord.Web.APIController do
     end
   end
 
-  defp token_opts(conn) do
-    case conn.assigns[:auth_token] do
-      nil -> []
-      token -> [token: token]
-    end
-  end
-
   defp send_success_response(conn, status, data) do
     conn
     |> put_resp_content_type("application/json")
@@ -561,7 +554,6 @@ defmodule Concord.Web.APIController do
         :timeout -> "TIMEOUT"
         :cluster_not_ready -> "CLUSTER_UNAVAILABLE"
         :batch_too_large -> "BATCH_TOO_LARGE"
-        :unauthorized -> "UNAUTHORIZED"
         _ -> "OPERATION_FAILED"
       end
 
@@ -570,7 +562,6 @@ defmodule Concord.Web.APIController do
       case reason do
         :not_found -> 404
         :timeout -> 408
-        :unauthorized -> 401
         :cluster_not_ready -> 503
         _ -> 400
       end,

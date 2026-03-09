@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Concord is a distributed, strongly-consistent **embedded** key-value store built in Elixir using the Raft consensus algorithm (Ra library). CP system — think SQLite for distributed coordination. Starts with your application, no separate infrastructure.
+Concord is an **embedded key-value database** for Elixir with Raft consensus (Ra library). Think SQLite or CubDB, but with distributed replication.
+
+- **Library, not a service** — no HTTP API, no auth, no RBAC, no multi-tenancy
+- **In-memory with periodic flush** — ETS for reads, Ra log flushed to disk every ~1s (configurable in ms). Data since last flush can be lost on crash. This is by design.
+- **Restore from source** — Concord stores data that doesn't change frequently. After a crash, data is restored from an authoritative external source (database, config, API). Crash durability of every write is explicitly not a goal.
+- **CP system** — consistency over availability during partitions
 
 ## Development Commands
 
@@ -22,48 +27,41 @@ mix dialyzer                   # Type checking (first run is slow — builds PLT
 mix test.e2e                   # All e2e tests
 mix test.e2e.distributed       # Distributed subset only
 MIX_ENV=e2e_test mix test e2e_test/distributed/leader_election_test.exs  # Specific
-
-mix start                      # HTTP API server (dev)
 ```
 
 ## Architecture
 
-### State Machine (V3) — The Core
+### State Machine — The Core
 
-`Concord.StateMachine` implements `:ra_machine`. This is the most critical file in the project.
+`Concord.StateMachine` implements `:ra_machine`. Most critical file.
 
 **State shape:**
 ```elixir
 {:concord_kv, %{
   indexes: %{name => extractor_spec},
-  tokens: %{token => permissions},
-  roles: %{role => permissions},
-  role_grants: %{token => [roles]},
-  acls: [{pattern, role, permissions}],
-  tenants: %{tenant_id => tenant_definition},
   command_count: non_neg_integer()
 }}
 ```
 
-**Correctness invariants — do NOT violate these:**
+**Correctness invariants — do NOT violate:**
 
-1. **Deterministic replay**: `apply/3` is a pure function of `(meta, command, state)`. Time comes from `meta.system_time` (leader-assigned milliseconds), never `System.system_time`. The helper `meta_time(meta)` converts to seconds.
+1. **Deterministic replay**: `apply/3` is a pure function of `(meta, command, state)`. Time from `meta.system_time` (leader-assigned ms), never `System.system_time`. Helper: `meta_time(meta)`.
 
-2. **No anonymous functions in Raft state/log**: Index extractors use declarative specs (`Concord.Index.Extractor`) — tuples like `{:map_get, :email}`, `{:nested, [:address, :city]}`, `{:identity}`, `{:element, n}`. Anonymous functions cause `:badfun` on deserialization across code versions.
+2. **No anonymous functions in Raft state/log**: Index extractors use declarative specs — `{:map_get, :email}`, `{:nested, [:a, :b]}`, `{:identity}`, `{:element, n}`. Closures cause `:badfun` on deserialization.
 
-3. **All mutations through Raft**: Auth tokens, RBAC roles/grants/ACLs, tenant definitions, and backup restores all route through `:ra.process_command` as state machine commands. Direct ETS writes are only acceptable as fallbacks when the cluster isn't ready yet (`:noproc`).
+3. **All mutations through Raft**: `:ra.process_command` for every state change. Direct ETS writes only as fallback when cluster isn't ready (`:noproc`).
 
-4. **ETS tables are materialized views**: Rebuilt from authoritative Raft state on `snapshot_installed/4`. Never the source of truth.
+4. **ETS = materialized views**: Rebuilt from Raft state on `snapshot_installed/4`. Never source of truth.
 
-5. **Snapshots via `release_cursor` effect**: Ra does NOT have a `snapshot/1` callback. Snapshots are emitted every 1000 commands as `{:release_cursor, index, state}` effects. The state passed includes ETS data captured by `build_release_cursor_state/1`.
+5. **Snapshots via `release_cursor`**: Ra has no `snapshot/1` callback. Emit `{:release_cursor, index, state}` every N commands.
 
-6. **Pre-consensus evaluation**: `put_if`/`delete_if` evaluate condition functions at the API layer, then convert to CAS commands with `expected: current_value` before entering the Raft log.
+6. **Pre-consensus evaluation**: `put_if`/`delete_if` evaluate conditions at API layer, convert to CAS commands with `expected: current_value` before Raft log.
 
 ### Data Flow
 
-**Writes**: `Concord.put/3` → Auth → `:ra.process_command({:concord_cluster, node()}, cmd, timeout)` → Leader replicates → `StateMachine.apply_command/3` → ETS insert + index update + telemetry
+**Writes**: `Concord.put/3` → Validation → `:ra.process_command({:concord_cluster, node()}, cmd, timeout)` → Leader replicates → `StateMachine.apply_command/3` → ETS insert + index update + telemetry
 
-**Reads**: `Concord.get/2` → Auth → `:ra.consistent_query` or `:ra.local_query` → `StateMachine.query/2` → ETS lookup → decompress → return
+**Reads**: `Concord.get/2` → `:ra.consistent_query` or `:ra.local_query` → `StateMachine.query/2` → ETS lookup → decompress → return
 
 **Key detail**: Ra wraps query results as `{:ok, {:ok, result}, leader_info}`. Always unwrap the nested tuple. Server ID format is `{:concord_cluster, node()}`.
 
@@ -71,21 +69,33 @@ mix start                      # HTTP API server (dev)
 
 | Module | Role |
 |--------|------|
-| `Concord` | Public API — all client-facing functions |
+| `Concord` | Public API — put, get, delete, get_all, CAS, bulk ops |
 | `Concord.StateMachine` | Ra state machine — commands, queries, snapshots |
-| `Concord.Application` | Supervisor tree — Ra cluster, HTTP, telemetry |
-| `Concord.Auth` | Token auth — mutations via Raft commands |
-| `Concord.RBAC` | Roles, grants, ACLs — mutations via Raft commands |
-| `Concord.MultiTenancy` | Tenant definitions via Raft; usage counters node-local |
+| `Concord.Application` | Supervisor tree — Ra cluster, telemetry poller |
 | `Concord.Index` | Secondary indexes using `Index.Extractor` specs |
 | `Concord.Index.Extractor` | Declarative extractor specs (no closures) |
-| `Concord.Backup` | Backup/restore — restore submits `{:restore_backup, entries}` via Raft |
+| `Concord.Backup` | Backup/restore — restore via `{:restore_backup, entries}` Raft command |
 | `Concord.TTL` | Key expiration — GenServer for periodic cleanup |
-| `Concord.Web` | HTTP/HTTPS API (Plug + Bandit) |
+| `Concord.Query` | Key filtering, range queries, value predicates |
+| `Concord.Compression` | Transparent value compression for large values |
+| `Concord.Telemetry` | Telemetry event definitions and helpers |
+
+### Modules to Remove
+
+These exist in the codebase but are out of scope for an embedded database:
+
+- `Concord.Auth` — token authentication → host app concern
+- `Concord.RBAC` — role-based access control → host app concern
+- `Concord.MultiTenancy` — tenant isolation → host app concern
+- `Concord.AuditLog` — compliance logging → host app concern
+- `Concord.Web` — HTTP API → separate wrapper library
+- `Concord.Tracing` — OpenTelemetry → host app via telemetry hooks
+- `Concord.Prometheus` — metrics export → host app via telemetry hooks
+- `Concord.EventStream` — CDC streaming → host app via telemetry hooks
 
 ### Adding a New Feature
 
-1. **API layer** (`lib/concord.ex` or `lib/concord/feature.ex`): Validate inputs, call `:ra.process_command` for writes or `:ra.consistent_query` for reads. Handle nested Ra result tuples.
+1. **API layer** (`lib/concord.ex`): Validate inputs, call `:ra.process_command` for writes or `:ra.consistent_query` for reads. Handle nested Ra result tuples.
 
 2. **State machine command** (`lib/concord/state_machine.ex`): Add `apply_command/3` clause. Return `{{:concord_kv, new_state}, result, effects}`. Use `meta_time(meta)` for timestamps. Emit telemetry.
 
@@ -95,17 +105,16 @@ mix start                      # HTTP API server (dev)
 
 ## Testing Notes
 
-- All tests use `async: false` — Ra cluster is shared state
-- `--no-start` alias prevents auto-starting the application; tests call `start_test_cluster()` explicitly
-- E2E tests use `MIX_ENV=e2e_test` with separate config (`config/e2e_test.exs`)
-- When testing state machine directly, `apply/3` increments `command_count` on every call — don't assert exact state equality, pattern-match on the fields you care about
+- All tests `async: false` — Ra cluster is shared state
+- `--no-start` alias prevents auto-starting; tests call `start_test_cluster()` explicitly
+- E2E tests use `MIX_ENV=e2e_test` with separate config
+- State machine `apply/3` increments `command_count` on every call — pattern-match fields you care about, don't assert exact state equality
 
 ## Configuration
 
-- `config/runtime.exs` — Data directory: prod uses `CONCORD_DATA_DIR` env var (default `/var/lib/concord/data/`), dev/test use `/tmp`
+- `config/runtime.exs` — Data dir: prod uses `CONCORD_DATA_DIR` env var, dev/test use `/tmp`
 - `default_read_consistency`: `:eventual`, `:leader` (default), `:strong`
-- Auth disabled in dev, enabled in prod
-- HTTP API, Prometheus, and OpenTelemetry tracing are opt-in
+- `flush_interval_ms`: Ra log flush interval (default: 1000)
 
 ## Commit Conventions
 
@@ -119,12 +128,14 @@ See `docs/` for architectural documents:
 - `docs/ArchitecturalAudit.md` — Audit of correctness issues and their fixes
 - `docs/CorrectRaftStateMachinePattern.md` — V3 migration design and rationale
 - `docs/DESIGN.md` — Original design blueprint
-- `docs/API_DESIGN.md` — HTTP API design
-- `docs/API_USAGE_EXAMPLES.md` — HTTP API usage examples
+
+## Dependencies (target after cleanup)
+
+- `ra` — Raft consensus
+- `libcluster` — node discovery
+- `telemetry` + `telemetry_poller` — event emission (no export deps)
+- `jason` — JSON encoding for values
 
 ## Active Technologies
-- Elixir 1.18 / OTP 28 + Ra 2.17.1 (Raft), libcluster 3.5.0, Bandit 1.8.0, Plug 1.18.1 (001-fix-review-issues)
-- ETS (in-memory) with Ra snapshots for persistence (001-fix-review-issues)
-
-## Recent Changes
-- 001-fix-review-issues: Added Elixir 1.18 / OTP 28 + Ra 2.17.1 (Raft), libcluster 3.5.0, Bandit 1.8.0, Plug 1.18.1
+- Elixir 1.18 / OTP 28 + Ra 2.17.1 (Raft), libcluster 3.5.0
+- ETS (in-memory) with Ra snapshots for persistence

@@ -2,18 +2,15 @@ defmodule Concord.Application do
   @moduledoc """
   Application supervisor for Concord distributed key-value store.
   Starts and manages all the necessary processes including clustering,
-  telemetry, authentication, HTTP API, and the Raft consensus algorithm.
+  telemetry, HTTP API, and the Raft consensus algorithm.
   """
   use Application
   require Logger
 
   alias Concord.{
     AuditLog,
-    Auth,
     EventStream,
-    MultiTenancy,
     Prometheus,
-    RBAC,
     StateMachine,
     Telemetry,
     TTL,
@@ -24,12 +21,6 @@ defmodule Concord.Application do
 
   @impl true
   def start(_type, _args) do
-    # Initialize RBAC tables
-    RBAC.init_tables()
-
-    # Initialize multi-tenancy tables
-    MultiTenancy.init_tables()
-
     # Attach telemetry handlers
     Telemetry.setup()
 
@@ -54,12 +45,8 @@ defmodule Concord.Application do
       {Telemetry.Poller, []},
       # Start libcluster for automatic node discovery
       {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
-      # Start auth token manager
-      Auth.TokenStore,
       # Start TTL manager for periodic cleanup
       {TTL, []},
-      # Start multi-tenancy rate limiter
-      MultiTenancy.RateLimiter,
       # Start the Concord cluster after a brief delay
       {Task, fn -> init_cluster() end}
     ]

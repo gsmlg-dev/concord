@@ -10,9 +10,7 @@ defmodule Concord.Web.AuthenticatedRouter do
   require Logger
 
   alias Concord.Web.APIController
-  alias Concord.Web.AuthPlug
 
-  plug(AuthPlug)
   plug(:match)
   plug(:dispatch)
 

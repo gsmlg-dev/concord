@@ -3,245 +3,273 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 1.1.0
-Modified principles: None renamed
-Added sections:
-  - Principle VIII: Deterministic State Machine (6 correctness invariants)
-Removed sections: None
-Templates requiring updates:
-  - .specify/templates/plan-template.md ✅ (Constitution Check section is
-    dynamic — new principle auto-included)
-  - .specify/templates/spec-template.md ✅ (Requirements section compatible)
-  - .specify/templates/tasks-template.md ✅ (Phase structure compatible)
-Follow-up TODOs: None
+Version change: 1.1.0 → 2.0.0
+Rewrite rationale: Concord's identity was unclear — the constitution
+described a distributed coordination *service* with auth, RBAC,
+multi-tenancy, audit logging, compliance (PCI-DSS, HIPAA, GDPR),
+HTTP API, OpenTelemetry, Prometheus, event streaming, etc.
+
+Concord is none of that. Concord is an **embedded database** — a
+library dependency like SQLite, CubDB, or Mnesia. The host application
+owns every concern above the storage API.
+
+This rewrite strips the constitution to match that identity.
+
+Removed:
+  - Principle V (old): Secure Defaults (auth, RBAC, TLS, audit)
+  - Principle IV (old): Observability as Infrastructure (demoted —
+    telemetry events are emitted but no observability stack ships)
+  - All references to auth/RBAC/multi-tenancy/audit in invariants
+  - HTTP API as a core concern
+  - Prometheus, OpenTelemetry, event streaming as principles
+  - Compliance references (PCI-DSS, HIPAA, GDPR, SOC 2)
+
+Added:
+  - Principle IV: Explicit Durability Model
+  - Principle V: Minimal Surface Area (what Concord is NOT)
+  - Scope Exclusions table
+
+Follow-up TODOs (code removal):
+  - Delete: lib/concord/auth.ex, lib/concord/rbac.ex,
+    lib/concord/multi_tenancy/, lib/concord/audit_log/,
+    lib/concord/tracing/, lib/concord/tracing.ex,
+    lib/concord/prometheus.ex, lib/concord/event_stream/,
+    lib/concord/event_stream.ex, lib/concord/web/
+  - Strip from StateMachine state: tokens, roles, role_grants, acls,
+    tenants — and all apply_command clauses that handle them
+  - Remove deps: plug, bandit, plug_crypto, opentelemetry_*,
+    telemetry_metrics_prometheus, gen_stage, httpoison
+  - Keep deps: ra, libcluster, telemetry, telemetry_poller, jason
+  - Remove config: auth_enabled, http, tls, prometheus_*, tracing_*,
+    audit_log, event_stream, opentelemetry sections
+  - Rewrite README.md from scratch
+  - Update mix.exs package description
+  - Delete: openapi.json, priv/openapi.json, grafana-dashboard.json,
+    demo_api.sh, docs/API_DESIGN.md, docs/API_USAGE_EXAMPLES.md,
+    docs/deployment.md, docs/observability.md
+  - Update: CLAUDE.md, skills/concord-database/SKILL.md
 -->
 
 ## Core Principles
 
-### I. Consistency First
+### I. Embedded Database, Not a Service
 
-All write operations MUST go through Raft consensus to ensure strong
-consistency across the cluster. The system is designed as a CP
-(Consistent + Partition-tolerant) system where:
+Concord is a **library dependency** — like SQLite, CubDB, or Mnesia.
+It starts inside your application's supervision tree. There is no
+separate process to operate, no HTTP API to expose, no auth layer to
+configure.
+
+- Add `{:concord, "~> 0.x"}` to `mix.exs`, call `Concord.put/get/delete`
+- Application lifecycle controls Concord lifecycle
+- Configuration via standard Elixir config files
+- Zero operational overhead for single-node use
+
+**Rationale**: The simpler Concord is, the more useful it is. Every
+feature that doesn't serve "embedded KV store with Raft" is a
+liability — more code to maintain, more surface area to break, more
+concepts for users to learn.
+
+### II. Consistency via Raft
+
+All write operations go through Raft consensus (Ra library). Concord
+is a CP system:
 
 - Writes require quorum acknowledgment before returning success
-- Reads default to leader consistency but support configurable
-  consistency levels (`:eventual`, `:leader`, `:strong`)
-- No operation may sacrifice consistency for availability during
-  network partitions
+- Reads support configurable consistency: `:eventual`, `:leader`
+  (default), `:strong`
+- During network partitions, the minority partition becomes
+  unavailable rather than serving stale data
 
-**Rationale**: As a distributed coordination system, incorrect data is
-worse than unavailable data. Applications relying on Concord for
-configuration, feature flags, or coordination require absolute
-certainty about data accuracy.
-
-### II. Embedded by Design
-
-Concord MUST function as an embedded library that starts with the host
-application. This means:
-
-- No separate infrastructure or external processes required
-- Application lifecycle controls Concord lifecycle
-- Configuration follows Elixir conventions (config files, environment
-  variables)
-- Zero operational overhead for single-node development
-
-**Rationale**: Lowering the barrier to entry enables adoption.
-Developers should be able to add distributed coordination to their
-apps as easily as adding any other dependency.
+**Rationale**: Concord stores data that multiple nodes must agree on —
+configuration, feature flags, coordination state. Incorrect data is
+worse than unavailable data.
 
 ### III. Performance Without Compromise
 
-The system MUST maintain microsecond-level performance for reads and
-low-millisecond performance for writes:
+- Read operations: target <10μs (ETS lookups)
+- Write operations: target <20ms (quorum commits)
+- Throughput: 600K+ ops/sec for reads under load
+- No blocking operations on the hot path
 
-- Read operations: target <10us for ETS lookups
-- Write operations: target <20ms for quorum commits
-- Throughput: maintain 600K+ ops/sec under load
-- All performance-critical paths MUST avoid blocking operations
+**Rationale**: An embedded store that introduces latency becomes a
+bottleneck in the host application.
 
-**Rationale**: A coordination layer that introduces latency becomes a
-bottleneck. Performance MUST be a feature, not an afterthought.
+### IV. Explicit Durability Model
 
-### IV. Observability as Infrastructure
+Concord is an **in-memory store with periodic disk flush**. Data
+persistence works as follows:
 
-Every operation MUST emit telemetry events. Observability is not
-optional:
+- ETS is the live data store (fast reads/writes)
+- Ra writes the Raft log to disk; the flush interval is configurable
+  (default: 1 second, configurable in milliseconds)
+- **Data written since the last flush can be lost on crash** — this
+  is by design, not a bug
+- Concord is intended for data that doesn't change frequently and
+  can be restored from an authoritative external source (database,
+  config files, API) after a crash
+- Snapshots compact the Raft log periodically (every N commands)
 
-- All API operations emit `[:concord, :api, :*]` events
-- All internal operations emit `[:concord, :operation, :*]` events
-- State changes emit `[:concord, :state, :*]` events
-- OpenTelemetry tracing MUST be available for distributed debugging
-- Prometheus metrics MUST be exportable
+Users MUST understand this trade-off: Concord optimises for read
+performance and consistency across nodes, not for crash durability of
+every single write. If you need every write to survive a crash, use
+PostgreSQL.
 
-**Rationale**: Distributed systems are inherently harder to debug.
-Without comprehensive observability, production issues become
-impossible to diagnose.
+**Rationale**: The data Concord stores (feature flags, config,
+coordination state) is derived from a more durable source. Forcing
+`fsync` on every write would destroy the performance advantage of an
+embedded in-memory store. The configurable flush interval lets users
+tune the acceptable data loss window.
 
-### V. Secure Defaults
+### V. Minimal Surface Area
 
-Security MUST be enabled by default in production environments:
+Concord provides: `put`, `get`, `delete`, `get_all`, TTL, secondary
+indexes, bulk operations, conditional updates (CAS), backup/restore,
+and configurable read consistency.
 
-- Authentication required for all operations when `auth_enabled: true`
-- Token-based authentication with cryptographically secure token
-  generation
-- RBAC (Role-Based Access Control) for fine-grained permissions
-- TLS support for transport security
-- Audit logging for compliance requirements
+Concord does NOT provide and MUST NOT grow to include:
 
-**Rationale**: Security vulnerabilities in coordination systems can
-compromise entire application fleets. Secure-by-default prevents
-accidental exposure.
+- Authentication or authorization
+- Role-based access control (RBAC) or ACLs
+- Multi-tenancy or namespace isolation
+- HTTP/REST/GraphQL API
+- Audit logging or compliance features
+- Prometheus metrics export or OpenTelemetry tracing
+- Event streaming or change data capture
+- Encryption at rest
+
+These belong in the host application or in separate libraries that
+wrap Concord.
+
+**Rationale**: Every feature outside the core KV+Raft contract adds
+maintenance burden, couples application policy to the storage engine,
+and forces every consumer to pay for complexity they may not need.
+Concord should be the smallest useful thing.
 
 ### VI. Test-Driven Quality
 
-All features MUST have corresponding tests before merge:
-
 - Unit tests for isolated component behavior
-- E2E tests for distributed scenarios (leader election, network
-  partitions, node failures)
-- Tests run with `async: false` to avoid Ra cluster conflicts
+- E2E tests for distributed scenarios (leader election, partitions,
+  node failures)
+- Tests run with `async: false` (Ra cluster is shared state)
 - State machine changes require cluster restart verification
 
 **Rationale**: Distributed systems have subtle failure modes.
-Comprehensive testing is the only way to maintain confidence in
-correctness.
+Comprehensive testing is the only way to maintain correctness.
 
 ### VII. API Stability
 
-Public API changes MUST follow semantic versioning:
+Public API changes follow semantic versioning:
 
 - MAJOR: Breaking changes to `Concord.*` public functions
 - MINOR: New features, new optional parameters
 - PATCH: Bug fixes, performance improvements
-- State machine version changes MUST be backward compatible or include
-  migration paths
+- State machine version changes MUST be backward compatible or
+  include migration paths
 
-**Rationale**: Applications depend on Concord for critical
-coordination. Breaking changes without warning erode trust.
+**Rationale**: Applications depend on Concord for coordination.
+Breaking changes without warning erode trust.
 
 ### VIII. Deterministic State Machine
 
 The Ra state machine (`Concord.StateMachine`) MUST remain
-deterministic and serialization-safe at all times. These six invariants
-are non-negotiable:
+deterministic and serialization-safe. These invariants are
+non-negotiable:
 
-1. **Deterministic replay**: `apply/3` MUST be a pure function of
-   `(meta, command, state)`. Time MUST come from `meta.system_time`
-   (leader-assigned milliseconds), NEVER from `System.system_time` or
-   any other wall-clock source. Use `meta_time(meta)` to convert to
-   seconds.
+1. **Deterministic replay**: `apply/3` is a pure function of
+   `(meta, command, state)`. Time comes from `meta.system_time`
+   (leader-assigned ms), NEVER `System.system_time`. Helper:
+   `meta_time(meta)`.
 
-2. **No anonymous functions in Raft state or log**: Index extractors,
-   conditions, and any data entering the Raft log MUST use declarative
-   specs (tuples like `{:map_get, :email}`, `{:nested, [:a, :b]}`,
-   `{:identity}`, `{:element, n}`). Closures cause `:badfun` on
-   deserialization across code versions or nodes.
+2. **No anonymous functions in Raft state/log**: Use declarative
+   extractor specs — tuples like `{:map_get, :email}`,
+   `{:nested, [:a, :b]}`, `{:identity}`, `{:element, n}`. Closures
+   cause `:badfun` on deserialization.
 
-3. **All mutations through Raft**: Auth tokens, RBAC roles/grants/ACLs,
-   tenant definitions, backup restores, and any other state change MUST
-   route through `:ra.process_command`. Direct ETS writes are ONLY
-   acceptable as fallback when the cluster is not yet ready (`:noproc`).
+3. **All mutations through Raft**: Every state change routes through
+   `:ra.process_command`. Direct ETS writes are ONLY acceptable as
+   fallback when the cluster isn't ready (`:noproc`).
 
-4. **ETS tables are materialized views**: ETS is rebuilt from
-   authoritative Raft state on `snapshot_installed/4`. ETS MUST NEVER
-   be treated as the source of truth.
+4. **ETS = materialized views**: Rebuilt from Raft state on
+   `snapshot_installed/4`. Never the source of truth.
 
-5. **Snapshots via `release_cursor` effect**: Ra does NOT have a
-   `snapshot/1` callback. Snapshots MUST be emitted every 1000 commands
-   as `{:release_cursor, index, state}` effects. The state MUST include
-   ETS data captured by `build_release_cursor_state/1`.
+5. **Snapshots via `release_cursor`**: Ra has no `snapshot/1`
+   callback. Emit `{:release_cursor, index, state}` every N commands.
 
-6. **Pre-consensus evaluation**: `put_if`/`delete_if` MUST evaluate
-   condition functions at the API layer, then convert to CAS commands
-   with `expected: current_value` before entering the Raft log. This
-   keeps the log deterministic.
+6. **Pre-consensus evaluation**: `put_if`/`delete_if` evaluate
+   conditions at the API layer, convert to CAS commands with
+   `expected: current_value` before entering the Raft log.
 
-**Rationale**: Violating any of these invariants causes state
-divergence between Raft replicas, data corruption on log replay, or
-deserialization failures across nodes. These are the most critical
-rules in the entire codebase.
+**Rationale**: Violating any invariant causes state divergence, data
+corruption on replay, or deserialization failures across nodes.
 
 ## Architectural Constraints
 
 ### Technology Stack
 
 - **Language**: Elixir 1.14+
-- **Consensus**: Ra (Raft implementation)
-- **Discovery**: libcluster with gossip protocol
-- **Storage**: ETS (in-memory) with Ra snapshots
-- **HTTP**: Plug + Bandit
-- **Serialization**: Jason (JSON)
+- **Consensus**: Ra (Raft)
+- **Discovery**: libcluster (gossip)
+- **Storage**: ETS (in-memory) + Ra log/snapshots on disk
+- **Serialization**: Erlang term format (via Ra)
 
 ### Boundaries
 
 - Maximum key size: 1024 bytes
 - Maximum batch size: 500 operations (configurable)
-- Compression threshold: 1KB (values larger are auto-compressed)
-- Cluster size: 3-7 nodes recommended for Raft efficiency
+- Compression threshold: 1KB (auto-compressed)
+- Cluster size: 1–7 nodes (3+ for fault tolerance)
+- Disk flush interval: configurable (default 1000ms)
 
-### Data Flow Invariants
+### Scope Exclusions
 
-1. All writes flow through: Client API -> Auth -> Validation ->
-   `:ra.process_command` -> State Machine -> ETS
-2. Reads may bypass Raft log via `:ra.consistent_query` or
-   `:ra.local_query`
-3. Server ID format MUST be `{:concord_cluster, node()}`
-   (not module-based)
-4. Query functions return `{:ok, result}`; Ra wraps as
-   `{:ok, {:ok, result}, leader_info}`
-5. State machine correctness invariants per Principle VIII MUST be
-   enforced at every layer
+These concerns are permanently out of scope:
+
+| Concern | Why excluded | Where it belongs |
+|---------|-------------|-----------------|
+| Auth/authz | Application policy | Host app or Plug pipeline |
+| RBAC/ACLs | Application policy | Host app |
+| Multi-tenancy | Application policy | Host app (key prefixes) |
+| HTTP API | Service concern | Separate wrapper library |
+| Audit logging | Compliance concern | Host app |
+| Prometheus/OTEL | Observability concern | Host app via telemetry hooks |
+| Event streaming | Application concern | Host app subscribing to telemetry |
+| Encryption at rest | Security concern | Host app or disk-level |
+
+Concord emits `:telemetry` events. The host application can attach
+any metrics/tracing/logging system it wants. Concord does not ship
+with or depend on any specific observability stack.
 
 ## Development Workflow
 
 ### Code Quality Gates
 
-- `mix credo --strict` MUST pass
-- `mix dialyzer` MUST pass (ignore exit status for known issues)
-- Test coverage MUST remain above 40%
-- All new features MUST include documentation
-
-### Testing Requirements
-
-- Unit tests: `mix test` (fast, isolated)
-- E2E tests: `mix test.e2e` (multi-node, separate MIX_ENV)
-- New distributed features MUST have corresponding e2e tests
-- State machine changes MUST be tested with cluster restart scenarios
+- `mix credo --strict` passes
+- `mix dialyzer` passes
+- Test coverage above 40%
+- New features include documentation
 
 ### Commit Standards
 
-- Semantic commit messages: `feat:`, `fix:`, `docs:`, `chore:`,
-  `test:`, `refactor:`
+- Semantic prefixes: `feat:`, `fix:`, `docs:`, `chore:`, `test:`,
+  `refactor:`
 - No auto-generated footers (Claude Code, Co-Authored-By)
-- Each commit should be atomic and independently reversible
+- Atomic, independently reversible commits
 
 ## Governance
 
-This constitution supersedes all other development practices for the
-Concord project.
+This constitution supersedes all other development practices.
 
 ### Amendment Process
 
-1. Propose changes via pull request to
-   `.specify/memory/constitution.md`
-2. Document rationale for each change
+1. Propose changes via PR to `.specify/memory/constitution.md`
+2. Document rationale
 3. Update dependent templates if principles change
-4. Increment version according to semantic rules
-
-### Compliance
-
-- All PRs MUST verify adherence to Core Principles
-- Complexity additions MUST be justified against Principle VII
-  (simplicity via API stability)
-- State machine changes MUST be reviewed against Principle VIII
-  invariants
-- Constitution violations require explicit exception documentation
+4. Increment version per semantic rules
 
 ### Version Policy
 
 - MAJOR: Principle removal or fundamental redefinition
-- MINOR: New principle or section added
-- PATCH: Clarifications, wording improvements
+- MINOR: New principle added
+- PATCH: Clarifications
 
-**Version**: 1.1.0 | **Ratified**: 2025-12-03 | **Last Amended**: 2026-03-03
+**Version**: 2.0.0 | **Ratified**: 2025-12-03 | **Last Amended**: 2026-03-09

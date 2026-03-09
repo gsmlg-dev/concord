@@ -283,11 +283,6 @@ defmodule Concord.Backup do
       %{
         version: 2,
         kv_data: kv_data,
-        tokens: Map.get(data, :tokens, %{}),
-        roles: Map.get(data, :roles, %{}),
-        role_grants: Map.get(data, :role_grants, %{}),
-        acls: Map.get(data, :acls, []),
-        tenants: Map.get(data, :tenants, %{}),
         indexes: Map.get(data, :indexes, %{})
       }
     end
@@ -306,21 +301,15 @@ defmodule Concord.Backup do
 
   defp build_backup(%{version: 2} = snapshot_data) do
     kv_count = length(Map.get(snapshot_data, :kv_data, []))
-    token_count = map_size(Map.get(snapshot_data, :tokens, %{}))
-    role_count = map_size(Map.get(snapshot_data, :roles, %{}))
-    tenant_count = map_size(Map.get(snapshot_data, :tenants, %{}))
 
     metadata = %{
       timestamp: DateTime.utc_now(),
       node: node(),
       cluster_name: Application.get_env(:concord, :cluster_name, :concord_cluster),
       entry_count: kv_count,
-      state_categories: [:kv, :auth, :rbac, :tenants, :indexes],
+      state_categories: [:kv, :indexes],
       state_counts: %{
-        kv: kv_count,
-        tokens: token_count,
-        roles: role_count,
-        tenants: tenant_count
+        kv: kv_count
       },
       memory_bytes: :erlang.external_size(snapshot_data),
       version: Application.spec(:concord, :vsn) |> to_string(),
@@ -396,53 +385,6 @@ defmodule Concord.Backup do
     Enum.each(Map.get(snapshot_data, :kv_data, []), fn entry ->
       :ets.insert(:concord_store, entry)
     end)
-
-    # Auth tokens
-    if :ets.whereis(:concord_tokens) != :undefined do
-      :ets.delete_all_objects(:concord_tokens)
-
-      Enum.each(Map.get(snapshot_data, :tokens, %{}), fn {token, perms} ->
-        :ets.insert(:concord_tokens, {token, perms})
-      end)
-    end
-
-    # RBAC roles
-    if :ets.whereis(:concord_roles) != :undefined do
-      :ets.delete_all_objects(:concord_roles)
-
-      Enum.each(Map.get(snapshot_data, :roles, %{}), fn {role, perms} ->
-        :ets.insert(:concord_roles, {role, perms})
-      end)
-    end
-
-    # RBAC role grants
-    if :ets.whereis(:concord_role_grants) != :undefined do
-      :ets.delete_all_objects(:concord_role_grants)
-
-      Enum.each(Map.get(snapshot_data, :role_grants, %{}), fn {token, roles} ->
-        Enum.each(roles, fn role ->
-          :ets.insert(:concord_role_grants, {token, role})
-        end)
-      end)
-    end
-
-    # ACLs
-    if :ets.whereis(:concord_acls) != :undefined do
-      :ets.delete_all_objects(:concord_acls)
-
-      Enum.each(Map.get(snapshot_data, :acls, []), fn {pattern, role, perms} ->
-        :ets.insert(:concord_acls, {pattern, role, perms})
-      end)
-    end
-
-    # Tenants
-    if :ets.whereis(:concord_tenants) != :undefined do
-      :ets.delete_all_objects(:concord_tenants)
-
-      Enum.each(Map.get(snapshot_data, :tenants, %{}), fn {id, tenant} ->
-        :ets.insert(:concord_tenants, {id, tenant})
-      end)
-    end
 
     # Rebuild index ETS tables from index definitions and KV data
     indexes = Map.get(snapshot_data, :indexes, %{})
