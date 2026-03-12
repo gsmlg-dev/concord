@@ -95,7 +95,13 @@ defmodule Concord.Query do
   """
   @spec keys(query_opts()) :: {:ok, [key()]} | {:error, term()}
   def keys(opts \\ []) do
-    with {:ok, all_keys} <- get_all_keys() do
+    fetch_fn =
+      case Keyword.get(opts, :prefix) do
+        nil -> fn -> get_all_keys() end
+        prefix -> fn -> get_prefix_keys(prefix) end
+      end
+
+    with {:ok, all_keys} <- fetch_fn.() do
       filtered_keys =
         all_keys
         |> apply_key_filters(opts)
@@ -200,6 +206,17 @@ defmodule Concord.Query do
     case Concord.get_all() do
       {:ok, pairs} ->
         keys = Enum.map(pairs, fn {k, _v} -> k end) |> Enum.sort()
+        {:ok, keys}
+
+      error ->
+        error
+    end
+  end
+
+  defp get_prefix_keys(prefix) do
+    case Concord.prefix_scan(prefix) do
+      {:ok, pairs} ->
+        keys = pairs |> Enum.map(fn {k, _v} -> k end) |> Enum.sort()
         {:ok, keys}
 
       error ->

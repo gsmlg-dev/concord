@@ -317,6 +317,46 @@ defmodule Concord.QueryTest do
     end
   end
 
+  describe "Concord.prefix_scan/2" do
+    test "returns key-value pairs for matching prefix" do
+      assert {:ok, pairs} = Concord.prefix_scan("user:")
+      assert length(pairs) == 4
+      keys = Enum.map(pairs, fn {k, _v} -> k end)
+      assert "user:1" in keys
+      assert "user:2" in keys
+      assert "user:10" in keys
+      assert "user:100" in keys
+    end
+
+    test "does not return keys outside the prefix" do
+      assert {:ok, pairs} = Concord.prefix_scan("product:")
+      keys = Enum.map(pairs, fn {k, _v} -> k end)
+      assert Enum.all?(keys, &String.starts_with?(&1, "product:"))
+      refute Enum.any?(keys, &String.starts_with?(&1, "user:"))
+    end
+
+    test "returns empty list when no keys match" do
+      assert {:ok, []} = Concord.prefix_scan("nonexistent:")
+    end
+
+    test "excludes expired keys" do
+      :ok = Concord.put_with_ttl("expiring:1", "value", 1)
+      :ok = Concord.put("expiring:2", "permanent")
+
+      # Both visible before expiry
+      assert {:ok, pairs} = Concord.prefix_scan("expiring:")
+      assert length(pairs) == 2
+
+      # Expire the key — TTL of 1s stores expires_at = now + 1.
+      # The expired? check is `now > expires_at` (strict), so we need at least 2s.
+      Process.sleep(2_100)
+      assert {:ok, pairs} = Concord.prefix_scan("expiring:")
+      keys = Enum.map(pairs, fn {k, _v} -> k end)
+      refute "expiring:1" in keys
+      assert "expiring:2" in keys
+    end
+  end
+
   describe "performance with larger datasets" do
     test "handles queries on larger datasets efficiently" do
       # Insert 100 additional keys

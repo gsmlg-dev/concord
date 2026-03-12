@@ -517,6 +517,33 @@ defmodule Concord do
   end
 
   @doc """
+  Returns key-value pairs for all keys starting with the given prefix.
+
+  Uses an efficient server-side scan on the ordered ETS table, avoiding
+  loading all keys into memory. O(log N + K) where K is the number of
+  matching keys.
+
+  ## Options
+  - `:timeout` - Operation timeout in milliseconds (default: 5000)
+  - `:consistency` - Read consistency level (default: :leader)
+
+  ## Examples
+      iex> Concord.prefix_scan("user:")
+      {:ok, [{"user:1", %{name: "Alice"}}, {"user:2", %{name: "Bob"}}]}
+  """
+  def prefix_scan(prefix, opts \\ []) when is_binary(prefix) do
+    timeout = Keyword.get(opts, :timeout, @timeout)
+    consistency = Keyword.get(opts, :consistency, default_consistency())
+
+    case query({:prefix_scan, prefix}, timeout, consistency) do
+      {:ok, {{_index, _term}, query_result}, _} -> query_result
+      {:timeout, _} -> {:error, :timeout}
+      {:error, :noproc} -> {:error, :cluster_not_ready}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
   Stores multiple key-value pairs in the cluster atomically.
 
   Either all operations succeed or all fail together.

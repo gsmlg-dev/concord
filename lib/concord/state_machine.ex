@@ -79,7 +79,7 @@ defmodule Concord.StateMachine do
 
   @impl :ra_machine
   def init(_config) do
-    ensure_ets_table(:concord_store, [:set, :public, :named_table])
+    ensure_ets_table(:concord_store, [:ordered_set, :public, :named_table])
 
     {:concord_kv, default_state_fields()}
   end
@@ -743,6 +743,33 @@ defmodule Concord.StateMachine do
     {:ok, Map.new(results)}
   end
 
+  def query({:prefix_scan, prefix}, {:concord_kv, _data}) when is_binary(prefix) do
+    now = System.system_time(:second)
+    # Upper bound: any key starting with `prefix` is lexicographically < prefix <> <<255>>
+    # because byte values after the prefix will be < 255 for all normal string characters.
+    end_key = prefix <> <<255>>
+
+    match_spec = [
+      {{:"$1", :"$2"},
+       [{:">=", :"$1", prefix}, {:"<", :"$1", end_key}],
+       [{{:"$1", :"$2"}}]}
+    ]
+
+    results =
+      :ets.select(:concord_store, match_spec)
+      |> Enum.reduce([], fn {key, stored_data}, acc ->
+        case extract_value(stored_data) do
+          {value, expires_at} ->
+            if expired?(expires_at, now), do: acc, else: [{key, value} | acc]
+
+          _ ->
+            acc
+        end
+      end)
+
+    {:ok, results}
+  end
+
   def query(:stats, {:concord_kv, _data}) do
     info = :ets.info(:concord_store)
 
@@ -843,7 +870,7 @@ defmodule Concord.StateMachine do
 
       # V1/V2 legacy: bare list of KV tuples
       data when is_list(data) ->
-        ensure_ets_table(:concord_store)
+        ensure_ets_table(:concord_store, [:ordered_set, :public, :named_table])
         :ets.delete_all_objects(:concord_store)
         Enum.each(data, fn entry -> :ets.insert(:concord_store, entry) end)
     end
@@ -859,7 +886,7 @@ defmodule Concord.StateMachine do
 
   defp rebuild_all_ets_from_snapshot(data) do
     # Rebuild main KV store
-    ensure_ets_table(:concord_store)
+    ensure_ets_table(:concord_store, [:ordered_set, :public, :named_table])
     :ets.delete_all_objects(:concord_store)
 
     Enum.each(Map.get(data, :__kv_data__, []), fn entry ->
