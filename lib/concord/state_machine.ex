@@ -750,9 +750,7 @@ defmodule Concord.StateMachine do
     end_key = prefix <> <<255>>
 
     match_spec = [
-      {{:"$1", :"$2"},
-       [{:">=", :"$1", prefix}, {:"<", :"$1", end_key}],
-       [{{:"$1", :"$2"}}]}
+      {{:"$1", :"$2"}, [{:">=", :"$1", prefix}, {:"<", :"$1", end_key}], [{{:"$1", :"$2"}}]}
     ]
 
     results =
