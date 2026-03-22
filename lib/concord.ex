@@ -124,7 +124,7 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-"""
+  """
   def delete(key, opts \\ []) do
     with :ok <- validate_key(key) do
       timeout = Keyword.get(opts, :timeout, @timeout)
