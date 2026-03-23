@@ -123,9 +123,7 @@ defmodule Concord.Index do
   def lookup(name, value, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     server_id = {@cluster_name, node()}
-    query_fun = fn state -> StateMachine.query({:index_lookup, name, value}, state) end
-
-    case :ra.consistent_query(server_id, query_fun, timeout) do
+    case :ra.consistent_query(server_id, {StateMachine, :query, [{:index_lookup, name, value}]}, timeout) do
       {:ok, {:ok, keys}, _} when is_list(keys) -> {:ok, keys}
       {:ok, {:ok, {:error, reason}}, _} -> {:error, reason}
       {:timeout, _} -> {:error, :timeout}
@@ -141,9 +139,7 @@ defmodule Concord.Index do
   def list(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     server_id = {@cluster_name, node()}
-    query_fun = fn state -> StateMachine.query(:list_indexes, state) end
-
-    case :ra.consistent_query(server_id, query_fun, timeout) do
+    case :ra.consistent_query(server_id, {StateMachine, :query, [:list_indexes]}, timeout) do
       {:ok, {:ok, indexes}, _} when is_list(indexes) -> {:ok, indexes}
       {:timeout, _} -> {:error, :timeout}
       {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -163,11 +159,7 @@ defmodule Concord.Index do
     with {:ok, pairs} <- Concord.get_all(),
          {:ok, indexes} <- list(timeout: timeout) do
       if name in indexes do
-        query_fun = fn state ->
-          StateMachine.query({:get_index_extractor, name}, state)
-        end
-
-        case :ra.consistent_query(server_id, query_fun, timeout) do
+        case :ra.consistent_query(server_id, {StateMachine, :query, [{:get_index_extractor, name}]}, timeout) do
           {:ok, {:ok, extractor}, _} ->
             table_name = index_table_name(name)
 

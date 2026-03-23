@@ -793,8 +793,10 @@ defmodule Concord do
   defp query(query, timeout, consistency) do
     # Ra 3.0: leader_query and consistent_query require MFA tuples, not anonymous
     # functions (anonymous functions cannot be safely serialized across nodes).
+    # Ra calls MFA as erlang:apply(M, F, A ++ [State]), so {M, :query, [q]}
+    # maps to StateMachine.query(q, state) — matching query/2 directly.
     # local_query still accepts anonymous functions for eventual consistency.
-    mfa = {StateMachine, :ra_query, [query]}
+    mfa = {StateMachine, :query, [query]}
 
     result =
       case consistency do

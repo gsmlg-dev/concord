@@ -629,13 +629,6 @@ defmodule Concord.StateMachine do
   # QUERY FUNCTIONS (read-only, bypass Raft log)
   # ══════════════════════════════════════════════
 
-  # MFA-compatible wrapper for Ra 3.0 remote queries (leader_query, consistent_query).
-  # Ra 3.0 calls MFA tuples as Module.func(state, extra_args...), so this reverses
-  # arg order to match the query/2 convention of query(query_term, state).
-  def ra_query(state, query_term) do
-    query(query_term, state)
-  end
-
   def query({:get, key}, {:concord_kv, _data}) do
     now = System.system_time(:second)
 
