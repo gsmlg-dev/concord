@@ -65,7 +65,7 @@ defmodule Concord.TestHelper do
   end
 
   defp start_ra_server({_node_id, server_config}) do
-    :ra.start_server(server_config)
+    :ra.start_server(:default, server_config)
   end
 
   defp handle_server_start_result(result, {node_id, _server_config}) do
@@ -108,7 +108,7 @@ defmodule Concord.TestHelper do
 
   defp cleanup_existing_server(node_id) do
     try do
-      :ra.stop_server(node_id)
+      :ra.stop_server(:default, node_id)
     rescue
       _ -> :ok
     end
@@ -122,7 +122,7 @@ defmodule Concord.TestHelper do
     node_id = {:concord_cluster, node()}
 
     try do
-      :ra.stop_server(node_id)
+      :ra.stop_server(:default, node_id)
     rescue
       _ -> :ok
     end
