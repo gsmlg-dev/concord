@@ -107,7 +107,7 @@ defmodule Concord.MixProject do
 
   defp deps do
     [
-      {:ra, "~> 2.6"},
+      {:ra, "~> 3.0"},
       {:libcluster, "~> 3.3"},
       {:telemetry, "~> 1.0"},
       {:telemetry_metrics, "~> 1.0"},

@@ -791,26 +791,34 @@ defmodule Concord do
   end
 
   defp query(query, timeout, consistency) do
-    query_fun = fun(query)
+    # Ra 3.0: leader_query and consistent_query require MFA tuples, not anonymous
+    # functions (anonymous functions cannot be safely serialized across nodes).
+    # local_query still accepts anonymous functions for eventual consistency.
+    mfa = {StateMachine, :ra_query, [query]}
 
     result =
       case consistency do
         :eventual ->
           # Use local_query for eventual consistency (fastest, may be stale)
           target_server = select_read_replica()
-          :ra.local_query(target_server, query_fun, timeout)
+
+          :ra.local_query(
+            target_server,
+            fn state -> StateMachine.query(query, state) end,
+            timeout
+          )
 
         :leader ->
           # Use leader_query for balanced consistency
-          :ra.leader_query(server_id(), query_fun, timeout)
+          :ra.leader_query(server_id(), mfa, timeout)
 
         :strong ->
           # Use consistent_query for linearizable reads (slowest)
-          :ra.consistent_query(server_id(), query_fun, timeout)
+          :ra.consistent_query(server_id(), mfa, timeout)
 
         _ ->
           # Default to leader query for unknown consistency levels
-          :ra.leader_query(server_id(), query_fun, timeout)
+          :ra.leader_query(server_id(), mfa, timeout)
       end
 
     # Normalize the result format:
@@ -829,12 +837,6 @@ defmodule Concord do
       other ->
         # Pass through errors and timeouts
         other
-    end
-  end
-
-  defp fun(query) do
-    fn state ->
-      StateMachine.query(query, state)
     end
   end
 

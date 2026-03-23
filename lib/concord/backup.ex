@@ -273,21 +273,23 @@ defmodule Concord.Backup do
 
   # Private functions
 
+  # Named function for Ra 3.0 MFA-based consistent_query.
+  # Ra 3.0 no longer accepts anonymous functions in remote queries.
+  @doc false
+  def do_snapshot_query({:concord_kv, data}) do
+    kv_data = :ets.tab2list(:concord_store)
+
+    %{
+      version: 2,
+      kv_data: kv_data,
+      indexes: Map.get(data, :indexes, %{})
+    }
+  end
+
   defp get_cluster_snapshot do
     server_id = {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
 
-    query_fn = fn {:concord_kv, data} ->
-      # Read KV data from ETS within the consistent query context
-      kv_data = :ets.tab2list(:concord_store)
-
-      %{
-        version: 2,
-        kv_data: kv_data,
-        indexes: Map.get(data, :indexes, %{})
-      }
-    end
-
-    case :ra.consistent_query(server_id, query_fn) do
+    case :ra.consistent_query(server_id, {__MODULE__, :do_snapshot_query, []}) do
       {:ok, %{version: 2} = snapshot, _leader} ->
         {:ok, snapshot}
 

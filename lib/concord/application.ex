@@ -144,7 +144,7 @@ defmodule Concord.Application do
       initial_members: server_ids
     }
 
-    case :ra.start_server(server_config) do
+    case :ra.start_server(:default, server_config) do
       :ok ->
         Logger.info("Concord cluster started on #{node()}")
         :ra.trigger_election(node_id)
