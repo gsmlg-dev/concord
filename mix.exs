@@ -109,19 +109,19 @@ defmodule Concord.MixProject do
     [
       {:ra, "~> 2.6"},
       {:libcluster, "~> 3.3"},
-      {:telemetry, "~> 1.2"},
-      {:telemetry_metrics, "~> 0.6"},
+      {:telemetry, "~> 1.0"},
+      {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
-      {:telemetry_metrics_prometheus, "~> 1.1"},
+      {:telemetry_metrics_prometheus, "~> 1.0"},
       {:jason, "~> 1.4"},
-      {:plug_crypto, "~> 1.2"},
+      {:plug_crypto, "~> 2.0"},
       {:plug, "~> 1.15"},
       {:bandit, "~> 1.5"},
       # OpenTelemetry distributed tracing
-      {:opentelemetry_api, "~> 1.3"},
-      {:opentelemetry, "~> 1.4"},
-      {:opentelemetry_exporter, "~> 1.7"},
-      {:opentelemetry_telemetry, "~> 1.1"},
+      {:opentelemetry_api, "~> 1.0"},
+      {:opentelemetry, "~> 1.0"},
+      {:opentelemetry_exporter, "~> 1.0"},
+      {:opentelemetry_telemetry, "~> 1.0"},
       # Event streaming with GenStage
       {:gen_stage, "~> 1.2"},
       # E2E testing (note: LocalCluster removed due to OTP 28 compatibility, using manual node spawning)
