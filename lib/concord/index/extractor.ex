@@ -36,7 +36,7 @@ defmodule Concord.Index.Extractor do
   """
   @spec valid?(term()) :: boolean()
   def valid?({:map_get, key}) when is_atom(key) or is_binary(key), do: true
-  def valid?({:nested, keys}) when is_list(keys) and length(keys) > 0, do: true
+  def valid?({:nested, [_ | _]}), do: true
   def valid?({:identity}), do: true
   def valid?({:element, n}) when is_integer(n) and n >= 0, do: true
   # Backward compatibility: accept anonymous functions during migration

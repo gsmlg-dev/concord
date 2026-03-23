@@ -632,7 +632,7 @@ defmodule Concord.StateMachine do
   # MFA-compatible wrapper for Ra 3.0 remote queries (leader_query, consistent_query).
   # Ra 3.0 calls MFA tuples as Module.func(state, extra_args...), so this reverses
   # arg order to match the query/2 convention of query(query_term, state).
-  def ra_query(state, query_term) do
+  def ra_query(query_term, state) do
     query(query_term, state)
   end
 

@@ -874,7 +874,7 @@ defmodule Concord do
   defp select_read_replica do
     # Get cluster members for load balancing eventual consistency reads
     case :ra.members(server_id()) do
-      {:ok, members, _leader} when is_list(members) and length(members) > 0 ->
+      {:ok, [_ | _] = members, _leader} ->
         # Randomly select a member for load balancing
         Enum.random(members)
 
