@@ -33,10 +33,6 @@ defmodule Concord.Backup do
 
   require Logger
 
-  alias Concord.Compression
-  alias Concord.Index
-  alias Concord.Index.Extractor
-
   @backup_extension ".backup"
   @default_backup_dir "./backups"
 
@@ -367,9 +363,7 @@ defmodule Concord.Backup do
         :ok
 
       {:error, :noproc} ->
-        # Fallback: cluster not ready — apply directly to local ETS
-        Logger.warning("Cluster not ready, applying backup to local ETS only")
-        apply_backup_to_local_ets(snapshot_data, metadata)
+        {:error, :cluster_not_ready}
 
       {:timeout, _} ->
         {:error, :timeout}
@@ -377,65 +371,6 @@ defmodule Concord.Backup do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  # V2 format fallback: restore all state categories to their respective ETS tables
-  defp apply_backup_to_local_ets(%{version: 2} = snapshot_data, metadata) do
-    # KV data
-    :ets.delete_all_objects(:concord_store)
-
-    Enum.each(Map.get(snapshot_data, :kv_data, []), fn entry ->
-      :ets.insert(:concord_store, entry)
-    end)
-
-    # Rebuild index ETS tables from index definitions and KV data
-    indexes = Map.get(snapshot_data, :indexes, %{})
-    kv_data = Map.get(snapshot_data, :kv_data, [])
-
-    Enum.each(indexes, fn {name, extractor} ->
-      table = Index.index_table_name(name)
-
-      if :ets.whereis(table) == :undefined do
-        :ets.new(table, [:bag, :public, :named_table])
-      else
-        :ets.delete_all_objects(table)
-      end
-
-      Enum.each(kv_data, fn {key, stored} ->
-        value =
-          case stored do
-            %{value: v} -> Compression.decompress(v)
-            _ -> stored
-          end
-
-        Extractor.index_value(table, key, value, extractor)
-      end)
-    end)
-
-    :telemetry.execute(
-      [:concord, :backup, :restored],
-      %{entry_count: metadata.entry_count},
-      %{timestamp: metadata.timestamp, node: metadata.node}
-    )
-
-    :ok
-  end
-
-  # V1 format fallback: just KV data
-  defp apply_backup_to_local_ets(snapshot_data, metadata) when is_list(snapshot_data) do
-    :ets.delete_all_objects(:concord_store)
-
-    Enum.each(snapshot_data, fn {key, value} ->
-      :ets.insert(:concord_store, {key, value})
-    end)
-
-    :telemetry.execute(
-      [:concord, :backup, :restored],
-      %{entry_count: metadata.entry_count},
-      %{timestamp: metadata.timestamp, node: metadata.node}
-    )
-
-    :ok
   end
 
   defp get_backup_info(backup_path) do

@@ -79,12 +79,18 @@ defmodule Concord.StateMachine do
 
   @impl :ra_machine
   def init(_config) do
-    ensure_ets_table(:concord_store, [:ordered_set, :public, :named_table])
+    ensure_ets_table(:concord_store, [:ordered_set, :named_table])
 
     {:concord_kv, default_state_fields()}
   end
 
-  defp ensure_ets_table(name, opts \\ [:set, :public, :named_table]) do
+  defp ets_access_mode do
+    Application.get_env(:concord, :ets_access_mode, :protected)
+  end
+
+  defp ensure_ets_table(name, opts \\ [:set, :named_table]) do
+    opts = [ets_access_mode() | opts]
+
     case :ets.whereis(name) do
       :undefined -> :ets.new(name, opts)
       _table -> :ok
@@ -455,7 +461,7 @@ defmodule Concord.StateMachine do
       {{:concord_kv, data}, {:error, :index_exists}, []}
     else
       table_name = Index.index_table_name(name)
-      ensure_ets_table(table_name, [:set, :public, :named_table])
+      ensure_ets_table(table_name, [:set, :named_table])
 
       new_indexes = Map.put(indexes, name, extractor)
       new_data = Map.put(data, :indexes, new_indexes)
@@ -844,7 +850,7 @@ defmodule Concord.StateMachine do
 
       # V1/V2 legacy: bare list of KV tuples
       data when is_list(data) ->
-        ensure_ets_table(:concord_store, [:ordered_set, :public, :named_table])
+        ensure_ets_table(:concord_store, [:ordered_set, :named_table])
         :ets.delete_all_objects(:concord_store)
         Enum.each(data, fn entry -> :ets.insert(:concord_store, entry) end)
     end
@@ -860,7 +866,7 @@ defmodule Concord.StateMachine do
 
   defp rebuild_all_ets_from_snapshot(data) do
     # Rebuild main KV store
-    ensure_ets_table(:concord_store, [:ordered_set, :public, :named_table])
+    ensure_ets_table(:concord_store, [:ordered_set, :named_table])
     :ets.delete_all_objects(:concord_store)
 
     Enum.each(Map.get(data, :__kv_data__, []), fn entry ->

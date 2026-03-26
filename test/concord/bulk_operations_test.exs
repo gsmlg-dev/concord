@@ -325,13 +325,11 @@ defmodule Concord.BulkOperationsTest do
       table = Concord.Index.index_table_name("by_email")
       assert :ets.lookup(table, "alice@test.com") == [{"alice@test.com", ["user:1"]}]
 
-      # delete_if with a condition function that matches
-      condition_fn = fn _value -> true end
-
+      # delete_if with CAS expected value matching the current value
       {_state3, :ok, _} =
         StateMachine.apply_command(
           %{index: 3},
-          {:delete_if, "user:1", nil, condition_fn},
+          {:delete_if, "user:1", %{email: "alice@test.com"}, nil},
           state2
         )
 
