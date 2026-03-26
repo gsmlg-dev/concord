@@ -7,31 +7,27 @@
 
 > A distributed, strongly-consistent embedded key-value store built in Elixir using the Raft consensus algorithm.
 
-**Concord** is an **embedded database** for Elixir applications — think SQLite for distributed coordination. Starts with your application, no separate infrastructure needed. Strong consistency guarantees with microsecond-level performance.
+**Concord** is an **embedded database** for Elixir applications — think SQLite for distributed coordination. Starts with your application, no separate infrastructure needed. Strong consistency guarantees with ETS-backed read performance.
 
 ## Key Features
 
 - **Strong Consistency** — Raft consensus ensures all nodes agree on data
 - **High Performance** — ETS-backed reads with microsecond-level latency
 - **Embedded Design** — Starts with your app, no external infrastructure
-- **HTTP REST API** — Complete API with OpenAPI/Swagger documentation
 - **Configurable Consistency** — Choose eventual, leader, or strong per operation
 - **TTL Support** — Automatic key expiration with time-to-live
 - **Bulk Operations** — Efficient batch processing (up to 500 items)
 - **Value Compression** — Automatic compression for large values
 - **Conditional Updates** — Compare-and-swap for optimistic concurrency
 - **Secondary Indexes** — Query by indexed fields
-- **Event Streaming** — Real-time change data capture (CDC) via GenStage
-- **Observability** — Telemetry, Prometheus, OpenTelemetry tracing, audit logs
-- **Token Auth + RBAC** — Role-based access control with ACL patterns
-- **Multi-Tenancy** — Namespace isolation with quotas
 - **Backup/Restore** — Compressed backups with integrity verification
+- **Telemetry** — Built-in telemetry events for observability hooks
 
 ## Installation
 
 ```elixir
 def deps do
-  [{:concord, "~> 0.1.0"}]
+  [{:concord, "~> 1.1"}]
 end
 ```
 
@@ -59,18 +55,6 @@ Concord.get("key", consistency: :leader)    # Default, balanced
 Concord.get("key", consistency: :strong)    # Linearizable
 ```
 
-### HTTP API
-
-```bash
-curl http://localhost:4000/api/v1/health
-
-curl -X PUT -H "Content-Type: application/json" \
-  -d '{"value": "hello"}' \
-  http://localhost:4000/api/v1/kv/greeting
-
-curl http://localhost:4000/api/v1/kv/greeting
-```
-
 ### Multi-Node Cluster
 
 ```bash
@@ -96,14 +80,6 @@ Performance varies significantly depending on hardware, cluster size, network to
 | Primary Database | Avoid (use PostgreSQL) |
 | Large Blob Storage | Avoid (use S3) |
 
-## Known Limitations
-
-- **Bootstrap ETS Fallback**: Auth, RBAC, and tenant data written via ETS fallback during the bootstrap window (before a Raft cluster forms) is not replicated. Once the cluster establishes quorum, subsequent writes go through Raft consensus normally.
-
-- **Node-Local Rate Limiting**: Multi-tenancy rate limiting is tracked per-node. A tenant can exceed its configured quota by up to N× across N nodes in the cluster.
-
-- **Query TTL Clock Sensitivity**: TTL expiration checks in queries use wall-clock time (`System.system_time`) which may differ from leader-assigned time (`meta.system_time`) during clock drift between nodes.
-
 ## Comparison
 
 | Feature | Concord | etcd | Consul | ZooKeeper |
@@ -113,19 +89,14 @@ Performance varies significantly depending on hardware, cluster size, network to
 | Storage | In-memory (ETS) | Disk (WAL) | Memory + Disk | Disk |
 | Read Latency | 1-5ms | 5-20ms | 5-15ms | 5-20ms |
 | Embedded | Yes | No | No | No |
-| Built-in Auth | Tokens + RBAC | mTLS | ACLs | ACLs |
 | Multi-DC | No | Yes | Yes | Yes |
 
 ## Documentation
 
 - **[Getting Started](docs/getting-started.md)** — Installation, quick start, common use cases
 - **[Elixir API Guide](docs/elixir-guide.md)** — Consistency levels, CAS, queries, compression
-- **[HTTP API Reference](docs/API_DESIGN.md)** — REST endpoint specification
-- **[HTTP API Examples](docs/API_USAGE_EXAMPLES.md)** — Curl examples
-- **[Observability](docs/observability.md)** — Telemetry, Prometheus, tracing, audit logging, event streaming
 - **[Backup & Restore](docs/backup-restore.md)** — Data safety and disaster recovery
 - **[Configuration](docs/configuration.md)** — All configuration options
-- **[Production Deployment](docs/deployment.md)** — Docker, Kubernetes, security, operations
 - **[Architecture](docs/DESIGN.md)** — Design blueprint
 
 ## Contributing

@@ -18,7 +18,7 @@ mix compile                    # Build
 mix test                       # Unit tests (uses --no-start alias)
 mix test test/concord_test.exs # Single file
 mix test test/concord_test.exs:42  # Single test by line
-mix test --cover               # Coverage (threshold: 40%)
+mix test --cover               # Coverage (threshold: 50%)
 mix lint                       # Credo + Dialyzer
 mix credo                      # Linter only (max line length: 120)
 mix dialyzer                   # Type checking (first run is slow — builds PLT)
@@ -137,5 +137,5 @@ See `docs/` for architectural documents:
 - `jason` — JSON encoding for values
 
 ## Active Technologies
-- Elixir 1.18 / OTP 28 + Ra 2.17.1 (Raft), libcluster 3.5.0
+- Elixir 1.18 / OTP 28 + Ra 3.0 (Raft), libcluster 3.3+
 - ETS (in-memory) with Ra snapshots for persistence
