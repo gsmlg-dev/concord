@@ -244,43 +244,12 @@ defmodule Concord.StateMachine do
     {{:concord_kv, data}, result, []}
   end
 
-  # Backward compatibility: put_if with condition_fn (6-tuple)
-  # The condition_fn is evaluated here for backward compat during migration.
-  # New code should use the 5-tuple CAS form above.
-  def apply_command(
-        meta,
-        {:put_if, key, value, expires_at, expected, condition_fn},
-        {:concord_kv, data}
-      ) do
+  def apply_command(meta, {:delete_if, key, expected, _condition_fn}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
     now = meta_time(meta)
 
     result =
-      check_conditional_operation(key, expected, condition_fn, now, fn ->
-        old_value = get_decompressed_value(key)
-        formatted_value = format_value(value, expires_at)
-        :ets.insert(:concord_store, {key, formatted_value})
-        update_indexes_on_put(data, key, old_value, Compression.decompress(value))
-        :ok
-      end)
-
-    duration = System.monotonic_time() - start_time
-
-    :telemetry.execute(
-      [:concord, :operation, :apply],
-      %{duration: duration},
-      %{operation: :put_if, key: key, index: Map.get(meta, :index), result: result}
-    )
-
-    {{:concord_kv, data}, result, []}
-  end
-
-  def apply_command(meta, {:delete_if, key, expected, condition_fn}, {:concord_kv, data}) do
-    start_time = System.monotonic_time()
-    now = meta_time(meta)
-
-    result =
-      check_conditional_operation(key, expected, condition_fn, now, fn ->
+      check_conditional_operation(key, expected, now, fn ->
         old_value = get_decompressed_value(key)
         :ets.delete(:concord_store, key)
 
@@ -980,8 +949,9 @@ defmodule Concord.StateMachine do
     end)
   end
 
-  # Conditional operations helper (supports both expected and condition_fn for backward compat)
-  defp check_conditional_operation(key, expected, condition_fn, now, on_success) do
+  # Conditional operations helper: delete_if CAS path.
+  # expected is always non-nil (set by public API before entering the log).
+  defp check_conditional_operation(key, expected, now, on_success) do
     case :ets.lookup(:concord_store, key) do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
@@ -989,23 +959,11 @@ defmodule Concord.StateMachine do
             if expired?(current_expires_at, now) do
               {:error, :not_found}
             else
-              condition_met =
-                cond do
-                  expected != nil ->
-                    Compression.decompress(current_value) == expected
-
-                  condition_fn != nil and is_function(condition_fn, 1) ->
-                    try do
-                      condition_fn.(Compression.decompress(current_value))
-                    rescue
-                      _ -> false
-                    end
-
-                  true ->
-                    false
-                end
-
-              if condition_met, do: on_success.(), else: {:error, :condition_failed}
+              if expected != nil and Compression.decompress(current_value) == expected do
+                on_success.()
+              else
+                {:error, :condition_failed}
+              end
             end
 
           _ ->
