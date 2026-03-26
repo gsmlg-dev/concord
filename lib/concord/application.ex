@@ -1,110 +1,26 @@
 defmodule Concord.Application do
   @moduledoc """
-  Application supervisor for Concord distributed key-value store.
-  Starts and manages all the necessary processes including clustering,
-  telemetry, HTTP API, and the Raft consensus algorithm.
+  Application supervisor for Concord embedded key-value store.
+  Starts and manages the Raft consensus cluster, telemetry, TTL cleanup, and node discovery.
   """
   use Application
   require Logger
 
-  alias Concord.{
-    AuditLog,
-    EventStream,
-    Prometheus,
-    StateMachine,
-    Telemetry,
-    TTL,
-    Web
-  }
-
-  alias Concord.Tracing.TelemetryBridge
+  alias Concord.{StateMachine, Telemetry, TTL}
 
   @impl true
   def start(_type, _args) do
-    # Attach telemetry handlers
     Telemetry.setup()
 
-    # Attach OpenTelemetry telemetry bridge if tracing is enabled
-    if Application.get_env(:concord, :tracing_enabled, false) do
-      TelemetryBridge.attach()
-    end
-
-    # Attach audit log telemetry handler if enabled
-    if audit_log_enabled?() do
-      AuditLog.TelemetryHandler.attach()
-    end
-
-    # Attach event stream telemetry handler if enabled
-    if event_stream_enabled?() do
-      EventStream.TelemetryHandler.attach()
-    end
-
-    # Build children list conditionally
     children = [
-      # Start telemetry poller for periodic metrics
       {Telemetry.Poller, []},
-      # Start libcluster for automatic node discovery
       {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
-      # Start TTL manager for periodic cleanup
       {TTL, []},
-      # Start the Concord cluster after a brief delay
       {Task, fn -> init_cluster() end}
     ]
 
-    # Add HTTP API web server if enabled
-    children =
-      if http_api_enabled?() do
-        # Insert Web.Supervisor before the cluster init task
-        List.insert_at(children, -1, Web.Supervisor)
-      else
-        children
-      end
-
-    # Add Prometheus exporter if enabled
-    children =
-      if prometheus_enabled?() do
-        children ++ [Prometheus.child_spec([])]
-      else
-        children
-      end
-
-    # Add Audit Log GenServer if enabled
-    children =
-      if audit_log_enabled?() do
-        children ++ [AuditLog]
-      else
-        children
-      end
-
-    # Add Event Stream GenStage producer if enabled
-    children =
-      if event_stream_enabled?() do
-        children ++ [EventStream]
-      else
-        children
-      end
-
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)
-  end
-
-  defp http_api_enabled? do
-    Application.get_env(:concord, :http, [])
-    |> Keyword.get(:enabled, false)
-  end
-
-  defp prometheus_enabled? do
-    Application.get_env(:concord, :prometheus_enabled, true)
-  end
-
-  defp audit_log_enabled? do
-    Application.get_env(:concord, :audit_log, [])
-    |> Keyword.get(:enabled, false)
-  end
-
-  defp event_stream_enabled? do
-    Application.get_env(:concord, :event_stream, [])
-    |> Keyword.get(:enabled, false)
   end
 
   defp topologies do
@@ -128,8 +44,6 @@ defmodule Concord.Application do
     data_dir = Application.get_env(:concord, :data_dir, "./data/#{node()}")
     File.mkdir_p!(data_dir)
 
-    # Create a proper uid from the node tuple
-    # UID must be a binary (string) - format: "concord_cluster_nodename"
     uid = "#{cluster_name}_#{node()}" |> String.replace("@", "_") |> String.replace(".", "_")
 
     server_config = %{
@@ -168,8 +82,6 @@ defmodule Concord.Application do
     {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
   end
 
-  # Wait for the Ra system to be ready instead of a hard-coded sleep.
-  # Polls up to 10 times with 200ms intervals (2s total max).
   defp wait_for_ra_system(attempts \\ 10)
   defp wait_for_ra_system(0), do: :ok
 
