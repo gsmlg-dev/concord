@@ -28,6 +28,19 @@ defmodule Concord.DeterminismTest do
     end
   end
 
+  # Ensure the ETS table exists and is owned by the current process.
+  # A previous test's Ra server may still be shutting down, leaving a table
+  # that will vanish when the owner dies — delete and recreate to be safe.
+  defp ensure_owned_ets do
+    try do
+      :ets.delete(:concord_store)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    :ets.new(:concord_store, [:ordered_set, :public, :named_table])
+  end
+
   defp assert_states_equal({:concord_kv, data_a}, {:concord_kv, data_b}) do
     for field <- @comparable_fields do
       val_a = Map.get(data_a, field)
@@ -68,6 +81,7 @@ defmodule Concord.DeterminismTest do
 
   describe "deterministic replay" do
     setup do
+      ensure_owned_ets()
       state = StateMachine.init(%{})
       clear_ets()
       {:ok, state: state}
