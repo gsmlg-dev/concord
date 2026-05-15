@@ -93,11 +93,11 @@ Performance varies significantly depending on hardware, cluster size, network to
 
 ## Documentation
 
-- **[Getting Started](docs/getting-started.md)** — Installation, quick start, common use cases
-- **[Elixir API Guide](docs/elixir-guide.md)** — Consistency levels, CAS, queries, compression
-- **[Backup & Restore](docs/backup-restore.md)** — Data safety and disaster recovery
-- **[Configuration](docs/configuration.md)** — All configuration options
-- **[Architecture](docs/DESIGN.md)** — Design blueprint
+- **[Getting Started](docs/v1/getting-started.md)** — Installation, quick start, common use cases
+- **[Elixir API Guide](docs/v1/elixir-guide.md)** — Consistency levels, CAS, queries, compression
+- **[Backup & Restore](docs/v1/backup-restore.md)** — Data safety and disaster recovery
+- **[Configuration](docs/v1/configuration.md)** — All configuration options
+- **[Architecture](docs/v1/DESIGN.md)** — Design blueprint
 
 ## Contributing
 

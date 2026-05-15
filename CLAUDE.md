@@ -124,10 +124,10 @@ Do NOT include "Generated with Claude Code" or "Co-Authored-By: Claude" in commi
 
 ## Design Documentation
 
-See `docs/` for architectural documents:
-- `docs/ArchitecturalAudit.md` — Audit of correctness issues and their fixes
-- `docs/CorrectRaftStateMachinePattern.md` — V3 migration design and rationale
-- `docs/DESIGN.md` — Original design blueprint
+See `docs/v1/` for architectural documents:
+- `docs/v1/ArchitecturalAudit.md` — Audit of correctness issues and their fixes
+- `docs/v1/CorrectRaftStateMachinePattern.md` — V3 migration design and rationale
+- `docs/v1/DESIGN.md` — Original design blueprint
 
 ## Dependencies (target after cleanup)
 

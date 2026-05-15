@@ -159,12 +159,12 @@ Expired key cleanup first calls `:ets.select` to get all keys, then does a secon
 ### Well Done
 
 - **README.md** is cleanly organized with links to focused guides.
-- **`docs/getting-started.md`** gets users from zero to running in minutes.
-- **`docs/elixir-guide.md`** covers the full Elixir API with examples.
-- **`docs/API_DESIGN.md`** and **`docs/API_USAGE_EXAMPLES.md`** provide comprehensive HTTP API documentation with curl examples in multiple languages.
-- **`docs/observability.md`** covers telemetry, Prometheus, OpenTelemetry, audit logs, and event streaming.
-- **`docs/deployment.md`** includes Docker Compose, Kubernetes StatefulSet, and production hardening guidance.
-- **`docs/ArchitecturalAudit.md`** and **`docs/CorrectRaftStateMachinePattern.md`** are excellent engineering documents.
+- **`docs/v1/getting-started.md`** gets users from zero to running in minutes.
+- **`docs/v1/elixir-guide.md`** covers the full Elixir API with examples.
+- **`docs/v1/API_DESIGN.md`** and **`docs/v1/API_USAGE_EXAMPLES.md`** provide comprehensive HTTP API documentation with curl examples in multiple languages.
+- **`docs/v1/observability.md`** covers telemetry, Prometheus, OpenTelemetry, audit logs, and event streaming.
+- **`docs/v1/deployment.md`** includes Docker Compose, Kubernetes StatefulSet, and production hardening guidance.
+- **`docs/v1/ArchitecturalAudit.md`** and **`docs/v1/CorrectRaftStateMachinePattern.md`** are excellent engineering documents.
 
 ### Issues
 
