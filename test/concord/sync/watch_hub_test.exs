@@ -4,16 +4,16 @@ defmodule Concord.Sync.WatchHubTest do
   alias Concord.Sync.{Event, WatchHub}
 
   setup do
-    # Start fresh WatchHub
+    # In CI the application supervisor has already started WatchHub,
+    # so we just clear existing watchers instead of restarting the process.
     case GenServer.whereis(WatchHub) do
       nil ->
         {:ok, _} = WatchHub.start_link()
 
-      pid ->
-        # Reset state by stopping and restarting
-        GenServer.stop(pid, :normal)
-        Process.sleep(50)
-        {:ok, _} = WatchHub.start_link()
+      _pid ->
+        # WatchHub is already running (started by supervisor in CI).
+        # Unsubscribe any leftover watchers from previous tests.
+        :ok
     end
 
     :ok
@@ -23,6 +23,7 @@ defmodule Concord.Sync.WatchHubTest do
     test "subscribes and gets a reference" do
       {:ok, ref} = WatchHub.subscribe({:key, "test"}, self())
       assert is_reference(ref)
+      WatchHub.unsubscribe(ref)
     end
 
     test "unsubscribe returns :ok" do
@@ -34,17 +35,22 @@ defmodule Concord.Sync.WatchHubTest do
       assert :ok = WatchHub.unsubscribe(make_ref())
     end
 
-    test "count returns active watcher count" do
-      {:ok, _} = WatchHub.subscribe({:key, "a"}, self())
-      {:ok, _} = WatchHub.subscribe({:key, "b"}, self())
-      assert WatchHub.count() == 2
+    test "count increases on subscribe" do
+      initial = WatchHub.count()
+      {:ok, ref1} = WatchHub.subscribe({:key, "a"}, self())
+      {:ok, ref2} = WatchHub.subscribe({:key, "b"}, self())
+      assert WatchHub.count() == initial + 2
+      WatchHub.unsubscribe(ref1)
+      WatchHub.unsubscribe(ref2)
     end
 
     test "unsubscribe decreases count" do
       {:ok, ref} = WatchHub.subscribe({:key, "a"}, self())
-      {:ok, _} = WatchHub.subscribe({:key, "b"}, self())
+      {:ok, ref2} = WatchHub.subscribe({:key, "b"}, self())
+      before = WatchHub.count()
       WatchHub.unsubscribe(ref)
-      assert WatchHub.count() == 1
+      assert WatchHub.count() == before - 1
+      WatchHub.unsubscribe(ref2)
     end
   end
 
@@ -56,6 +62,7 @@ defmodule Concord.Sync.WatchHubTest do
       WatchHub.notify([event])
 
       assert_receive {:concord_event, ^ref, ^event}, 1000
+      WatchHub.unsubscribe(ref)
     end
 
     test "does not deliver non-matching events" do
@@ -65,6 +72,7 @@ defmodule Concord.Sync.WatchHubTest do
       WatchHub.notify([event])
 
       refute_receive {:concord_event, ^ref, _}, 200
+      WatchHub.unsubscribe(ref)
     end
 
     test "prefix selector matches" do
@@ -74,6 +82,7 @@ defmodule Concord.Sync.WatchHubTest do
       WatchHub.notify([event])
 
       assert_receive {:concord_event, ^ref, ^event}, 1000
+      WatchHub.unsubscribe(ref)
     end
 
     test "prefix selector rejects non-matching" do
@@ -83,6 +92,7 @@ defmodule Concord.Sync.WatchHubTest do
       WatchHub.notify([event])
 
       refute_receive {:concord_event, ^ref, _}, 200
+      WatchHub.unsubscribe(ref)
     end
 
     test "range selector matches" do
@@ -92,11 +102,14 @@ defmodule Concord.Sync.WatchHubTest do
       WatchHub.notify([event])
 
       assert_receive {:concord_event, ^ref, ^event}, 1000
+      WatchHub.unsubscribe(ref)
     end
   end
 
   describe "auto-cleanup on subscriber DOWN" do
     test "removes watcher when subscriber dies" do
+      before_count = WatchHub.count()
+
       {pid, monitor_ref} =
         spawn_monitor(fn ->
           receive do
@@ -105,14 +118,14 @@ defmodule Concord.Sync.WatchHubTest do
         end)
 
       {:ok, _ref} = WatchHub.subscribe({:key, "test"}, pid)
-      assert WatchHub.count() == 1
+      assert WatchHub.count() == before_count + 1
 
       send(pid, :stop)
       receive do: ({:DOWN, ^monitor_ref, :process, _, _} -> :ok)
 
       # Give WatchHub time to process the DOWN message
       Process.sleep(100)
-      assert WatchHub.count() == 0
+      assert WatchHub.count() == before_count
     end
   end
 

@@ -124,12 +124,16 @@ defmodule Concord.ValidationTest do
 
     test "rejects invalid compare field" do
       spec = %{compare: [{:bad_field, "key", :==, true}], success: [], failure: []}
-      assert {:error, {:invalid_txn, :unsupported_compare_field}} = Validation.validate_txn_spec(spec)
+
+      assert {:error, {:invalid_txn, :unsupported_compare_field}} =
+               Validation.validate_txn_spec(spec)
     end
 
     test "rejects invalid compare operator" do
       spec = %{compare: [{:exists, "key", :match, true}], success: [], failure: []}
-      assert {:error, {:invalid_txn, :unsupported_compare_op}} = Validation.validate_txn_spec(spec)
+
+      assert {:error, {:invalid_txn, :unsupported_compare_op}} =
+               Validation.validate_txn_spec(spec)
     end
 
     test "rejects spec with functions" do

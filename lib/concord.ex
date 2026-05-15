@@ -19,7 +19,7 @@ defmodule Concord do
 
   require Logger
 
-  alias Concord.{Compression, StateMachine, TTL}
+  alias Concord.{Compression, StateMachine, TTL, Txn}
 
   @timeout 5_000
   @cluster_name :concord_cluster
@@ -1029,6 +1029,6 @@ defmodule Concord do
   See `Concord.Txn.commit/2`.
   """
   def txn(spec, opts \\ []) do
-    Concord.Txn.commit(spec, opts)
+    Txn.commit(spec, opts)
   end
 end

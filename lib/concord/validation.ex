@@ -7,6 +7,8 @@ defmodule Concord.Validation do
   Also enforces depth and size limits.
   """
 
+  alias Concord.KV.Selector
+
   @max_depth 100
 
   @doc """
@@ -143,7 +145,16 @@ defmodule Concord.Validation do
       else: :ok
   end
 
-  @valid_compare_fields [:exists, :value, :field, :version, :create_revision, :mod_revision, :lease, :ttl]
+  @valid_compare_fields [
+    :exists,
+    :value,
+    :field,
+    :version,
+    :create_revision,
+    :mod_revision,
+    :lease,
+    :ttl
+  ]
   @valid_compare_ops [:==, :!=, :>, :>=, :<, :<=]
 
   defp validate_compares(compares) do
@@ -192,8 +203,11 @@ defmodule Concord.Validation do
        when is_integer(limit) and limit <= max_range,
        do: :ok
 
-  defp validate_operation({:get, {:prefix, _}, _}, _), do: {:error, {:invalid_txn, :missing_range_limit}}
-  defp validate_operation({:get, {:range, _, _}, _}, _), do: {:error, {:invalid_txn, :missing_range_limit}}
+  defp validate_operation({:get, {:prefix, _}, _}, _),
+    do: {:error, {:invalid_txn, :missing_range_limit}}
+
+  defp validate_operation({:get, {:range, _, _}, _}, _),
+    do: {:error, {:invalid_txn, :missing_range_limit}}
 
   defp validate_operation({:put, key, _value, opts}, _max_range) when is_binary(key) do
     ttl = Map.get(opts, :ttl)
@@ -208,8 +222,7 @@ defmodule Concord.Validation do
   end
 
   defp validate_operation({:delete, selector, _opts}, _max_range) do
-    Concord.KV.Selector.validate(selector)
-    |> case do
+    case Selector.validate(selector) do
       :ok -> :ok
       {:error, _} -> {:error, {:invalid_txn, :invalid_selector}}
     end

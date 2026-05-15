@@ -47,8 +47,7 @@ defmodule Concord.Sync.ChangeLog do
     limit = Keyword.get(opts, :limit, 1000)
 
     match_spec = [
-      {{{:"$1", :"$2"}, :"$3"},
-       [{:>=, :"$1", from_revision}, {:"=<", :"$1", to_revision}],
+      {{{:"$1", :"$2"}, :"$3"}, [{:>=, :"$1", from_revision}, {:"=<", :"$1", to_revision}],
        [:"$3"]}
     ]
 

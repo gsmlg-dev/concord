@@ -114,7 +114,6 @@ defmodule Concord.Lease do
 
     case :ra.leader_query(server_id(), mfa, timeout) do
       {:ok, {{_, _}, result}, _} -> result
-      {:ok, result, _} -> result
       {:timeout, _} -> {:error, :timeout}
       {:error, :noproc} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
@@ -131,7 +130,6 @@ defmodule Concord.Lease do
 
     case :ra.leader_query(server_id(), mfa, timeout) do
       {:ok, {{_, _}, result}, _} -> result
-      {:ok, result, _} -> result
       {:timeout, _} -> {:error, :timeout}
       {:error, :noproc} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}

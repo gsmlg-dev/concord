@@ -193,7 +193,11 @@ defmodule Concord.StateMachine do
     # Build new record
     new_record = %Record{
       value: value,
-      create_revision: if(prev_record && prev_record.version > 0, do: prev_record.create_revision, else: commit_rev),
+      create_revision:
+        if(prev_record && prev_record.version > 0,
+          do: prev_record.create_revision,
+          else: commit_rev
+        ),
       mod_revision: commit_rev,
       version: if(prev_record && prev_record.version > 0, do: prev_record.version + 1, else: 1),
       expires_at: expires_at,
@@ -254,7 +258,11 @@ defmodule Concord.StateMachine do
     # Build new record
     new_record = %Record{
       value: value,
-      create_revision: if(prev_record && prev_record.version > 0, do: prev_record.create_revision, else: commit_rev),
+      create_revision:
+        if(prev_record && prev_record.version > 0,
+          do: prev_record.create_revision,
+          else: commit_rev
+        ),
       mod_revision: commit_rev,
       version: if(prev_record && prev_record.version > 0, do: prev_record.version + 1, else: 1),
       expires_at: expires_at,
@@ -1219,9 +1227,7 @@ defmodule Concord.StateMachine do
       end
 
     match_spec = [
-      {{:"$1", :"$2"},
-       [{:>=, :"$1", start_key}, {:<, :"$1", end_key}],
-       [{{:"$1", :"$2"}}]}
+      {{:"$1", :"$2"}, [{:>=, :"$1", start_key}, {:<, :"$1", end_key}], [{{:"$1", :"$2"}}]}
     ]
 
     # Fetch limit+1 to detect has_more
@@ -1759,15 +1765,23 @@ defmodule Concord.StateMachine do
 
   defp get_record_value_for_compare(key, now) do
     case get_current_record(key) do
-      nil -> nil
-      record -> if Record.expired?(record, now) or record.version == 0, do: nil, else: Compression.decompress(record.value)
+      nil ->
+        nil
+
+      record ->
+        if Record.expired?(record, now) or record.version == 0,
+          do: nil,
+          else: Compression.decompress(record.value)
     end
   end
 
   defp get_record_field_for_compare(key, now, field, default) do
     case get_current_record(key) do
-      nil -> default
-      record -> if Record.expired?(record, now), do: default, else: Map.get(record, field, default)
+      nil ->
+        default
+
+      record ->
+        if Record.expired?(record, now), do: default, else: Map.get(record, field, default)
     end
   end
 
@@ -1813,9 +1827,7 @@ defmodule Concord.StateMachine do
       end
 
     match_spec = [
-      {{:"$1", :"$2"},
-       [{:>=, :"$1", start_key}, {:<, :"$1", end_key}],
-       [{{:"$1", :"$2"}}]}
+      {{:"$1", :"$2"}, [{:>=, :"$1", start_key}, {:<, :"$1", end_key}], [{{:"$1", :"$2"}}]}
     ]
 
     kvs =
@@ -1847,7 +1859,11 @@ defmodule Concord.StateMachine do
 
     new_record = %Record{
       value: value,
-      create_revision: if(prev_record && prev_record.version > 0, do: prev_record.create_revision, else: commit_rev),
+      create_revision:
+        if(prev_record && prev_record.version > 0,
+          do: prev_record.create_revision,
+          else: commit_rev
+        ),
       mod_revision: commit_rev,
       version: if(prev_record && prev_record.version > 0, do: prev_record.version + 1, else: 1),
       expires_at: expires_at,
@@ -1870,7 +1886,8 @@ defmodule Concord.StateMachine do
 
     keys_to_delete =
       case selector do
-        {:key, key} -> [key]
+        {:key, key} ->
+          [key]
 
         {:prefix, p} ->
           end_key = p <> <<0xFF>>
