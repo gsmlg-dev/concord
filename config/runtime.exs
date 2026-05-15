@@ -18,10 +18,39 @@ config :concord,
   cluster_name: :concord_cluster,
   data_dir: data_dir
 
+# Ra needs its own data_dir for WAL segments and snapshots.
+# In Ra 3.0+, the `systems` config auto-starts named systems on boot.
+ra_data_dir = Path.join(data_dir, "ra")
+File.mkdir_p!(ra_data_dir)
+
+config :ra,
+  data_dir: :erlang.binary_to_list(ra_data_dir),
+  systems: [default: %{}]
+
 # libcluster discovery strategy
-config :libcluster,
-  topologies: [
-    concord_gossip: [
-      strategy: Cluster.Strategy.Gossip
-    ]
-  ]
+# If CONCORD_CLUSTER_NODES is set (comma-separated), use Epmd strategy (deterministic).
+# Otherwise, use Gossip strategy (multicast auto-discovery).
+cluster_topology =
+  case System.get_env("CONCORD_CLUSTER_NODES") do
+    nil ->
+      [
+        concord_gossip: [
+          strategy: Cluster.Strategy.Gossip
+        ]
+      ]
+
+    nodes_str ->
+      nodes =
+        nodes_str
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.to_atom(String.trim(&1)))
+
+      [
+        concord_epmd: [
+          strategy: Cluster.Strategy.Epmd,
+          config: [hosts: nodes]
+        ]
+      ]
+  end
+
+config :libcluster, topologies: cluster_topology

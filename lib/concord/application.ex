@@ -36,6 +36,7 @@ defmodule Concord.Application do
 
   defp init_cluster do
     wait_for_ra_system()
+    wait_for_peers()
 
     node_id = node_id()
     cluster_name = :concord_cluster
@@ -61,6 +62,10 @@ defmodule Concord.Application do
       initial_members: server_ids
     }
 
+    Logger.info(
+      "Starting Raft with #{length(nodes)} members: #{inspect(Enum.map(nodes, &to_string/1))}"
+    )
+
     case :ra.start_server(:default, server_config) do
       :ok ->
         Logger.info("Concord cluster started on #{node()}")
@@ -81,6 +86,42 @@ defmodule Concord.Application do
     end
   end
 
+  # Wait for libcluster to discover peer nodes. If CONCORD_CLUSTER_NODES is set,
+  # we know how many peers to expect. Otherwise, proceed after a short delay.
+  defp wait_for_peers do
+    case System.get_env("CONCORD_CLUSTER_NODES") do
+      nil ->
+        # Gossip mode: give discovery a chance
+        Process.sleep(2000)
+
+      nodes_str ->
+        expected =
+          nodes_str
+          |> String.split(",", trim: true)
+          |> Enum.map(&String.to_atom(String.trim(&1)))
+          |> Enum.reject(&(&1 == node()))
+          |> length()
+
+        wait_for_peer_count(expected, 30)
+    end
+  end
+
+  defp wait_for_peer_count(0, _attempts), do: :ok
+
+  defp wait_for_peer_count(_expected, 0) do
+    Logger.warning("Peer discovery timed out, starting with #{length(Node.list())} peers")
+  end
+
+  defp wait_for_peer_count(expected, attempts) do
+    if length(Node.list()) >= expected do
+      Logger.info("All #{expected} peers discovered")
+      :ok
+    else
+      Process.sleep(1000)
+      wait_for_peer_count(expected, attempts - 1)
+    end
+  end
+
   defp node_id do
     {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
   end
@@ -94,8 +135,21 @@ defmodule Concord.Application do
         :ok
 
       _ ->
-        Process.sleep(200)
-        wait_for_ra_system(attempts - 1)
+        # In release mode, the default Ra system may not be auto-started.
+        # Try to start it explicitly.
+        case :ra_system.start_default() do
+          {:ok, _} ->
+            Logger.info("Ra default system started explicitly")
+            :ok
+
+          {:error, {:already_started, _}} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Ra default system not ready: #{inspect(reason)}, retrying...")
+            Process.sleep(500)
+            wait_for_ra_system(attempts - 1)
+        end
     end
   end
 end

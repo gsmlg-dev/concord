@@ -2,20 +2,18 @@ name: E2E Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
-  # Allow manual trigger
+    branches: [main]
   workflow_dispatch:
-  # Run nightly
   schedule:
-    - cron: '0 2 * * *'  # Run at 2 AM UTC daily
+    - cron: '0 2 * * *'
 
 jobs:
-  e2e-distributed:
-    name: E2E Distributed Tests
+  e2e:
+    name: E2E Release Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -38,61 +36,26 @@ jobs:
         with:
           path: |
             deps
-            _build
-          key: ${{ runner.os }}-e2e-${{ matrix.otp }}-${{ matrix.elixir }}-mix-${{ hashFiles('**/mix.lock') }}
+            _build/prod
+          key: ${{ runner.os }}-e2e-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-e2e-${{ matrix.otp }}-${{ matrix.elixir }}-mix-
+            ${{ runner.os }}-e2e-${{ matrix.otp }}-${{ matrix.elixir }}-
 
       - name: Install dependencies
         run: |
           mix local.hex --force
           mix local.rebar --force
-          MIX_ENV=e2e_test mix deps.get
+          MIX_ENV=prod mix deps.get
 
-      - name: Compile e2e tests
-        run: MIX_ENV=e2e_test mix compile
-        env:
-          MIX_ENV: e2e_test
-
-      - name: Start EPMD (Erlang Port Mapper Daemon)
+      - name: Start EPMD
         run: epmd -daemon
 
-      - name: Run E2E Distributed Tests
-        run: |
-          echo "Running e2e distributed tests with manual node spawning..."
-          ./scripts/run_e2e_tests.sh e2e_test/distributed/
-        env:
-          MIX_ENV: e2e_test
+      - name: Run E2E tests
+        run: ./e2e_test/scripts/run_e2e.sh
 
-      - name: Upload test results
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-results-${{ matrix.otp }}-${{ matrix.elixir }}
-          path: |
-            _build/e2e_test/test-junit-report.xml
-            data/e2e_test/
-
-  # NOTE: e2e-docker job removed - no Docker tests exist yet
-  # Add back when e2e_test/docker/ tests are implemented
-
-  e2e-summary:
-    name: E2E Test Summary
-    runs-on: ubuntu-latest
-    needs: [e2e-distributed]
-    if: always()
-
-    steps:
-      - name: Check test results
-        run: |
-          echo "E2E Distributed Tests: ${{ needs.e2e-distributed.result }}"
-          echo ""
-          if [ "${{ needs.e2e-distributed.result }}" != "success" ]; then
-            echo "❌ E2E distributed tests failed"
-            exit 1
-          else
-            echo "✅ E2E tests skipped (known LocalCluster/OTP 28 incompatibility)"
-            echo ""
-            echo "Automated tests are disabled until upstream fix is available."
-            echo "Use manual testing: see e2e_test/README.md and scripts/cluster_connect.exs"
-          fi
+          name: e2e-logs-${{ matrix.otp }}-${{ matrix.elixir }}
+          path: _build/e2e_data/

@@ -7,6 +7,7 @@ defmodule Concord.MixProject do
       version: "1.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
+      releases: releases(),
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
@@ -111,12 +112,19 @@ defmodule Concord.MixProject do
     ]
   end
 
+  defp releases do
+    [
+      concord: [
+        include_executables_for: [:unix],
+        applications: [runtime_tools: :permanent]
+      ]
+    ]
+  end
+
   defp aliases do
     [
       test: "test --no-start",
-      "test.e2e": "cmd ./scripts/run_e2e_tests.sh e2e_test/",
-      "test.e2e.distributed": "cmd ./scripts/run_e2e_tests.sh e2e_test/distributed/",
-      "test.e2e.docker": "cmd ./scripts/run_e2e_tests.sh e2e_test/docker/",
+      "test.e2e": "cmd ./e2e_test/scripts/run_e2e.sh",
       lint: ["credo --strict", "dialyzer --ignore-exit-status"]
     ]
   end
