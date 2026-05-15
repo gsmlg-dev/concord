@@ -7,6 +7,7 @@ defmodule Concord.Application do
   require Logger
 
   alias Concord.{StateMachine, Telemetry, TTL}
+  alias Concord.Sync.{Dispatcher, WatchHub}
 
   @impl true
   def start(_type, _args) do
@@ -16,6 +17,8 @@ defmodule Concord.Application do
       {Telemetry.Poller, []},
       {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
       {TTL, []},
+      {Dispatcher, []},
+      {WatchHub, []},
       {Task, fn -> init_cluster() end}
     ]
 

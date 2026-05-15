@@ -1004,4 +1004,31 @@ defmodule Concord do
         {:error, :invalid_condition}
     end
   end
+
+  # ══════════════════════════════════════════════
+  # v2 API convenience delegates
+  # ══════════════════════════════════════════════
+
+  @doc """
+  Returns the current cluster revision.
+
+  See `Concord.KV.revision/1`.
+  """
+  defdelegate revision(opts \\ []), to: Concord.KV
+
+  @doc """
+  Lists keys matching a prefix or range selector.
+
+  See `Concord.KV.list/1`.
+  """
+  defdelegate list(opts), to: Concord.KV
+
+  @doc """
+  Commits a transaction atomically.
+
+  See `Concord.Txn.commit/2`.
+  """
+  def txn(spec, opts \\ []) do
+    Concord.Txn.commit(spec, opts)
+  end
 end

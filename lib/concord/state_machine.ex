@@ -28,6 +28,7 @@ defmodule Concord.StateMachine do
   alias Concord.Compression
   alias Concord.Index
   alias Concord.Index.Extractor
+  alias Concord.KV.Record
 
   # Emit release_cursor every N commands to allow log compaction
   @snapshot_interval 1000
@@ -47,10 +48,12 @@ defmodule Concord.StateMachine do
   # Value Format Helpers
   # ──────────────────────────────────────────────
 
+  # v2: create a Record struct from stored data
   defp format_value(value, expires_at) do
     %{value: value, expires_at: expires_at}
   end
 
+  defp extract_value(%Record{} = rec), do: {rec.value, rec.expires_at}
   defp extract_value(%{value: value, expires_at: expires_at}), do: {value, expires_at}
   defp extract_value({value, expires_at}) when is_integer(expires_at), do: {value, expires_at}
   defp extract_value(value), do: {value, nil}
@@ -65,7 +68,10 @@ defmodule Concord.StateMachine do
   defp default_state_fields do
     %{
       indexes: %{},
-      command_count: 0
+      command_count: 0,
+      revision: 0,
+      compact_revision: 0,
+      next_lease_id: 1
     }
   end
 
@@ -80,6 +86,9 @@ defmodule Concord.StateMachine do
   @impl :ra_machine
   def init(_config) do
     ensure_ets_table(:concord_store, [:ordered_set, :named_table])
+    ensure_ets_table(:concord_current, [:ordered_set, :named_table])
+    ensure_ets_table(:concord_history, [:ordered_set, :named_table])
+    ensure_ets_table(:concord_leases, [:set, :named_table])
 
     {:concord_kv, default_state_fields()}
   end
@@ -135,6 +144,9 @@ defmodule Concord.StateMachine do
       data
       |> Map.delete(:__snapshot_version__)
       |> Map.delete(:__kv_data__)
+      |> Map.delete(:__current_data__)
+      |> Map.delete(:__history_data__)
+      |> Map.delete(:__lease_data__)
       |> Map.delete(:__index_ets__)
 
     {:concord_kv, ensure_state_fields(clean)}
@@ -157,15 +169,62 @@ defmodule Concord.StateMachine do
     apply_command(meta, {:put, key, value, nil}, {:concord_kv, data})
   end
 
-  def apply_command(meta, {:put, key, value, expires_at}, {:concord_kv, data}) do
+  # v2 put with map opts: {:put, key, value, %{ttl: _, content_type: _, ...}}
+  def apply_command(meta, {:put, key, value, %{} = opts}, {:concord_kv, data}) do
+    ttl = Map.get(opts, :ttl)
+    expires_at = if ttl, do: meta_time(meta) + ttl, else: nil
+    content_type = Map.get(opts, :content_type)
+    kv_metadata = Map.get(opts, :metadata, %{})
+    lease_id = Map.get(opts, :lease)
+    return_prev = Map.get(opts, :prev_kv, false)
+
     start_time = System.monotonic_time()
+    commit_rev = Map.get(data, :revision, 0) + 1
 
-    old_value = get_decompressed_value(key)
+    # Look up current record
+    prev_record = get_current_record(key)
+    old_value = if prev_record, do: Compression.decompress(prev_record.value), else: nil
 
-    formatted_value = format_value(value, expires_at)
-    :ets.insert(:concord_store, {key, formatted_value})
+    # Copy previous to history if exists
+    if prev_record do
+      :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+    end
+
+    # Build new record
+    new_record = %Record{
+      value: value,
+      create_revision: if(prev_record && prev_record.version > 0, do: prev_record.create_revision, else: commit_rev),
+      mod_revision: commit_rev,
+      version: if(prev_record && prev_record.version > 0, do: prev_record.version + 1, else: 1),
+      expires_at: expires_at,
+      lease_id: lease_id,
+      content_type: content_type,
+      metadata: kv_metadata
+    }
+
+    :ets.insert(:concord_current, {key, new_record})
+
+    # Legacy table compat
+    :ets.insert(:concord_store, {key, format_value(value, expires_at)})
 
     update_indexes_on_put(data, key, old_value, Compression.decompress(value))
+
+    # Track key in lease if attached
+    if lease_id do
+      ensure_ets_table(:concord_leases, [:set, :named_table])
+
+      case :ets.lookup(:concord_leases, lease_id) do
+        [{^lease_id, lease}] ->
+          unless key in lease.keys do
+            :ets.insert(:concord_leases, {lease_id, %{lease | keys: [key | lease.keys]}})
+          end
+
+        _ ->
+          :ok
+      end
+    end
+
+    new_data = Map.put(data, :revision, commit_rev)
 
     duration = System.monotonic_time() - start_time
 
@@ -175,18 +234,140 @@ defmodule Concord.StateMachine do
       %{operation: :put, key: key, index: Map.get(meta, :index), has_ttl: expires_at != nil}
     )
 
-    {{:concord_kv, data}, :ok, []}
+    result = %{revision: commit_rev, prev_kv: if(return_prev, do: prev_record, else: nil)}
+    {{:concord_kv, new_data}, result, []}
   end
 
+  # Legacy put with bare expires_at
+  def apply_command(meta, {:put, key, value, expires_at}, {:concord_kv, data}) do
+    start_time = System.monotonic_time()
+    commit_rev = Map.get(data, :revision, 0) + 1
+
+    old_value = get_decompressed_value(key)
+    prev_record = get_current_record(key)
+
+    # Copy previous to history if exists
+    if prev_record do
+      :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+    end
+
+    # Build new record
+    new_record = %Record{
+      value: value,
+      create_revision: if(prev_record && prev_record.version > 0, do: prev_record.create_revision, else: commit_rev),
+      mod_revision: commit_rev,
+      version: if(prev_record && prev_record.version > 0, do: prev_record.version + 1, else: 1),
+      expires_at: expires_at,
+      lease_id: nil,
+      content_type: nil,
+      metadata: %{}
+    }
+
+    :ets.insert(:concord_current, {key, new_record})
+
+    formatted_value = format_value(value, expires_at)
+    :ets.insert(:concord_store, {key, formatted_value})
+
+    update_indexes_on_put(data, key, old_value, Compression.decompress(value))
+    new_data = Map.put(data, :revision, commit_rev)
+
+    duration = System.monotonic_time() - start_time
+
+    :telemetry.execute(
+      [:concord, :operation, :apply],
+      %{duration: duration},
+      %{operation: :put, key: key, index: Map.get(meta, :index), has_ttl: expires_at != nil}
+    )
+
+    {{:concord_kv, new_data}, :ok, []}
+  end
+
+  # v2 delete with map opts: {:delete, key, %{prev_kv: bool}}
+  def apply_command(meta, {:delete, key, %{} = opts}, {:concord_kv, data}) do
+    start_time = System.monotonic_time()
+    return_prev = Map.get(opts, :prev_kv, false)
+
+    prev_record = get_current_record(key)
+    old_value = get_decompressed_value(key)
+
+    # Only advance revision if key actually exists
+    if old_value != nil do
+      commit_rev = Map.get(data, :revision, 0) + 1
+
+      # Copy current to history
+      if prev_record do
+        :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+      end
+
+      # Create tombstone in history
+      tombstone = Record.tombstone(key, commit_rev, prev_record)
+      :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
+
+      # Remove from current
+      :ets.delete(:concord_current, key)
+      :ets.delete(:concord_store, key)
+
+      if old_value != nil do
+        remove_from_all_indexes(data, key, old_value)
+      end
+
+      new_data = Map.put(data, :revision, commit_rev)
+
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :operation, :apply],
+        %{duration: duration},
+        %{operation: :delete, key: key, index: Map.get(meta, :index)}
+      )
+
+      result = %{revision: commit_rev, prev_kv: if(return_prev, do: prev_record, else: nil)}
+      {{:concord_kv, new_data}, result, []}
+    else
+      duration = System.monotonic_time() - start_time
+
+      :telemetry.execute(
+        [:concord, :operation, :apply],
+        %{duration: duration},
+        %{operation: :delete, key: key, index: Map.get(meta, :index)}
+      )
+
+      result = %{revision: Map.get(data, :revision, 0), prev_kv: nil}
+      {{:concord_kv, data}, result, []}
+    end
+  end
+
+  # Legacy delete (bare key, no opts)
   def apply_command(meta, {:delete, key}, {:concord_kv, data}) do
     start_time = System.monotonic_time()
 
+    prev_record = get_current_record(key)
     old_value = get_decompressed_value(key)
-    :ets.delete(:concord_store, key)
+    has_key = old_value != nil
 
-    if old_value != nil do
-      remove_from_all_indexes(data, key, old_value)
-    end
+    new_data =
+      if has_key do
+        commit_rev = Map.get(data, :revision, 0) + 1
+
+        if prev_record do
+          :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+        end
+
+        tombstone = Record.tombstone(key, commit_rev, prev_record)
+        :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
+
+        :ets.delete(:concord_current, key)
+        :ets.delete(:concord_store, key)
+
+        if old_value != nil do
+          remove_from_all_indexes(data, key, old_value)
+        end
+
+        Map.put(data, :revision, commit_rev)
+      else
+        :ets.delete(:concord_store, key)
+        data
+      end
 
     duration = System.monotonic_time() - start_time
 
@@ -196,7 +377,7 @@ defmodule Concord.StateMachine do
       %{operation: :delete, key: key, index: Map.get(meta, :index)}
     )
 
-    {{:concord_kv, data}, :ok, []}
+    {{:concord_kv, new_data}, :ok, []}
   end
 
   # put_if — Compare-and-swap (no anonymous functions in command)
@@ -572,6 +753,157 @@ defmodule Concord.StateMachine do
     {{:concord_kv, data}, {:ok, results}, []}
   end
 
+  # ══════════════════════════════════════════════
+  # TRANSACTION COMMAND
+  # ══════════════════════════════════════════════
+
+  def apply_command(meta, {:txn, spec}, {:concord_kv, data}) do
+    alias Concord.Txn.Result
+
+    compares = Map.get(spec, :compare, [])
+    success_ops = Map.get(spec, :success, [])
+    failure_ops = Map.get(spec, :failure, [])
+
+    now = meta_time(meta)
+
+    # Step 1: Evaluate all compares against pre-txn state
+    compare_ok? = Enum.all?(compares, &eval_compare(&1, now))
+
+    # Step 2: Select branch
+    branch = if compare_ok?, do: success_ops, else: failure_ops
+
+    # Step 3: Check if branch has mutating ops
+    mutating? = Enum.any?(branch, &mutating_op?/1)
+
+    # Step 4: Allocate revision if mutating
+    commit_rev =
+      if mutating?,
+        do: Map.get(data, :revision, 0) + 1,
+        else: Map.get(data, :revision, 0)
+
+    # Step 5: Execute ops in order with read-your-writes
+    {responses, new_data} =
+      Enum.reduce(branch, {[], data}, fn op, {resps, d} ->
+        {resp, d2} = execute_txn_op(op, d, commit_rev, meta)
+        {resps ++ [resp], d2}
+      end)
+
+    # Step 6: Update revision
+    final_data = if mutating?, do: Map.put(new_data, :revision, commit_rev), else: new_data
+
+    result = %Result{
+      succeeded: compare_ok?,
+      revision: commit_rev,
+      responses: responses
+    }
+
+    {{:concord_kv, final_data}, {:ok, result}, []}
+  end
+
+  # ══════════════════════════════════════════════
+  # LEASE COMMANDS
+  # ══════════════════════════════════════════════
+
+  def apply_command(meta, {:grant_lease, ttl_seconds, _opts}, {:concord_kv, data}) do
+    now = meta_time(meta)
+    lease_id = Map.get(data, :next_lease_id, 1)
+    commit_rev = Map.get(data, :revision, 0) + 1
+
+    lease = %{
+      id: lease_id,
+      ttl: ttl_seconds,
+      expires_at: now + ttl_seconds,
+      granted_at: commit_rev,
+      keys: []
+    }
+
+    ensure_ets_table(:concord_leases, [:set, :named_table])
+    :ets.insert(:concord_leases, {lease_id, lease})
+
+    new_data =
+      data
+      |> Map.put(:next_lease_id, lease_id + 1)
+      |> Map.put(:revision, commit_rev)
+
+    :telemetry.execute(
+      [:concord, :lease, :granted],
+      %{ttl: ttl_seconds, lease_id: lease_id},
+      %{index: Map.get(meta, :index)}
+    )
+
+    {{:concord_kv, new_data}, {:ok, %{lease_id: lease_id, ttl: ttl_seconds}}, []}
+  end
+
+  def apply_command(meta, {:keep_alive_lease, lease_id, _opts}, {:concord_kv, data}) do
+    now = meta_time(meta)
+    ensure_ets_table(:concord_leases, [:set, :named_table])
+
+    case :ets.lookup(:concord_leases, lease_id) do
+      [{^lease_id, lease}] ->
+        updated = %{lease | expires_at: now + lease.ttl}
+        :ets.insert(:concord_leases, {lease_id, updated})
+
+        :telemetry.execute(
+          [:concord, :lease, :renewed],
+          %{lease_id: lease_id, ttl: lease.ttl},
+          %{index: Map.get(meta, :index)}
+        )
+
+        {{:concord_kv, data}, :ok, []}
+
+      [] ->
+        {{:concord_kv, data}, {:error, :lease_not_found}, []}
+    end
+  end
+
+  def apply_command(meta, {:revoke_lease, lease_id, _opts}, {:concord_kv, data}) do
+    ensure_ets_table(:concord_leases, [:set, :named_table])
+
+    case :ets.lookup(:concord_leases, lease_id) do
+      [{^lease_id, lease}] ->
+        commit_rev = Map.get(data, :revision, 0) + 1
+
+        # Delete all attached keys
+        deleted =
+          Enum.count(lease.keys, fn key ->
+            prev = get_current_record(key)
+
+            if prev && prev.version > 0 do
+              :ets.insert(:concord_history, {{key, prev.mod_revision}, prev})
+              tombstone = Record.tombstone(key, commit_rev, prev)
+              :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
+              :ets.delete(:concord_current, key)
+              :ets.delete(:concord_store, key)
+
+              old_val = Compression.decompress(prev.value)
+              if old_val, do: remove_from_all_indexes(data, key, old_val)
+              true
+            else
+              false
+            end
+          end)
+
+        :ets.delete(:concord_leases, lease_id)
+        new_data = Map.put(data, :revision, commit_rev)
+
+        :telemetry.execute(
+          [:concord, :lease, :revoked],
+          %{lease_id: lease_id, deleted_keys: deleted},
+          %{index: Map.get(meta, :index)}
+        )
+
+        {{:concord_kv, new_data}, {:ok, %{deleted_keys: deleted}}, []}
+
+      [] ->
+        {{:concord_kv, data}, {:error, :lease_not_found}, []}
+    end
+  end
+
+  # Expire lease (triggered by periodic tick)
+  def apply_command(meta, {:expire_lease, lease_id}, {:concord_kv, data}) do
+    apply_command(meta, {:revoke_lease, lease_id, %{}}, {:concord_kv, data})
+  end
+
   # Catch-all for unknown commands
   def apply_command(meta, command, {:concord_kv, data}) do
     :telemetry.execute(
@@ -796,6 +1128,162 @@ defmodule Concord.StateMachine do
     end
   end
 
+  # ──────────────────────────────────────────────
+  # v2 Query Handlers
+  # ──────────────────────────────────────────────
+
+  # Return full Record struct for a key
+  def query({:get_record, key}, {:concord_kv, _data}) do
+    now = System.system_time(:second)
+
+    case :ets.lookup(:concord_current, key) do
+      [{^key, %Record{} = record}] ->
+        if Record.expired?(record, now), do: {:error, :not_found}, else: {:ok, record}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  # Time-travel read: get value at a specific revision
+  def query({:get, key, revision: rev}, {:concord_kv, data}) do
+    compact_rev = Map.get(data, :compact_revision, 0)
+
+    if rev <= compact_rev do
+      {:error, {:compacted, compact_rev}}
+    else
+      # Check current first
+      case :ets.lookup(:concord_current, key) do
+        [{^key, %Record{mod_revision: mod_rev} = record}] when mod_rev <= rev ->
+          if Record.tombstone?(record), do: {:error, :not_found}, else: {:ok, record.value}
+
+        _ ->
+          # Walk history for the latest version at or before rev
+          find_record_at_revision(key, rev)
+      end
+    end
+  end
+
+  # Get current cluster revision
+  def query(:get_revision, {:concord_kv, data}) do
+    {:ok, Map.get(data, :revision, 0)}
+  end
+
+  # Key history
+  def query({:history, key, opts}, {:concord_kv, data}) do
+    from_rev = Keyword.get(opts, :from_revision, 0)
+    to_rev = Keyword.get(opts, :to_revision, Map.get(data, :revision, 0))
+    limit = Keyword.get(opts, :limit, 100)
+    compact_rev = Map.get(data, :compact_revision, 0)
+
+    if from_rev <= compact_rev do
+      {:error, {:compacted, compact_rev}}
+    else
+      # Collect from history table
+      history =
+        :ets.select(:concord_history, [
+          {{{:"$1", :"$2"}, :"$3"},
+           [{:==, :"$1", key}, {:>=, :"$2", from_rev}, {:"=<", :"$2", to_rev}],
+           [{{:"$2", :"$3"}}]}
+        ])
+        |> Enum.sort_by(&elem(&1, 0))
+        |> Enum.take(limit)
+        |> Enum.map(&elem(&1, 1))
+
+      # Also include current if in range
+      current =
+        case :ets.lookup(:concord_current, key) do
+          [{^key, %Record{mod_revision: mr} = rec}]
+          when mr >= from_rev and mr <= to_rev ->
+            [rec]
+
+          _ ->
+            []
+        end
+
+      all = (history ++ current) |> Enum.sort_by(& &1.mod_revision) |> Enum.take(limit)
+      {:ok, all}
+    end
+  end
+
+  # List by prefix or range
+  def query({:list, selector, list_opts}, {:concord_kv, _data}) do
+    now = System.system_time(:second)
+    limit = Map.get(list_opts, :limit, 1000)
+    keys_only = Map.get(list_opts, :keys_only, false)
+
+    {start_key, end_key} =
+      case selector do
+        {:prefix, p} -> {p, p <> <<0xFF>>}
+        {:range, s, e} -> {s, e}
+      end
+
+    match_spec = [
+      {{:"$1", :"$2"},
+       [{:>=, :"$1", start_key}, {:<, :"$1", end_key}],
+       [{{:"$1", :"$2"}}]}
+    ]
+
+    # Fetch limit+1 to detect has_more
+    results =
+      :ets.select(:concord_current, match_spec)
+      |> Enum.reduce([], fn {key, %Record{} = rec}, acc ->
+        if Record.expired?(rec, now), do: acc, else: [{key, rec} | acc]
+      end)
+      |> Enum.sort_by(&elem(&1, 0))
+
+    has_more = length(results) > limit
+    trimmed = Enum.take(results, limit)
+
+    records =
+      if keys_only do
+        Enum.map(trimmed, fn {key, rec} -> %{rec | value: nil} |> Map.put(:key, key) end)
+      else
+        Enum.map(trimmed, fn {key, rec} -> Map.put(rec, :key, key) end)
+      end
+
+    last_key = if trimmed != [], do: elem(List.last(trimmed), 0), else: nil
+    {:ok, records, %{has_more: has_more, last_key: last_key}}
+  end
+
+  # Lease queries
+  def query({:lease_info, lease_id}, {:concord_kv, _data}) do
+    now = System.system_time(:second)
+
+    case :ets.whereis(:concord_leases) do
+      :undefined ->
+        {:error, :lease_not_found}
+
+      _ ->
+        case :ets.lookup(:concord_leases, lease_id) do
+          [{^lease_id, lease}] ->
+            remaining = max(0, lease.expires_at - now)
+            {:ok, Map.put(lease, :remaining, remaining)}
+
+          [] ->
+            {:error, :lease_not_found}
+        end
+    end
+  end
+
+  def query(:list_leases, {:concord_kv, _data}) do
+    now = System.system_time(:second)
+
+    leases =
+      case :ets.whereis(:concord_leases) do
+        :undefined ->
+          []
+
+        _ ->
+          :ets.tab2list(:concord_leases)
+          |> Enum.map(fn {_id, lease} ->
+            Map.put(lease, :remaining, max(0, lease.expires_at - now))
+          end)
+      end
+
+    {:ok, leases}
+  end
+
   # Query handlers for snapshot format state (before first apply normalizes it)
   def query(query_cmd, %{__concord_snapshot_version__: 3, state: state_data}) do
     query(query_cmd, {:concord_kv, state_data})
@@ -815,6 +1303,15 @@ defmodule Concord.StateMachine do
 
   defp build_release_cursor_state({:concord_kv, data}) do
     kv_data = :ets.tab2list(:concord_store)
+    current_data = :ets.tab2list(:concord_current)
+    history_data = :ets.tab2list(:concord_history)
+
+    lease_data =
+      case :ets.whereis(:concord_leases) do
+        :undefined -> []
+        _ -> :ets.tab2list(:concord_leases)
+      end
+
     indexes = Map.get(data, :indexes, %{})
 
     # Capture index ETS data
@@ -834,6 +1331,9 @@ defmodule Concord.StateMachine do
      Map.merge(data, %{
        __snapshot_version__: 3,
        __kv_data__: kv_data,
+       __current_data__: current_data,
+       __history_data__: history_data,
+       __lease_data__: lease_data,
        __index_ets__: index_ets
      })}
   end
@@ -865,12 +1365,28 @@ defmodule Concord.StateMachine do
   end
 
   defp rebuild_all_ets_from_snapshot(data) do
-    # Rebuild main KV store
+    # Rebuild main KV store (legacy)
     ensure_ets_table(:concord_store, [:ordered_set, :named_table])
     :ets.delete_all_objects(:concord_store)
 
     Enum.each(Map.get(data, :__kv_data__, []), fn entry ->
       :ets.insert(:concord_store, entry)
+    end)
+
+    # Rebuild v2 current table
+    ensure_ets_table(:concord_current, [:ordered_set, :named_table])
+    :ets.delete_all_objects(:concord_current)
+
+    Enum.each(Map.get(data, :__current_data__, []), fn entry ->
+      :ets.insert(:concord_current, entry)
+    end)
+
+    # Rebuild v2 history table
+    ensure_ets_table(:concord_history, [:ordered_set, :named_table])
+    :ets.delete_all_objects(:concord_history)
+
+    Enum.each(Map.get(data, :__history_data__, []), fn entry ->
+      :ets.insert(:concord_history, entry)
     end)
 
     # Rebuild index ETS tables
@@ -884,6 +1400,14 @@ defmodule Concord.StateMachine do
       Enum.each(Map.get(index_ets, name, []), fn entry ->
         :ets.insert(table, entry)
       end)
+    end)
+
+    # Rebuild lease table
+    ensure_ets_table(:concord_leases, [:set, :named_table])
+    :ets.delete_all_objects(:concord_leases)
+
+    Enum.each(Map.get(data, :__lease_data__, []), fn entry ->
+      :ets.insert(:concord_leases, entry)
     end)
   end
 
@@ -908,6 +1432,33 @@ defmodule Concord.StateMachine do
 
       [] ->
         nil
+    end
+  end
+
+  # v2: Look up the full Record from concord_current table
+  defp get_current_record(key) do
+    case :ets.lookup(:concord_current, key) do
+      [{^key, %Record{} = record}] -> record
+      _ -> nil
+    end
+  end
+
+  # v2: Find the latest record version at or before a given revision
+  defp find_record_at_revision(key, target_rev) do
+    # Walk backward from target_rev in history
+    case :ets.prev(:concord_history, {key, target_rev + 1}) do
+      :"$end_of_table" ->
+        {:error, :not_found}
+
+      {^key, _rev} = hist_key ->
+        case :ets.lookup(:concord_history, hist_key) do
+          [{_, %Record{version: 0}}] -> {:error, :not_found}
+          [{_, %Record{} = record}] -> {:ok, record.value}
+          _ -> {:error, :not_found}
+        end
+
+      _ ->
+        {:error, :not_found}
     end
   end
 
@@ -1141,5 +1692,249 @@ defmodule Concord.StateMachine do
           {key, {:error, :not_found}}
       end
     end)
+  end
+
+  # ══════════════════════════════════════════════
+  # TRANSACTION HELPERS
+  # ══════════════════════════════════════════════
+
+  defp mutating_op?({:put, _, _, _}), do: true
+  defp mutating_op?({:delete, _, _}), do: true
+  defp mutating_op?({:touch, _, _, _}), do: true
+  defp mutating_op?(_), do: false
+
+  # Compare evaluation — each compare targets exactly one key
+  defp eval_compare({:exists, key, op, expected_bool}, now) do
+    record = get_current_record(key)
+    actual = record != nil and not Record.expired?(record, now) and record.version > 0
+    compare_values(op, actual, expected_bool)
+  end
+
+  defp eval_compare({:value, key, op, expected}, now) do
+    actual = get_record_value_for_compare(key, now)
+    compare_values(op, actual, expected)
+  end
+
+  defp eval_compare({:field, key, path, op, expected}, now) do
+    actual = get_record_value_for_compare(key, now)
+    extracted = extract_field(actual, path)
+    compare_values(op, extracted, expected)
+  end
+
+  defp eval_compare({:version, key, op, expected}, now) do
+    actual = get_record_field_for_compare(key, now, :version, 0)
+    compare_values(op, actual, expected)
+  end
+
+  defp eval_compare({:create_revision, key, op, expected}, now) do
+    actual = get_record_field_for_compare(key, now, :create_revision, 0)
+    compare_values(op, actual, expected)
+  end
+
+  defp eval_compare({:mod_revision, key, op, expected}, now) do
+    actual = get_record_field_for_compare(key, now, :mod_revision, 0)
+    compare_values(op, actual, expected)
+  end
+
+  defp eval_compare({:lease, key, op, expected}, now) do
+    actual = get_record_field_for_compare(key, now, :lease_id, nil)
+    compare_values(op, actual, expected)
+  end
+
+  defp eval_compare({:ttl, key, op, expected}, now) do
+    record = get_current_record(key)
+
+    actual =
+      cond do
+        record == nil -> nil
+        Record.expired?(record, now) -> nil
+        record.expires_at == nil -> nil
+        true -> max(0, record.expires_at - now)
+      end
+
+    compare_values(op, actual, expected)
+  end
+
+  defp eval_compare(_, _now), do: false
+
+  defp get_record_value_for_compare(key, now) do
+    case get_current_record(key) do
+      nil -> nil
+      record -> if Record.expired?(record, now) or record.version == 0, do: nil, else: Compression.decompress(record.value)
+    end
+  end
+
+  defp get_record_field_for_compare(key, now, field, default) do
+    case get_current_record(key) do
+      nil -> default
+      record -> if Record.expired?(record, now), do: default, else: Map.get(record, field, default)
+    end
+  end
+
+  defp extract_field(nil, _path), do: nil
+
+  defp extract_field(value, path) when is_list(path) do
+    Enum.reduce_while(path, value, fn
+      key, acc when is_map(acc) -> {:cont, Map.get(acc, key)}
+      _key, _acc -> {:halt, nil}
+    end)
+  end
+
+  defp compare_values(:==, a, b), do: a == b
+  defp compare_values(:!=, a, b), do: a != b
+  defp compare_values(:>, a, b) when is_number(a) and is_number(b), do: a > b
+  defp compare_values(:>=, a, b) when is_number(a) and is_number(b), do: a >= b
+  defp compare_values(:<, a, b) when is_number(a) and is_number(b), do: a < b
+  defp compare_values(:<=, a, b) when is_number(a) and is_number(b), do: a <= b
+  defp compare_values(_, _, _), do: false
+
+  # Execute a single operation within a txn branch
+  defp execute_txn_op({:get, {:key, key}, _opts}, data, _commit_rev, _meta) do
+    now = System.system_time(:second)
+    record = get_current_record(key)
+
+    kvs =
+      if record && not Record.expired?(record, now) && record.version > 0,
+        do: [record],
+        else: []
+
+    resp = {:get, {:key, key}, %{kvs: kvs, count: length(kvs)}}
+    {resp, data}
+  end
+
+  defp execute_txn_op({:get, selector, opts}, data, _commit_rev, _meta) do
+    now = System.system_time(:second)
+    limit = Map.get(opts, :limit, 1000)
+
+    {start_key, end_key} =
+      case selector do
+        {:prefix, p} -> {p, p <> <<0xFF>>}
+        {:range, s, e} -> {s, e}
+      end
+
+    match_spec = [
+      {{:"$1", :"$2"},
+       [{:>=, :"$1", start_key}, {:<, :"$1", end_key}],
+       [{{:"$1", :"$2"}}]}
+    ]
+
+    kvs =
+      :ets.select(:concord_current, match_spec)
+      |> Enum.reduce([], fn {_key, %Record{} = rec}, acc ->
+        if Record.expired?(rec, now) or rec.version == 0, do: acc, else: [rec | acc]
+      end)
+      |> Enum.sort_by(& &1.mod_revision)
+      |> Enum.take(limit)
+
+    resp = {:get, selector, %{kvs: kvs, count: length(kvs)}}
+    {resp, data}
+  end
+
+  defp execute_txn_op({:put, key, value, opts}, data, commit_rev, meta) do
+    return_prev = Map.get(opts, :prev_kv, false)
+    ttl = Map.get(opts, :ttl)
+    expires_at = if ttl, do: meta_time(meta) + ttl, else: nil
+    content_type = Map.get(opts, :content_type)
+    kv_metadata = Map.get(opts, :metadata, %{})
+    lease_id = Map.get(opts, :lease)
+
+    prev_record = get_current_record(key)
+    old_value = if prev_record, do: Compression.decompress(prev_record.value), else: nil
+
+    if prev_record do
+      :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+    end
+
+    new_record = %Record{
+      value: value,
+      create_revision: if(prev_record && prev_record.version > 0, do: prev_record.create_revision, else: commit_rev),
+      mod_revision: commit_rev,
+      version: if(prev_record && prev_record.version > 0, do: prev_record.version + 1, else: 1),
+      expires_at: expires_at,
+      lease_id: lease_id,
+      content_type: content_type,
+      metadata: kv_metadata || %{}
+    }
+
+    :ets.insert(:concord_current, {key, new_record})
+    :ets.insert(:concord_store, {key, format_value(value, expires_at)})
+
+    update_indexes_on_put(data, key, old_value, Compression.decompress(value))
+
+    resp = {:put, key, %{prev_kv: if(return_prev, do: prev_record, else: nil)}}
+    {resp, data}
+  end
+
+  defp execute_txn_op({:delete, selector, opts}, data, commit_rev, _meta) do
+    return_prev = Map.get(opts, :prev_kv, false)
+
+    keys_to_delete =
+      case selector do
+        {:key, key} -> [key]
+
+        {:prefix, p} ->
+          end_key = p <> <<0xFF>>
+
+          :ets.select(:concord_current, [
+            {{:"$1", :_}, [{:>=, :"$1", p}, {:<, :"$1", end_key}], [:"$1"]}
+          ])
+
+        {:range, s, e} ->
+          :ets.select(:concord_current, [
+            {{:"$1", :_}, [{:>=, :"$1", s}, {:<, :"$1", e}], [:"$1"]}
+          ])
+      end
+
+    prev_kvs =
+      Enum.flat_map(keys_to_delete, fn key ->
+        prev = get_current_record(key)
+
+        if prev && prev.version > 0 do
+          :ets.insert(:concord_history, {{key, prev.mod_revision}, prev})
+          tombstone = Record.tombstone(key, commit_rev, prev)
+          :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
+          :ets.delete(:concord_current, key)
+          :ets.delete(:concord_store, key)
+
+          old_val = Compression.decompress(prev.value)
+          if old_val, do: remove_from_all_indexes(data, key, old_val)
+
+          if return_prev, do: [prev], else: []
+        else
+          []
+        end
+      end)
+
+    resp = {:delete, selector, %{deleted: length(keys_to_delete), prev_kvs: prev_kvs}}
+    {resp, data}
+  end
+
+  defp execute_txn_op({:touch, key, ttl_seconds, _opts}, data, commit_rev, meta) do
+    now = meta_time(meta)
+
+    case get_current_record(key) do
+      nil ->
+        resp = {:touch, key, %{ttl: :not_found}}
+        {resp, data}
+
+      record ->
+        if Record.expired?(record, now) or record.version == 0 do
+          resp = {:touch, key, %{ttl: :not_found}}
+          {resp, data}
+        else
+          new_expires = now + ttl_seconds
+
+          updated = %{record | expires_at: new_expires, mod_revision: commit_rev}
+          :ets.insert(:concord_current, {key, updated})
+          :ets.insert(:concord_store, {key, format_value(record.value, new_expires)})
+
+          resp = {:touch, key, %{ttl: ttl_seconds}}
+          {resp, data}
+        end
+    end
+  end
+
+  defp execute_txn_op(_, data, _commit_rev, _meta) do
+    {{:error, :unsupported_op}, data}
   end
 end

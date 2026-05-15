@@ -78,6 +78,25 @@ config :concord,
     enabled: false,
     # Max events to buffer before back-pressure
     buffer_size: 10_000
+  ],
+  # v2: Transaction limits
+  txn: [
+    max_compare_ops: 64,
+    max_success_ops: 128,
+    max_failure_ops: 128,
+    max_txn_bytes: 1_000_000,
+    max_range_limit: 1_000
+  ],
+  # v2: Sync / change log
+  change_log_max_entries: 100_000,
+  # v2: Lease defaults
+  lease: [
+    # Enable periodic lease expiration tick
+    tick_enabled: true,
+    # Tick interval in seconds
+    tick_interval_seconds: 1,
+    # Max leases per cluster
+    max_leases: 10_000
   ]
 
 # OpenTelemetry configuration
