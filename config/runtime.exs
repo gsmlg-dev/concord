@@ -18,14 +18,16 @@ config :concord,
   cluster_name: :concord_cluster,
   data_dir: data_dir
 
-# Ra needs its own data_dir for WAL segments and snapshots.
-# In Ra 3.0+, the `systems` config auto-starts named systems on boot.
-ra_data_dir = Path.join(data_dir, "ra")
-File.mkdir_p!(ra_data_dir)
+# Ra data_dir configuration.
+# In production/release mode, we configure Ra's data_dir and ensure it exists.
+# In test mode, the test helper manages Ra separately.
+if config_env() == :prod do
+  ra_data_dir = Path.join(data_dir, "ra")
+  File.mkdir_p!(ra_data_dir)
 
-config :ra,
-  data_dir: :erlang.binary_to_list(ra_data_dir),
-  systems: [default: %{}]
+  config :ra,
+    data_dir: :erlang.binary_to_list(ra_data_dir)
+end
 
 # libcluster discovery strategy
 # If CONCORD_CLUSTER_NODES is set (comma-separated), use Epmd strategy (deterministic).
