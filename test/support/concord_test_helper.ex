@@ -4,7 +4,6 @@ defmodule Concord.TestHelper do
   """
 
   def start_test_cluster do
-    cleanup_test_data()
     ensure_applications_started()
     restart_ra_system()
 
@@ -18,8 +17,26 @@ defmodule Concord.TestHelper do
     ra_data_dir = "./nonode@nohost"
     data_dir = "./data/test_#{node()}"
 
-    File.rm_rf!(ra_data_dir)
-    File.rm_rf!(data_dir)
+    remove_path(ra_data_dir)
+    remove_path(data_dir)
+  end
+
+  defp remove_path(path, attempts \\ 3)
+
+  defp remove_path(path, attempts) when attempts > 1 do
+    case File.rm_rf(path) do
+      {:ok, _files} ->
+        :ok
+
+      {:error, _file, _reason} ->
+        Process.sleep(100)
+        remove_path(path, attempts - 1)
+    end
+  end
+
+  defp remove_path(path, _attempts) do
+    File.rm_rf!(path)
+    :ok
   end
 
   defp ensure_applications_started do
@@ -35,6 +52,8 @@ defmodule Concord.TestHelper do
     end
 
     Process.sleep(200)
+    cleanup_test_data()
+
     :ra_system.start_default()
     Process.sleep(100)
   end
@@ -114,7 +133,6 @@ defmodule Concord.TestHelper do
     end
 
     Process.sleep(200)
-    cleanup_test_data()
     restart_ra_system()
   end
 
@@ -147,18 +165,7 @@ defmodule Concord.TestHelper do
     # Give it more time to shut down completely
     Process.sleep(200)
 
-    # Clean up test data
-    data_dir = "./data/test_#{node()}"
-    File.rm_rf!(data_dir)
-
-    # Clean up ra data - this is critical for clean restarts
-    ra_data_dir = "./nonode@nohost"
-    File.rm_rf!(ra_data_dir)
-
-    # Double-check that ra data is gone
-    if File.exists?(ra_data_dir) do
-      File.rm_rf!(ra_data_dir)
-    end
+    cleanup_test_data()
   end
 
   def wait_for_cluster_ready(timeout \\ 10_000) do
