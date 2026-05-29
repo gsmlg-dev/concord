@@ -2,6 +2,13 @@ defmodule Concord.BackupTest do
   use ExUnit.Case, async: false
   alias Concord.StateMachine
 
+  describe "create/1" do
+    @tag :tmp_dir
+    test "returns actionable error when Ra server is unavailable", %{tmp_dir: tmp_dir} do
+      assert {:error, :cluster_not_ready} = Concord.Backup.create(path: tmp_dir)
+    end
+  end
+
   describe "Backup V2 format — state machine restore" do
     setup do
       state = StateMachine.init(%{})
