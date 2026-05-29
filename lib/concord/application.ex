@@ -35,7 +35,17 @@ defmodule Concord.Application do
   end
 
   defp init_cluster do
-    wait_for_ra_system()
+    case wait_for_ra_system() do
+      :ok ->
+        start_cluster()
+
+      {:error, reason} ->
+        Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp start_cluster do
     wait_for_peers()
 
     node_id = node_id()
@@ -127,29 +137,53 @@ defmodule Concord.Application do
   end
 
   defp wait_for_ra_system(attempts \\ 10)
-  defp wait_for_ra_system(0), do: :ok
+  defp wait_for_ra_system(0), do: {:error, :ra_system_not_started}
 
   defp wait_for_ra_system(attempts) do
-    case :ra_system.fetch(:default) do
-      %{} ->
+    case ensure_ra_system_ready() do
+      :ok ->
         :ok
 
-      _ ->
-        # In release mode, the default Ra system may not be auto-started.
-        # Try to start it explicitly.
-        case :ra_system.start_default() do
-          {:ok, _} ->
-            Logger.info("Ra default system started explicitly")
-            :ok
+      {:error, reason} ->
+        Logger.warning("Ra default system not ready: #{inspect(reason)}, retrying...")
+        Process.sleep(500)
+        wait_for_ra_system(attempts - 1)
+    end
+  end
 
-          {:error, {:already_started, _}} ->
-            :ok
+  defp ensure_ra_system_ready do
+    with {:ok, _started} <- Application.ensure_all_started(:ra),
+         :ok <- ensure_default_ra_system_started(),
+         true <- ra_system_ready?() do
+      :ok
+    else
+      false -> {:error, :ra_system_not_ready}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-          {:error, reason} ->
-            Logger.warning("Ra default system not ready: #{inspect(reason)}, retrying...")
-            Process.sleep(500)
-            wait_for_ra_system(attempts - 1)
-        end
+  defp ensure_default_ra_system_started do
+    if ra_system_ready?() do
+      :ok
+    else
+      case :ra_system.start_default() do
+        {:ok, _} ->
+          Logger.info("Ra default system started explicitly")
+          :ok
+
+        {:error, {:already_started, _}} ->
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp ra_system_ready? do
+    case :ra_system.lookup_name(:default, :server_sup) do
+      {:ok, server_sup} -> Process.whereis(server_sup) != nil
+      {:error, :system_not_started} -> false
     end
   end
 end
