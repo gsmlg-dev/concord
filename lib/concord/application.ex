@@ -13,17 +13,21 @@ defmodule Concord.Application do
   def start(_type, _args) do
     Telemetry.setup()
 
-    children = [
+    opts = [strategy: :one_for_one, name: Concord.Supervisor]
+    Supervisor.start_link(children(), opts)
+  end
+
+  @doc false
+  def children do
+    [
       {Telemetry.Poller, []},
-      {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
+      cluster_supervisor_child(),
       {TTL, []},
       {Dispatcher, []},
       {WatchHub, []},
       {Task, fn -> init_cluster() end}
     ]
-
-    opts = [strategy: :one_for_one, name: Concord.Supervisor]
-    Supervisor.start_link(children, opts)
+    |> Enum.reject(&is_nil/1)
   end
 
   @doc false
@@ -31,7 +35,22 @@ defmodule Concord.Application do
     Application.get_env(:concord, :prometheus_enabled, false)
   end
 
-  defp topologies do
+  @doc false
+  def topologies do
+    Application.get_env(:concord, :topologies) ||
+      Application.get_env(:libcluster, :topologies) ||
+      default_topologies()
+  end
+
+  defp cluster_supervisor_child do
+    if Application.get_env(:concord, :clustering, true) do
+      {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]}
+    else
+      nil
+    end
+  end
+
+  defp default_topologies do
     [
       concord: [
         strategy: Cluster.Strategy.Gossip
@@ -104,6 +123,14 @@ defmodule Concord.Application do
   # Wait for libcluster to discover peer nodes. If CONCORD_CLUSTER_NODES is set,
   # we know how many peers to expect. Otherwise, proceed after a short delay.
   defp wait_for_peers do
+    if Application.get_env(:concord, :clustering, true) do
+      wait_for_configured_peers()
+    else
+      :ok
+    end
+  end
+
+  defp wait_for_configured_peers do
     case System.get_env("CONCORD_CLUSTER_NODES") do
       nil ->
         # Gossip mode: give discovery a chance
