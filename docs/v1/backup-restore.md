@@ -52,6 +52,9 @@ mix concord.backup cleanup --keep-days 7
 # Create backup
 {:ok, backup_path} = Concord.Backup.create(path: "/mnt/backups")
 
+# If Concord's Ra cluster is not running or not ready:
+{:error, :cluster_not_ready} = Concord.Backup.create(path: "/mnt/backups")
+
 # List backups
 {:ok, backups} = Concord.Backup.list("/mnt/backups")
 Enum.each(backups, fn backup ->
