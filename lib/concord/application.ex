@@ -26,6 +26,11 @@ defmodule Concord.Application do
     Supervisor.start_link(children, opts)
   end
 
+  @doc false
+  def prometheus_enabled? do
+    Application.get_env(:concord, :prometheus_enabled, false)
+  end
+
   defp topologies do
     [
       concord: [

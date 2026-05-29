@@ -3,6 +3,36 @@ defmodule Concord.ApplicationTest do
 
   import ExUnit.CaptureLog
 
+  describe "prometheus_enabled?/0" do
+    setup do
+      previous = Application.get_env(:concord, :prometheus_enabled, :unset)
+
+      on_exit(fn ->
+        case previous do
+          :unset -> Application.delete_env(:concord, :prometheus_enabled)
+          value -> Application.put_env(:concord, :prometheus_enabled, value)
+        end
+      end)
+    end
+
+    test "defaults to disabled when not configured" do
+      Application.delete_env(:concord, :prometheus_enabled)
+
+      refute Concord.Application.prometheus_enabled?()
+    end
+
+    test "honors checked-in disabled config" do
+      assert Application.get_env(:concord, :prometheus_enabled) == false
+      refute Concord.Application.prometheus_enabled?()
+    end
+
+    test "requires explicit enablement" do
+      Application.put_env(:concord, :prometheus_enabled, true)
+
+      assert Concord.Application.prometheus_enabled?()
+    end
+  end
+
   test "starts default Ra system before starting Concord cluster" do
     stop_concord()
     stop_ra()
