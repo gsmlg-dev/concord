@@ -69,7 +69,14 @@ defmodule Concord.Application do
     end
   end
 
-  defp start_cluster do
+  defp start_cluster(attempts \\ 3)
+
+  defp start_cluster(0) do
+    Logger.error("Failed to start Concord cluster: :system_not_started")
+    {:error, :system_not_started}
+  end
+
+  defp start_cluster(attempts) do
     wait_for_peers()
 
     node_id = node_id()
@@ -102,22 +109,45 @@ defmodule Concord.Application do
 
     case :ra.start_server(:default, server_config) do
       :ok ->
-        Logger.info("Concord cluster started on #{node()}")
-        :ra.trigger_election(node_id)
-        :ok
+        cluster_started(node_id)
 
       {:ok, _} ->
-        Logger.info("Concord cluster started on #{node()}")
-        :ok
+        cluster_started(node_id)
 
       {:error, {:already_started, _}} ->
         Logger.info("Concord cluster already running on #{node()}")
         :ok
 
+      {:error, :not_new} ->
+        Logger.info("Restarting existing Concord cluster on #{node()}")
+
+        case :ra.restart_server(:default, node_id) do
+          :ok -> cluster_started(node_id)
+          {:error, reason} -> cluster_start_failed(reason)
+        end
+
+      {:error, :system_not_started} ->
+        Logger.warning("Ra system not ready while starting Concord cluster, retrying...")
+        Process.sleep(500)
+
+        with :ok <- wait_for_ra_system() do
+          start_cluster(attempts - 1)
+        end
+
       {:error, reason} ->
-        Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
-        {:error, reason}
+        cluster_start_failed(reason)
     end
+  end
+
+  defp cluster_started(node_id) do
+    Logger.info("Concord cluster started on #{node()}")
+    :ra.trigger_election(node_id)
+    :ok
+  end
+
+  defp cluster_start_failed(reason) do
+    Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
+    {:error, reason}
   end
 
   # Wait for libcluster to discover peer nodes. If CONCORD_CLUSTER_NODES is set,
@@ -198,6 +228,8 @@ defmodule Concord.Application do
     if ra_system_ready?() do
       :ok
     else
+      clear_stale_ra_system()
+
       case :ra_system.start_default() do
         {:ok, _} ->
           Logger.info("Ra default system started explicitly")
@@ -209,6 +241,18 @@ defmodule Concord.Application do
         {:error, reason} ->
           {:error, reason}
       end
+    end
+  end
+
+  defp clear_stale_ra_system do
+    case :ra_system.lookup_name(:default, :server_sup) do
+      {:ok, server_sup} ->
+        if Process.whereis(server_sup) == nil do
+          :persistent_term.erase({:"$ra_system", :default})
+        end
+
+      {:error, :system_not_started} ->
+        :ok
     end
   end
 

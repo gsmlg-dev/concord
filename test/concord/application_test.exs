@@ -97,7 +97,7 @@ defmodule Concord.ApplicationTest do
     log =
       capture_log(fn ->
         assert {:ok, _started} = Application.ensure_all_started(:concord)
-        assert :ok = Concord.TestHelper.wait_for_cluster_ready()
+        assert :ok = Concord.TestHelper.wait_for_cluster_ready(30_000)
       end)
 
     refute log =~ "Failed to start Concord cluster"
