@@ -5,6 +5,9 @@ defmodule Concord.BackupTest do
   describe "create/1" do
     @tag :tmp_dir
     test "returns actionable error when Ra server is unavailable", %{tmp_dir: tmp_dir} do
+      Concord.TestHelper.stop_test_cluster()
+      on_exit(fn -> Concord.TestHelper.stop_test_cluster() end)
+
       assert {:error, :cluster_not_ready} = Concord.Backup.create(path: tmp_dir)
     end
   end
