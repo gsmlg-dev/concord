@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Align source package metadata and installation docs with the released 2.x API package.
 - Document embedded boot fixes for Ra default system startup, Prometheus opt-in
   metrics, disabled clustering, and restart from existing Ra data directories.
   Fixes #17.
