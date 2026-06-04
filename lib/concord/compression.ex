@@ -89,8 +89,12 @@ defmodule Concord.Compression do
       "original value"
   """
   @spec decompress(term() | compressed_value()) :: term()
-  def decompress({:compressed, algorithm, compressed_binary}) do
+  def decompress({:compressed, algorithm, compressed_binary} = compressed) do
     do_decompress(compressed_binary, algorithm)
+  rescue
+    _ -> compressed
+  catch
+    _, _ -> compressed
   end
 
   def decompress(value), do: value
