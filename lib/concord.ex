@@ -536,6 +536,7 @@ defmodule Concord do
     consistency = Keyword.get(opts, :consistency, default_consistency())
 
     case query({:prefix_scan, prefix}, timeout, consistency) do
+      {:ok, {{_index, _term}, {:ok, pairs}}, _} -> {:ok, decompress_pairs(pairs)}
       {:ok, {{_index, _term}, query_result}, _} -> query_result
       {:timeout, _} -> {:error, :timeout}
       {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -892,6 +893,10 @@ defmodule Concord do
       false -> value
       nil -> Compression.compress(value)
     end
+  end
+
+  defp decompress_pairs(pairs) do
+    Enum.map(pairs, fn {key, value} -> {key, Compression.decompress(value)} end)
   end
 
   defp validate_key(key) when is_binary(key) and byte_size(key) > 0 and byte_size(key) <= 1024 do

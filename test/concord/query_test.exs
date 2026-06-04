@@ -339,6 +339,13 @@ defmodule Concord.QueryTest do
       assert {:ok, []} = Concord.prefix_scan("nonexistent:")
     end
 
+    test "decompresses compressed values" do
+      value = %{state: String.duplicate("x", 100_000)}
+      :ok = Concord.put("runs/1", value)
+
+      assert {:ok, [{"runs/1", ^value}]} = Concord.prefix_scan("runs/")
+    end
+
     test "excludes expired keys" do
       :ok = Concord.put_with_ttl("expiring:1", "value", 1)
       :ok = Concord.put("expiring:2", "permanent")
