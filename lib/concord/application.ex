@@ -6,21 +6,26 @@ defmodule Concord.Application do
   use Application
   require Logger
 
-  alias Concord.{StateMachine, Telemetry, TTL}
+  alias Concord.{Engine, StateMachine, Telemetry, TTL, Turso}
   alias Concord.Sync.{Dispatcher, WatchHub}
 
   @impl true
   def start(_type, _args) do
     Telemetry.setup()
 
-    children = [
-      {Telemetry.Poller, []},
-      {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
-      {TTL, []},
-      {Dispatcher, []},
-      {WatchHub, []},
-      {Task, fn -> init_cluster() end}
-    ]
+    children =
+      [
+        {Telemetry.Poller, []}
+      ] ++
+        turso_children() ++
+        [
+          {Engine.Local, []},
+          {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]},
+          {TTL, []},
+          {Dispatcher, []},
+          {WatchHub, []},
+          {Task, fn -> init_cluster() end}
+        ]
 
     opts = [strategy: :one_for_one, name: Concord.Supervisor]
     Supervisor.start_link(children, opts)
@@ -34,12 +39,16 @@ defmodule Concord.Application do
     ]
   end
 
+  defp turso_children do
+    if Turso.enabled?(), do: [{Turso, []}], else: []
+  end
+
   defp init_cluster do
     wait_for_ra_system()
     wait_for_peers()
 
     node_id = node_id()
-    cluster_name = :concord_cluster
+    cluster_name = Application.get_env(:concord, :cluster_name, :concord_cluster)
     machine = {:module, StateMachine, %{}}
 
     nodes = [Node.self() | Node.list()]

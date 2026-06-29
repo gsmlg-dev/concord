@@ -32,10 +32,9 @@ defmodule Concord.Lease do
       }
   """
 
-  alias Concord.StateMachine
+  alias Concord.Engine
 
   @timeout 5_000
-  @cluster_name :concord_cluster
 
   @doc """
   Grants a new lease with the given TTL in seconds.
@@ -53,11 +52,13 @@ defmodule Concord.Lease do
     timeout = Keyword.get(opts, :timeout, @timeout)
     cmd = {:grant_lease, ttl_seconds, %{}}
 
-    case :ra.process_command(server_id(), cmd, timeout) do
-      {:ok, {:ok, result}, _} -> {:ok, result}
-      {:ok, {:error, reason}, _} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -74,11 +75,13 @@ defmodule Concord.Lease do
     timeout = Keyword.get(opts, :timeout, @timeout)
     cmd = {:keep_alive_lease, lease_id, %{}}
 
-    case :ra.process_command(server_id(), cmd, timeout) do
-      {:ok, :ok, _} -> :ok
-      {:ok, {:error, reason}, _} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, :ok} -> :ok
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -95,11 +98,13 @@ defmodule Concord.Lease do
     timeout = Keyword.get(opts, :timeout, @timeout)
     cmd = {:revoke_lease, lease_id, %{}}
 
-    case :ra.process_command(server_id(), cmd, timeout) do
-      {:ok, {:ok, result}, _} -> {:ok, result}
-      {:ok, {:error, reason}, _} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -110,12 +115,16 @@ defmodule Concord.Lease do
   @spec info(integer(), keyword()) :: {:ok, map()} | {:error, term()}
   def info(lease_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
-    mfa = {StateMachine, :query, [{:lease_info, lease_id}]}
 
-    case :ra.leader_query(server_id(), mfa, timeout) do
-      {:ok, {{_, _}, result}, _} -> result
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.query(
+           {:lease_info, lease_id},
+           Keyword.merge(engine_opts, timeout: timeout, consistency: :leader)
+         ) do
+      {:ok, result} -> result
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -126,15 +135,17 @@ defmodule Concord.Lease do
   @spec list(keyword()) :: {:ok, [map()]} | {:error, term()}
   def list(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
-    mfa = {StateMachine, :query, [:list_leases]}
 
-    case :ra.leader_query(server_id(), mfa, timeout) do
-      {:ok, {{_, _}, result}, _} -> result
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.query(
+           :list_leases,
+           Keyword.merge(engine_opts, timeout: timeout, consistency: :leader)
+         ) do
+      {:ok, result} -> result
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
-
-  defp server_id, do: {@cluster_name, node()}
 end

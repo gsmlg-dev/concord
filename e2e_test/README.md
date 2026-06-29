@@ -21,6 +21,7 @@ across a real 3-node OTP release cluster.
 - **Release mode**: Tests run against real `_build/prod/rel/concord` binaries
 - **RPC-based**: Test runner connects as a 4th distributed node, uses `:rpc.call`
 - **Epmd discovery**: `CONCORD_CLUSTER_NODES` env var provides deterministic peer discovery
+- **Turso enabled**: Each node gets its own local `turso.db` under `_build/e2e_data`
 - **No LocalCluster**: Avoids OTP 28+ compatibility issues
 
 ## Running
@@ -39,7 +40,7 @@ mix test.e2e
 - EPMD running (`epmd -daemon`)
 - ~1GB RAM for 3-node cluster
 
-## Test Suite (20 tests)
+## Test Suite (24 tests)
 
 ### Cluster Basics (`tests/cluster_basics_test.exs`)
 - All 3 nodes connected
@@ -69,6 +70,12 @@ mix test.e2e
 - Keep-alive refreshes lease TTL
 - List leases returns active leases
 
+### Engine Modes (`tests/engine_modes_test.exs`)
+- Explicit cluster API writes replicate through Raft
+- Local API writes stay on the target node only
+- Local and cluster APIs keep the same key isolated
+- Turso API persists node-local data without entering Raft
+
 ## Directory Structure
 
 ```
@@ -83,7 +90,8 @@ e2e_test/
 │   ├── cluster_basics_test.exs
 │   ├── v2_kv_test.exs
 │   ├── v2_txn_test.exs
-│   └── v2_lease_test.exs
+│   ├── v2_lease_test.exs
+│   └── engine_modes_test.exs
 └── README.md
 ```
 

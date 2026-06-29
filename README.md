@@ -55,6 +55,44 @@ Concord.get("key", consistency: :leader)    # Default, balanced
 Concord.get("key", consistency: :strong)    # Linearizable
 ```
 
+### Storage APIs
+
+Concord's default API remains the existing Raft-backed cluster API:
+
+```elixir
+Concord.put("cluster:key", "value")
+Concord.Cluster.put("cluster:key", "value")
+```
+
+For data that must stay on only the current node, call the local API:
+
+```elixir
+Concord.Local.put("local:key", "value")
+Concord.Local.KV.put("local:record", %{value: 1})
+```
+
+The local API uses the same Concord command/query semantics with separate
+node-local ETS tables. It does not submit writes to Raft and does not replicate
+data to cluster peers.
+
+For durable node-local storage backed by Turso/libSQL, enable the Turso engine
+and call `Concord.Turso`:
+
+```elixir
+Concord.Turso.put("turso:key", %{value: 1})
+Concord.Turso.get("turso:key")
+Concord.Turso.txn(%{
+  compare: [{:exists, "turso:key", :==, true}],
+  success: [{:put, "turso:key", %{value: 2}, %{}}],
+  failure: []
+})
+```
+
+`Concord.Turso` uses `ex_turso` and persists data to a local database file. It
+does not submit writes to Raft and does not provide Concord cluster membership,
+leases, watches, or secondary indexes. If `remote_url` and `auth_token` are
+configured, `Concord.Turso.sync/1` triggers Turso Cloud sync.
+
 ### Multi-Node Cluster
 
 ```bash

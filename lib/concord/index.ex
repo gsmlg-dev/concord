@@ -32,11 +32,10 @@ defmodule Concord.Index do
       :ok = Concord.Index.create("by_email", fn u -> u.email end)
   """
 
+  alias Concord.{Engine, StorageScope}
   alias Concord.Index.Extractor
-  alias Concord.StateMachine
 
   @timeout 5_000
-  @cluster_name :concord_cluster
 
   @typedoc "Index name (unique identifier)"
   @type index_name :: String.t()
@@ -73,23 +72,24 @@ defmodule Concord.Index do
       reindex = Keyword.get(opts, :reindex, false)
 
       command = {:create_index, name, extractor}
-      server_id = {@cluster_name, node()}
 
-      case :ra.process_command(server_id, command, timeout) do
-        {:ok, :ok, _} ->
+      engine_opts = Keyword.take(opts, [:engine])
+
+      case Engine.command(command, Keyword.put(engine_opts, :timeout, timeout)) do
+        {:ok, :ok} ->
           if reindex do
-            reindex(name, timeout: timeout)
+            reindex(name, Keyword.merge(engine_opts, timeout: timeout))
           end
 
           :ok
 
-        {:ok, {:error, reason}, _} ->
+        {:ok, {:error, reason}} ->
           {:error, reason}
 
-        {:timeout, _} ->
+        {:error, :timeout} ->
           {:error, :timeout}
 
-        {:error, :noproc} ->
+        {:error, :cluster_not_ready} ->
           {:error, :cluster_not_ready}
 
         {:error, reason} ->
@@ -105,13 +105,14 @@ defmodule Concord.Index do
   def drop(name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     command = {:drop_index, name}
-    server_id = {@cluster_name, node()}
 
-    case :ra.process_command(server_id, command, timeout) do
-      {:ok, :ok, _} -> :ok
-      {:ok, {:error, reason}, _} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.command(command, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, :ok} -> :ok
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -122,14 +123,17 @@ defmodule Concord.Index do
   @spec lookup(index_name(), index_value(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def lookup(name, value, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
-    server_id = {@cluster_name, node()}
-    mfa = {StateMachine, :ra_query, [{:index_lookup, name, value}]}
 
-    case :ra.consistent_query(server_id, mfa, timeout) do
-      {:ok, {:ok, keys}, _} when is_list(keys) -> {:ok, keys}
-      {:ok, {:ok, {:error, reason}}, _} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.query(
+           {:index_lookup, name, value},
+           Keyword.merge(engine_opts, timeout: timeout, consistency: :strong)
+         ) do
+      {:ok, {:ok, keys}} when is_list(keys) -> {:ok, keys}
+      {:ok, {:ok, {:error, reason}}} -> {:error, reason}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -140,13 +144,16 @@ defmodule Concord.Index do
   @spec list(keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def list(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
-    server_id = {@cluster_name, node()}
-    mfa = {StateMachine, :ra_query, [:list_indexes]}
 
-    case :ra.consistent_query(server_id, mfa, timeout) do
-      {:ok, {:ok, indexes}, _} when is_list(indexes) -> {:ok, indexes}
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.query(
+           :list_indexes,
+           Keyword.merge(engine_opts, timeout: timeout, consistency: :strong)
+         ) do
+      {:ok, {:ok, indexes}} when is_list(indexes) -> {:ok, indexes}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -158,23 +165,27 @@ defmodule Concord.Index do
   @spec reindex(index_name(), keyword()) :: :ok | {:error, term()}
   def reindex(name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
-    server_id = {@cluster_name, node()}
+    engine_opts = Keyword.take(opts, [:engine])
+    opts = Keyword.merge(engine_opts, timeout: timeout)
 
-    with {:ok, pairs} <- Concord.get_all(),
-         {:ok, indexes} <- list(timeout: timeout) do
+    with {:ok, pairs} <- Concord.get_all(opts),
+         {:ok, indexes} <- list(opts) do
       if name in indexes do
-        mfa = {StateMachine, :ra_query, [{:get_index_extractor, name}]}
+        case Engine.query(
+               {:get_index_extractor, name},
+               Keyword.merge(engine_opts, timeout: timeout, consistency: :strong)
+             ) do
+          {:ok, {:ok, extractor}} ->
+            with_engine_scope(engine_opts, fn ->
+              table_name = index_table_name(name)
 
-        case :ra.consistent_query(server_id, mfa, timeout) do
-          {:ok, {:ok, extractor}, _} ->
-            table_name = index_table_name(name)
+              if :ets.whereis(table_name) != :undefined do
+                :ets.delete_all_objects(table_name)
+              end
 
-            if :ets.whereis(table_name) != :undefined do
-              :ets.delete_all_objects(table_name)
-            end
-
-            Enum.each(pairs, fn {key, value} ->
-              Extractor.index_value(table_name, key, value, extractor)
+              Enum.each(pairs, fn {key, value} ->
+                Extractor.index_value(table_name, key, value, extractor)
+              end)
             end)
 
             :ok
@@ -192,7 +203,7 @@ defmodule Concord.Index do
 
   @doc false
   def index_table_name(index_name) do
-    String.to_atom("concord_index_#{index_name}")
+    StorageScope.index_table_name(index_name)
   end
 
   # Delegate to Extractor module for index operations
@@ -213,5 +224,12 @@ defmodule Concord.Index do
 
   defp validate_extractor(extractor) do
     if Extractor.valid?(extractor), do: :ok, else: {:error, :invalid_extractor}
+  end
+
+  defp with_engine_scope(engine_opts, fun) do
+    case Engine.engine(engine_opts) do
+      Engine.Local -> StorageScope.with_scope(:local, fun)
+      _ -> fun.()
+    end
   end
 end

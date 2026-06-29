@@ -60,6 +60,49 @@ config :concord,
   ]
 ```
 
+## Storage APIs
+
+Storage/concurrency selection is API-based, not global configuration-based.
+
+| API | Behavior |
+|-----|----------|
+| `Concord` / `Concord.Cluster` | Default Raft-backed cluster API. Writes go through Raft quorum replication. |
+| `Concord.Local` | Node-local KV API. Data stays on the current BEAM node and is not written to the Raft cluster. |
+| `Concord.Turso` | Durable node-local KV API backed by `ex_turso`. Data is written to a local Turso database file and is not written to the Raft cluster. |
+
+Canonical sub-APIs follow the same split: `Concord.KV` and
+`Concord.Cluster.KV` use the cluster engine, while `Concord.Local.KV` uses the
+local engine. Pass `engine: :turso` to canonical APIs when using Turso-specific
+calls such as `Concord.KV.history/2` or `Concord.Txn.commit/2`.
+
+### Turso
+
+Turso support is disabled by default:
+
+```elixir
+config :concord,
+  turso: [
+    enabled: true,
+    database: "./data/turso.db",
+    pool_size: 1
+  ]
+```
+
+Runtime releases can use environment variables:
+
+```bash
+CONCORD_TURSO_ENABLED=true
+CONCORD_TURSO_DATABASE=/var/lib/concord/turso.db
+CONCORD_TURSO_POOL_SIZE=1
+CONCORD_TURSO_REMOTE_URL=libsql://example.turso.io
+CONCORD_TURSO_AUTH_TOKEN=...
+```
+
+`Concord.Turso.sync/1` is available only when both remote URL and auth token are
+configured. Turso does not provide Concord Raft semantics, leases, watches, or
+secondary indexes; those operations return explicit unsupported-operation
+errors.
+
 ## Development (config/dev.exs)
 
 ```elixir

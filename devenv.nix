@@ -11,6 +11,8 @@ in
     git
     figlet
     lolcat
+    openssl
+    pkg-config
     watchman
   ] ++ lib.optionals stdenv.isLinux [
     inotify-tools

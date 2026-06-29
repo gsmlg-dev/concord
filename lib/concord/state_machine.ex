@@ -29,6 +29,7 @@ defmodule Concord.StateMachine do
   alias Concord.Index
   alias Concord.Index.Extractor
   alias Concord.KV.Record
+  alias Concord.StorageScope
 
   # Emit release_cursor every N commands to allow log compaction
   @snapshot_interval 1000
@@ -61,6 +62,11 @@ defmodule Concord.StateMachine do
   defp expired?(nil, _now), do: false
   defp expired?(expires_at, now), do: now > expires_at
 
+  defp store_table, do: StorageScope.table(:store)
+  defp current_table, do: StorageScope.table(:current)
+  defp history_table, do: StorageScope.table(:history)
+  defp leases_table, do: StorageScope.table(:leases)
+
   # ──────────────────────────────────────────────
   # Default State Fields
   # ──────────────────────────────────────────────
@@ -85,10 +91,10 @@ defmodule Concord.StateMachine do
 
   @impl :ra_machine
   def init(_config) do
-    ensure_ets_table(:concord_store, [:ordered_set, :named_table])
-    ensure_ets_table(:concord_current, [:ordered_set, :named_table])
-    ensure_ets_table(:concord_history, [:ordered_set, :named_table])
-    ensure_ets_table(:concord_leases, [:set, :named_table])
+    ensure_ets_table(store_table(), [:ordered_set, :named_table])
+    ensure_ets_table(current_table(), [:ordered_set, :named_table])
+    ensure_ets_table(history_table(), [:ordered_set, :named_table])
+    ensure_ets_table(leases_table(), [:set, :named_table])
 
     {:concord_kv, default_state_fields()}
   end
@@ -187,7 +193,7 @@ defmodule Concord.StateMachine do
 
     # Copy previous to history if exists
     if prev_record do
-      :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+      :ets.insert(history_table(), {{key, prev_record.mod_revision}, prev_record})
     end
 
     # Build new record
@@ -206,21 +212,21 @@ defmodule Concord.StateMachine do
       metadata: kv_metadata
     }
 
-    :ets.insert(:concord_current, {key, new_record})
+    :ets.insert(current_table(), {key, new_record})
 
     # Legacy table compat
-    :ets.insert(:concord_store, {key, format_value(value, expires_at)})
+    :ets.insert(store_table(), {key, format_value(value, expires_at)})
 
     update_indexes_on_put(data, key, old_value, Compression.decompress(value))
 
     # Track key in lease if attached
     if lease_id do
-      ensure_ets_table(:concord_leases, [:set, :named_table])
+      ensure_ets_table(leases_table(), [:set, :named_table])
 
-      case :ets.lookup(:concord_leases, lease_id) do
+      case :ets.lookup(leases_table(), lease_id) do
         [{^lease_id, lease}] ->
           unless key in lease.keys do
-            :ets.insert(:concord_leases, {lease_id, %{lease | keys: [key | lease.keys]}})
+            :ets.insert(leases_table(), {lease_id, %{lease | keys: [key | lease.keys]}})
           end
 
         _ ->
@@ -252,7 +258,7 @@ defmodule Concord.StateMachine do
 
     # Copy previous to history if exists
     if prev_record do
-      :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+      :ets.insert(history_table(), {{key, prev_record.mod_revision}, prev_record})
     end
 
     # Build new record
@@ -271,10 +277,10 @@ defmodule Concord.StateMachine do
       metadata: %{}
     }
 
-    :ets.insert(:concord_current, {key, new_record})
+    :ets.insert(current_table(), {key, new_record})
 
     formatted_value = format_value(value, expires_at)
-    :ets.insert(:concord_store, {key, formatted_value})
+    :ets.insert(store_table(), {key, formatted_value})
 
     update_indexes_on_put(data, key, old_value, Compression.decompress(value))
     new_data = Map.put(data, :revision, commit_rev)
@@ -304,16 +310,16 @@ defmodule Concord.StateMachine do
 
       # Copy current to history
       if prev_record do
-        :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+        :ets.insert(history_table(), {{key, prev_record.mod_revision}, prev_record})
       end
 
       # Create tombstone in history
       tombstone = Record.tombstone(key, commit_rev, prev_record)
-      :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
+      :ets.insert(history_table(), {{key, commit_rev}, tombstone})
 
       # Remove from current
-      :ets.delete(:concord_current, key)
-      :ets.delete(:concord_store, key)
+      :ets.delete(current_table(), key)
+      :ets.delete(store_table(), key)
 
       if old_value != nil do
         remove_from_all_indexes(data, key, old_value)
@@ -358,14 +364,14 @@ defmodule Concord.StateMachine do
         commit_rev = Map.get(data, :revision, 0) + 1
 
         if prev_record do
-          :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+          :ets.insert(history_table(), {{key, prev_record.mod_revision}, prev_record})
         end
 
         tombstone = Record.tombstone(key, commit_rev, prev_record)
-        :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
+        :ets.insert(history_table(), {{key, commit_rev}, tombstone})
 
-        :ets.delete(:concord_current, key)
-        :ets.delete(:concord_store, key)
+        :ets.delete(current_table(), key)
+        :ets.delete(store_table(), key)
 
         if old_value != nil do
           remove_from_all_indexes(data, key, old_value)
@@ -373,7 +379,7 @@ defmodule Concord.StateMachine do
 
         Map.put(data, :revision, commit_rev)
       else
-        :ets.delete(:concord_store, key)
+        :ets.delete(store_table(), key)
         data
       end
 
@@ -394,7 +400,7 @@ defmodule Concord.StateMachine do
     now = meta_time(meta)
 
     result =
-      case :ets.lookup(:concord_store, key) do
+      case :ets.lookup(store_table(), key) do
         [{^key, stored_data}] ->
           case extract_value(stored_data) do
             {current_value, current_expires_at} ->
@@ -405,7 +411,7 @@ defmodule Concord.StateMachine do
 
                 if old_decompressed == expected do
                   formatted_value = format_value(value, expires_at)
-                  :ets.insert(:concord_store, {key, formatted_value})
+                  :ets.insert(store_table(), {key, formatted_value})
 
                   update_indexes_on_put(
                     data,
@@ -446,7 +452,7 @@ defmodule Concord.StateMachine do
     result =
       check_conditional_operation(key, expected, now, fn ->
         old_value = get_decompressed_value(key)
-        :ets.delete(:concord_store, key)
+        :ets.delete(store_table(), key)
 
         if old_value != nil do
           remove_from_all_indexes(data, key, old_value)
@@ -471,13 +477,13 @@ defmodule Concord.StateMachine do
     now = meta_time(meta)
 
     result =
-      case :ets.lookup(:concord_store, key) do
+      case :ets.lookup(store_table(), key) do
         [{^key, stored_data}] ->
           case extract_value(stored_data) do
             {value, _current_expires_at} ->
               new_expires_at = now + additional_ttl_seconds
               new_stored_data = format_value(value, new_expires_at)
-              :ets.insert(:concord_store, {key, new_stored_data})
+              :ets.insert(store_table(), {key, new_stored_data})
               :ok
 
             _ ->
@@ -505,7 +511,7 @@ defmodule Concord.StateMachine do
 
     # Single-pass: fetch all entries as {key, stored_data} tuples at once,
     # then filter and delete expired ones — O(N) instead of O(3N).
-    all_entries = :ets.tab2list(:concord_store)
+    all_entries = :ets.tab2list(store_table())
 
     {deleted_count, scanned_count} =
       Enum.reduce(all_entries, {0, 0}, fn {key, stored_data}, {deleted, scanned} ->
@@ -518,7 +524,7 @@ defmodule Concord.StateMachine do
                 remove_from_all_indexes(data, key, decompressed)
               end
 
-              :ets.delete(:concord_store, key)
+              :ets.delete(store_table(), key)
               {deleted + 1, scanned + 1}
             else
               {deleted, scanned + 1}
@@ -687,10 +693,10 @@ defmodule Concord.StateMachine do
     start_time = System.monotonic_time()
 
     # Restore KV data
-    :ets.delete_all_objects(:concord_store)
+    :ets.delete_all_objects(store_table())
 
     Enum.each(Map.get(backup_state, :kv_data, []), fn entry ->
-      :ets.insert(:concord_store, entry)
+      :ets.insert(store_table(), entry)
     end)
 
     # Restore index definitions into the Raft state map
@@ -718,10 +724,10 @@ defmodule Concord.StateMachine do
       when is_list(kv_entries) do
     start_time = System.monotonic_time()
 
-    :ets.delete_all_objects(:concord_store)
+    :ets.delete_all_objects(store_table())
 
     Enum.each(kv_entries, fn entry ->
-      :ets.insert(:concord_store, entry)
+      :ets.insert(store_table(), entry)
     end)
 
     # Rebuild all indexes from the restored data
@@ -825,8 +831,8 @@ defmodule Concord.StateMachine do
       keys: []
     }
 
-    ensure_ets_table(:concord_leases, [:set, :named_table])
-    :ets.insert(:concord_leases, {lease_id, lease})
+    ensure_ets_table(leases_table(), [:set, :named_table])
+    :ets.insert(leases_table(), {lease_id, lease})
 
     new_data =
       data
@@ -844,12 +850,12 @@ defmodule Concord.StateMachine do
 
   def apply_command(meta, {:keep_alive_lease, lease_id, _opts}, {:concord_kv, data}) do
     now = meta_time(meta)
-    ensure_ets_table(:concord_leases, [:set, :named_table])
+    ensure_ets_table(leases_table(), [:set, :named_table])
 
-    case :ets.lookup(:concord_leases, lease_id) do
+    case :ets.lookup(leases_table(), lease_id) do
       [{^lease_id, lease}] ->
         updated = %{lease | expires_at: now + lease.ttl}
-        :ets.insert(:concord_leases, {lease_id, updated})
+        :ets.insert(leases_table(), {lease_id, updated})
 
         :telemetry.execute(
           [:concord, :lease, :renewed],
@@ -865,9 +871,9 @@ defmodule Concord.StateMachine do
   end
 
   def apply_command(meta, {:revoke_lease, lease_id, _opts}, {:concord_kv, data}) do
-    ensure_ets_table(:concord_leases, [:set, :named_table])
+    ensure_ets_table(leases_table(), [:set, :named_table])
 
-    case :ets.lookup(:concord_leases, lease_id) do
+    case :ets.lookup(leases_table(), lease_id) do
       [{^lease_id, lease}] ->
         commit_rev = Map.get(data, :revision, 0) + 1
 
@@ -877,11 +883,11 @@ defmodule Concord.StateMachine do
             prev = get_current_record(key)
 
             if prev && prev.version > 0 do
-              :ets.insert(:concord_history, {{key, prev.mod_revision}, prev})
+              :ets.insert(history_table(), {{key, prev.mod_revision}, prev})
               tombstone = Record.tombstone(key, commit_rev, prev)
-              :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
-              :ets.delete(:concord_current, key)
-              :ets.delete(:concord_store, key)
+              :ets.insert(history_table(), {{key, commit_rev}, tombstone})
+              :ets.delete(current_table(), key)
+              :ets.delete(store_table(), key)
 
               old_val = Compression.decompress(prev.value)
               if old_val, do: remove_from_all_indexes(data, key, old_val)
@@ -891,7 +897,7 @@ defmodule Concord.StateMachine do
             end
           end)
 
-        :ets.delete(:concord_leases, lease_id)
+        :ets.delete(leases_table(), lease_id)
         new_data = Map.put(data, :revision, commit_rev)
 
         :telemetry.execute(
@@ -954,7 +960,7 @@ defmodule Concord.StateMachine do
   def query({:get, key}, {:concord_kv, _data}) do
     now = System.system_time(:second)
 
-    case :ets.lookup(:concord_store, key) do
+    case :ets.lookup(store_table(), key) do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {value, expires_at} ->
@@ -972,7 +978,7 @@ defmodule Concord.StateMachine do
   def query({:get_with_ttl, key}, {:concord_kv, _data}) do
     now = System.system_time(:second)
 
-    case :ets.lookup(:concord_store, key) do
+    case :ets.lookup(store_table(), key) do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {value, expires_at} ->
@@ -994,7 +1000,7 @@ defmodule Concord.StateMachine do
 
   def query(:get_all, {:concord_kv, _data}) do
     now = System.system_time(:second)
-    all = :ets.tab2list(:concord_store)
+    all = :ets.tab2list(store_table())
 
     valid_entries =
       Enum.reduce(all, [], fn {key, stored_data}, acc ->
@@ -1012,7 +1018,7 @@ defmodule Concord.StateMachine do
 
   def query(:get_all_with_ttl, {:concord_kv, _data}) do
     now = System.system_time(:second)
-    all = :ets.tab2list(:concord_store)
+    all = :ets.tab2list(store_table())
 
     valid_entries =
       Enum.reduce(all, [], fn {key, stored_data}, acc ->
@@ -1036,7 +1042,7 @@ defmodule Concord.StateMachine do
   def query({:ttl, key}, {:concord_kv, _data}) do
     now = System.system_time(:second)
 
-    case :ets.lookup(:concord_store, key) do
+    case :ets.lookup(store_table(), key) do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {_value, expires_at} ->
@@ -1076,7 +1082,7 @@ defmodule Concord.StateMachine do
     ]
 
     results =
-      :ets.select(:concord_store, match_spec)
+      :ets.select(store_table(), match_spec)
       |> Enum.reduce([], fn {key, stored_data}, acc ->
         case extract_value(stored_data) do
           {value, expires_at} ->
@@ -1091,7 +1097,7 @@ defmodule Concord.StateMachine do
   end
 
   def query(:stats, {:concord_kv, _data}) do
-    info = :ets.info(:concord_store)
+    info = :ets.info(store_table())
 
     {:ok,
      %{
@@ -1144,7 +1150,7 @@ defmodule Concord.StateMachine do
   def query({:get_record, key}, {:concord_kv, _data}) do
     now = System.system_time(:second)
 
-    case :ets.lookup(:concord_current, key) do
+    case :ets.lookup(current_table(), key) do
       [{^key, %Record{} = record}] ->
         if Record.expired?(record, now), do: {:error, :not_found}, else: {:ok, record}
 
@@ -1161,7 +1167,7 @@ defmodule Concord.StateMachine do
       {:error, {:compacted, compact_rev}}
     else
       # Check current first
-      case :ets.lookup(:concord_current, key) do
+      case :ets.lookup(current_table(), key) do
         [{^key, %Record{mod_revision: mod_rev} = record}] when mod_rev <= rev ->
           if Record.tombstone?(record), do: {:error, :not_found}, else: {:ok, record.value}
 
@@ -1189,7 +1195,7 @@ defmodule Concord.StateMachine do
     else
       # Collect from history table
       history =
-        :ets.select(:concord_history, [
+        :ets.select(history_table(), [
           {{{:"$1", :"$2"}, :"$3"},
            [{:==, :"$1", key}, {:>=, :"$2", from_rev}, {:"=<", :"$2", to_rev}],
            [{{:"$2", :"$3"}}]}
@@ -1200,7 +1206,7 @@ defmodule Concord.StateMachine do
 
       # Also include current if in range
       current =
-        case :ets.lookup(:concord_current, key) do
+        case :ets.lookup(current_table(), key) do
           [{^key, %Record{mod_revision: mr} = rec}]
           when mr >= from_rev and mr <= to_rev ->
             [rec]
@@ -1232,7 +1238,7 @@ defmodule Concord.StateMachine do
 
     # Fetch limit+1 to detect has_more
     results =
-      :ets.select(:concord_current, match_spec)
+      :ets.select(current_table(), match_spec)
       |> Enum.reduce([], fn {key, %Record{} = rec}, acc ->
         if Record.expired?(rec, now), do: acc, else: [{key, rec} | acc]
       end)
@@ -1256,12 +1262,12 @@ defmodule Concord.StateMachine do
   def query({:lease_info, lease_id}, {:concord_kv, _data}) do
     now = System.system_time(:second)
 
-    case :ets.whereis(:concord_leases) do
+    case :ets.whereis(leases_table()) do
       :undefined ->
         {:error, :lease_not_found}
 
       _ ->
-        case :ets.lookup(:concord_leases, lease_id) do
+        case :ets.lookup(leases_table(), lease_id) do
           [{^lease_id, lease}] ->
             remaining = max(0, lease.expires_at - now)
             {:ok, Map.put(lease, :remaining, remaining)}
@@ -1276,12 +1282,12 @@ defmodule Concord.StateMachine do
     now = System.system_time(:second)
 
     leases =
-      case :ets.whereis(:concord_leases) do
+      case :ets.whereis(leases_table()) do
         :undefined ->
           []
 
         _ ->
-          :ets.tab2list(:concord_leases)
+          :ets.tab2list(leases_table())
           |> Enum.map(fn {_id, lease} ->
             Map.put(lease, :remaining, max(0, lease.expires_at - now))
           end)
@@ -1308,14 +1314,14 @@ defmodule Concord.StateMachine do
   # snapshot keys on the next apply.
 
   defp build_release_cursor_state({:concord_kv, data}) do
-    kv_data = :ets.tab2list(:concord_store)
-    current_data = :ets.tab2list(:concord_current)
-    history_data = :ets.tab2list(:concord_history)
+    kv_data = :ets.tab2list(store_table())
+    current_data = :ets.tab2list(current_table())
+    history_data = :ets.tab2list(history_table())
 
     lease_data =
-      case :ets.whereis(:concord_leases) do
+      case :ets.whereis(leases_table()) do
         :undefined -> []
-        _ -> :ets.tab2list(:concord_leases)
+        _ -> :ets.tab2list(leases_table())
       end
 
     indexes = Map.get(data, :indexes, %{})
@@ -1356,9 +1362,9 @@ defmodule Concord.StateMachine do
 
       # V1/V2 legacy: bare list of KV tuples
       data when is_list(data) ->
-        ensure_ets_table(:concord_store, [:ordered_set, :named_table])
-        :ets.delete_all_objects(:concord_store)
-        Enum.each(data, fn entry -> :ets.insert(:concord_store, entry) end)
+        ensure_ets_table(store_table(), [:ordered_set, :named_table])
+        :ets.delete_all_objects(store_table())
+        Enum.each(data, fn entry -> :ets.insert(store_table(), entry) end)
     end
 
     :telemetry.execute(
@@ -1372,27 +1378,27 @@ defmodule Concord.StateMachine do
 
   defp rebuild_all_ets_from_snapshot(data) do
     # Rebuild main KV store (legacy)
-    ensure_ets_table(:concord_store, [:ordered_set, :named_table])
-    :ets.delete_all_objects(:concord_store)
+    ensure_ets_table(store_table(), [:ordered_set, :named_table])
+    :ets.delete_all_objects(store_table())
 
     Enum.each(Map.get(data, :__kv_data__, []), fn entry ->
-      :ets.insert(:concord_store, entry)
+      :ets.insert(store_table(), entry)
     end)
 
     # Rebuild v2 current table
-    ensure_ets_table(:concord_current, [:ordered_set, :named_table])
-    :ets.delete_all_objects(:concord_current)
+    ensure_ets_table(current_table(), [:ordered_set, :named_table])
+    :ets.delete_all_objects(current_table())
 
     Enum.each(Map.get(data, :__current_data__, []), fn entry ->
-      :ets.insert(:concord_current, entry)
+      :ets.insert(current_table(), entry)
     end)
 
     # Rebuild v2 history table
-    ensure_ets_table(:concord_history, [:ordered_set, :named_table])
-    :ets.delete_all_objects(:concord_history)
+    ensure_ets_table(history_table(), [:ordered_set, :named_table])
+    :ets.delete_all_objects(history_table())
 
     Enum.each(Map.get(data, :__history_data__, []), fn entry ->
-      :ets.insert(:concord_history, entry)
+      :ets.insert(history_table(), entry)
     end)
 
     # Rebuild index ETS tables
@@ -1409,11 +1415,11 @@ defmodule Concord.StateMachine do
     end)
 
     # Rebuild lease table
-    ensure_ets_table(:concord_leases, [:set, :named_table])
-    :ets.delete_all_objects(:concord_leases)
+    ensure_ets_table(leases_table(), [:set, :named_table])
+    :ets.delete_all_objects(leases_table())
 
     Enum.each(Map.get(data, :__lease_data__, []), fn entry ->
-      :ets.insert(:concord_leases, entry)
+      :ets.insert(leases_table(), entry)
     end)
   end
 
@@ -1429,7 +1435,7 @@ defmodule Concord.StateMachine do
   # ══════════════════════════════════════════════
 
   defp get_decompressed_value(key) do
-    case :ets.lookup(:concord_store, key) do
+    case :ets.lookup(store_table(), key) do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {val, _expires} -> Compression.decompress(val)
@@ -1443,7 +1449,7 @@ defmodule Concord.StateMachine do
 
   # v2: Look up the full Record from concord_current table
   defp get_current_record(key) do
-    case :ets.lookup(:concord_current, key) do
+    case :ets.lookup(current_table(), key) do
       [{^key, %Record{} = record}] -> record
       _ -> nil
     end
@@ -1452,12 +1458,12 @@ defmodule Concord.StateMachine do
   # v2: Find the latest record version at or before a given revision
   defp find_record_at_revision(key, target_rev) do
     # Walk backward from target_rev in history
-    case :ets.prev(:concord_history, {key, target_rev + 1}) do
+    case :ets.prev(history_table(), {key, target_rev + 1}) do
       :"$end_of_table" ->
         {:error, :not_found}
 
       {^key, _rev} = hist_key ->
-        case :ets.lookup(:concord_history, hist_key) do
+        case :ets.lookup(history_table(), hist_key) do
           [{_, %Record{version: 0}}] -> {:error, :not_found}
           [{_, %Record{} = record}] -> {:ok, record.value}
           _ -> {:error, :not_found}
@@ -1492,7 +1498,7 @@ defmodule Concord.StateMachine do
   end
 
   defp rebuild_all_index_ets(indexes) do
-    all_entries = :ets.tab2list(:concord_store)
+    all_entries = :ets.tab2list(store_table())
 
     Enum.each(indexes, fn {name, spec} ->
       table = Index.index_table_name(name)
@@ -1515,7 +1521,7 @@ defmodule Concord.StateMachine do
   # Conditional operations helper: delete_if CAS path.
   # expected is always non-nil (set by public API before entering the log).
   defp check_conditional_operation(key, expected, now, on_success) do
-    case :ets.lookup(:concord_store, key) do
+    case :ets.lookup(store_table(), key) do
       [{^key, stored_data}] ->
         case extract_value(stored_data) do
           {current_value, current_expires_at} ->
@@ -1541,7 +1547,7 @@ defmodule Concord.StateMachine do
   # Batch get using deterministic time parameter
   defp batch_get_keys(keys, now) do
     Enum.map(keys, fn key ->
-      case :ets.lookup(:concord_store, key) do
+      case :ets.lookup(store_table(), key) do
         [{^key, stored_data}] ->
           case extract_value(stored_data) do
             {value, expires_at} ->
@@ -1597,7 +1603,7 @@ defmodule Concord.StateMachine do
         old_value = get_decompressed_value(key)
         formatted_value = format_value(value, expires_at)
 
-        case :ets.insert(:concord_store, {key, formatted_value}) do
+        case :ets.insert(store_table(), {key, formatted_value}) do
           true ->
             update_indexes_on_put(data, key, old_value, Compression.decompress(value))
             {key, :ok}
@@ -1610,7 +1616,7 @@ defmodule Concord.StateMachine do
         old_value = get_decompressed_value(key)
         formatted_value = format_value(value, nil)
 
-        case :ets.insert(:concord_store, {key, formatted_value}) do
+        case :ets.insert(store_table(), {key, formatted_value}) do
           true ->
             update_indexes_on_put(data, key, old_value, Compression.decompress(value))
             {key, :ok}
@@ -1646,7 +1652,7 @@ defmodule Concord.StateMachine do
         remove_from_all_indexes(data, key, old_value)
       end
 
-      case :ets.delete(:concord_store, key) do
+      case :ets.delete(store_table(), key) do
         true -> {key, :ok}
         false -> {key, {:error, :not_found}}
         _ -> {key, {:error, :delete_failed}}
@@ -1678,14 +1684,14 @@ defmodule Concord.StateMachine do
 
   defp execute_touch_many_batch(operations, now) do
     Enum.map(operations, fn {key, ttl_seconds} ->
-      case :ets.lookup(:concord_store, key) do
+      case :ets.lookup(store_table(), key) do
         [{^key, stored_data}] ->
           case extract_value(stored_data) do
             {value, _current_expires_at} ->
               new_expires_at = now + ttl_seconds
               new_stored_data = format_value(value, new_expires_at)
 
-              case :ets.insert(:concord_store, {key, new_stored_data}) do
+              case :ets.insert(store_table(), {key, new_stored_data}) do
                 true -> {key, :ok}
                 _ -> {key, {:error, :touch_failed}}
               end
@@ -1831,7 +1837,7 @@ defmodule Concord.StateMachine do
     ]
 
     kvs =
-      :ets.select(:concord_current, match_spec)
+      :ets.select(current_table(), match_spec)
       |> Enum.reduce([], fn {_key, %Record{} = rec}, acc ->
         if Record.expired?(rec, now) or rec.version == 0, do: acc, else: [rec | acc]
       end)
@@ -1854,7 +1860,7 @@ defmodule Concord.StateMachine do
     old_value = if prev_record, do: Compression.decompress(prev_record.value), else: nil
 
     if prev_record do
-      :ets.insert(:concord_history, {{key, prev_record.mod_revision}, prev_record})
+      :ets.insert(history_table(), {{key, prev_record.mod_revision}, prev_record})
     end
 
     new_record = %Record{
@@ -1872,8 +1878,8 @@ defmodule Concord.StateMachine do
       metadata: kv_metadata || %{}
     }
 
-    :ets.insert(:concord_current, {key, new_record})
-    :ets.insert(:concord_store, {key, format_value(value, expires_at)})
+    :ets.insert(current_table(), {key, new_record})
+    :ets.insert(store_table(), {key, format_value(value, expires_at)})
 
     update_indexes_on_put(data, key, old_value, Compression.decompress(value))
 
@@ -1892,12 +1898,12 @@ defmodule Concord.StateMachine do
         {:prefix, p} ->
           end_key = p <> <<0xFF>>
 
-          :ets.select(:concord_current, [
+          :ets.select(current_table(), [
             {{:"$1", :_}, [{:>=, :"$1", p}, {:<, :"$1", end_key}], [:"$1"]}
           ])
 
         {:range, s, e} ->
-          :ets.select(:concord_current, [
+          :ets.select(current_table(), [
             {{:"$1", :_}, [{:>=, :"$1", s}, {:<, :"$1", e}], [:"$1"]}
           ])
       end
@@ -1907,11 +1913,11 @@ defmodule Concord.StateMachine do
         prev = get_current_record(key)
 
         if prev && prev.version > 0 do
-          :ets.insert(:concord_history, {{key, prev.mod_revision}, prev})
+          :ets.insert(history_table(), {{key, prev.mod_revision}, prev})
           tombstone = Record.tombstone(key, commit_rev, prev)
-          :ets.insert(:concord_history, {{key, commit_rev}, tombstone})
-          :ets.delete(:concord_current, key)
-          :ets.delete(:concord_store, key)
+          :ets.insert(history_table(), {{key, commit_rev}, tombstone})
+          :ets.delete(current_table(), key)
+          :ets.delete(store_table(), key)
 
           old_val = Compression.decompress(prev.value)
           if old_val, do: remove_from_all_indexes(data, key, old_val)
@@ -1942,8 +1948,8 @@ defmodule Concord.StateMachine do
           new_expires = now + ttl_seconds
 
           updated = %{record | expires_at: new_expires, mod_revision: commit_rev}
-          :ets.insert(:concord_current, {key, updated})
-          :ets.insert(:concord_store, {key, format_value(record.value, new_expires)})
+          :ets.insert(current_table(), {key, updated})
+          :ets.insert(store_table(), {key, format_value(record.value, new_expires)})
 
           resp = {:touch, key, %{ttl: ttl_seconds}}
           {resp, data}
