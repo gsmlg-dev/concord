@@ -27,7 +27,7 @@
 
 ```elixir
 def deps do
-  [{:concord, "~> 1.1"}]
+  [{:concord, "~> 2.0"}]
 end
 ```
 

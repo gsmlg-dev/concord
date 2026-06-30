@@ -1081,9 +1081,21 @@ defmodule Concord.StateMachine do
       {{:"$1", :"$2"}, [{:>=, :"$1", prefix}, {:<, :"$1", end_key}], [{{:"$1", :"$2"}}]}
     ]
 
+    entries =
+      case :ets.whereis(store_table()) do
+        :undefined ->
+          []
+
+        table ->
+          try do
+            :ets.select(table, match_spec)
+          catch
+            :error, :badarg -> []
+          end
+      end
+
     results =
-      :ets.select(store_table(), match_spec)
-      |> Enum.reduce([], fn {key, stored_data}, acc ->
+      Enum.reduce(entries, [], fn {key, stored_data}, acc ->
         case extract_value(stored_data) do
           {value, expires_at} ->
             if expired?(expires_at, now), do: acc, else: [{key, value} | acc]

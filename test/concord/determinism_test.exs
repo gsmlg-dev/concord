@@ -204,5 +204,28 @@ defmodule Concord.DeterminismTest do
       assert Map.has_key?(data.indexes, "idx1")
       assert data.indexes["idx1"] == {:map_get, :field}
     end
+
+    test "malformed compressed previous values do not crash apply_command", %{state: state} do
+      malformed = {:compressed, :zlib, <<1, 2, 3>>}
+      :ets.insert(:concord_store, {"broken", %{value: malformed, expires_at: nil}})
+
+      assert {_new_state, :ok, []} =
+               StateMachine.apply_command(
+                 %{index: 1, system_time: 1_000_000},
+                 {:put, "broken", "replacement", nil},
+                 state
+               )
+
+      assert [{"broken", %{value: "replacement", expires_at: nil}}] =
+               :ets.lookup(:concord_store, "broken")
+    end
+
+    test "prefix_scan returns an empty result when the store table is unavailable", %{
+      state: state
+    } do
+      :ets.delete(:concord_store)
+
+      assert {:ok, []} = StateMachine.query({:prefix_scan, "k"}, state)
+    end
   end
 end

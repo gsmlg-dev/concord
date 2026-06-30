@@ -65,6 +65,7 @@ defmodule Concord.Backup do
   ## Returns
 
   - `{:ok, backup_path}` - Path to created backup file
+  - `{:error, :cluster_not_ready}` - Ra cluster is unavailable; start Concord or retry after the cluster is ready
   - `{:error, reason}` - Error creating backup
 
   ## Examples
@@ -288,6 +289,9 @@ defmodule Concord.Backup do
     case :ra.consistent_query(server_id, {__MODULE__, :do_snapshot_query, []}) do
       {:ok, %{version: 2} = snapshot, _leader} ->
         {:ok, snapshot}
+
+      {:error, :noproc} ->
+        {:error, :cluster_not_ready}
 
       {:error, reason} ->
         {:error, reason}

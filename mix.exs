@@ -4,7 +4,7 @@ defmodule Concord.MixProject do
   def project do
     [
       app: :concord,
-      version: "1.1.0",
+      version: "2.0.1",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       releases: releases(),
