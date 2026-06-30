@@ -2,15 +2,18 @@
 
 let
   pkgs-stable = import inputs.nixpkgs-stable { system = pkgs.stdenv.system; };
-  pkgs-unstable = import inputs.nixpkgs-unstable { system = pkgs.stdenv.system; };
 in
 {
   env.GREET = "Concord";
+
+  git-hooks.configPath = ".pre-commit-config.yaml";
 
   packages = with pkgs-stable; [
     git
     figlet
     lolcat
+    openssl
+    pkg-config
     watchman
   ] ++ lib.optionals stdenv.isLinux [
     inotify-tools

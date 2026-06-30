@@ -9,7 +9,7 @@ defmodule Concord.TTL do
   use GenServer
   require Logger
 
-  @cluster_name :concord_cluster
+  alias Concord.Engine
 
   defstruct [:cleanup_interval, :default_ttl, :timer_ref]
 
@@ -127,10 +127,9 @@ defmodule Concord.TTL do
 
   defp perform_cleanup do
     start_time = System.monotonic_time()
-    server_id = {@cluster_name, node()}
 
-    case :ra.process_command(server_id, :cleanup_expired, 10_000) do
-      {:ok, {:ok, deleted_count}, _leader} ->
+    case Engine.command(:cleanup_expired, timeout: 10_000) do
+      {:ok, {:ok, deleted_count}} ->
         duration = System.monotonic_time() - start_time
         duration_ms = System.convert_time_unit(duration, :native, :millisecond)
 
@@ -155,11 +154,11 @@ defmodule Concord.TTL do
 
         {:ok, deleted_count}
 
-      {:timeout, _} ->
+      {:error, :timeout} ->
         Logger.warning("TTL cleanup operation timed out")
         {:error, :timeout}
 
-      {:error, :noproc} ->
+      {:error, :cluster_not_ready} ->
         Logger.warning("TTL cleanup failed - cluster not ready")
         {:error, :cluster_not_ready}
 

@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ '**' ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   compile:
@@ -18,6 +20,9 @@ jobs:
         with:
           elixir-version: '1.18'
           otp-version: '28'
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Restore dependencies cache
         uses: actions/cache@v4
@@ -48,6 +53,9 @@ jobs:
           elixir-version: '1.18'
           otp-version: '28'
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
@@ -77,6 +85,9 @@ jobs:
           elixir-version: '1.18'
           otp-version: '28'
 
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Restore dependencies cache
         uses: actions/cache@v4
         with:
@@ -105,6 +116,9 @@ jobs:
         with:
           elixir-version: '1.18'
           otp-version: '28'
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Restore dependencies cache
         uses: actions/cache@v4

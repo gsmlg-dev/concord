@@ -97,6 +97,12 @@ config :concord,
     tick_interval_seconds: 1,
     # Max leases per cluster
     max_leases: 10_000
+  ],
+  # Optional Turso-backed node-local durable engine
+  turso: [
+    enabled: false,
+    database: "./data/turso.db",
+    pool_size: 1
   ]
 
 # OpenTelemetry configuration

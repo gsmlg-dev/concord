@@ -18,6 +18,39 @@ config :concord,
   cluster_name: :concord_cluster,
   data_dir: data_dir
 
+turso_enabled =
+  System.get_env("CONCORD_TURSO_ENABLED", "false")
+  |> String.downcase()
+  |> then(&(&1 in ["1", "true", "yes", "on"]))
+
+turso_auth_token =
+  case System.get_env("CONCORD_TURSO_AUTH_TOKEN") || System.get_env("TURSO_AUTH_TOKEN") do
+    nil ->
+      nil
+
+    "" ->
+      nil
+
+    _token ->
+      fn ->
+        System.get_env("CONCORD_TURSO_AUTH_TOKEN") || System.fetch_env!("TURSO_AUTH_TOKEN")
+      end
+  end
+
+turso_pool_size =
+  System.get_env("CONCORD_TURSO_POOL_SIZE", "1")
+  |> String.to_integer()
+
+config :concord,
+  turso: [
+    enabled: turso_enabled,
+    database: System.get_env("CONCORD_TURSO_DATABASE", Path.join(data_dir, "turso.db")),
+    pool_size: turso_pool_size,
+    remote_url:
+      System.get_env("CONCORD_TURSO_REMOTE_URL") || System.get_env("TURSO_DATABASE_URL"),
+    auth_token: turso_auth_token
+  ]
+
 # Ra data_dir configuration.
 # In production/release mode, we configure Ra's data_dir and ensure it exists.
 # In test mode, the test helper manages Ra separately.

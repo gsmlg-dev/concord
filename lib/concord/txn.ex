@@ -33,11 +33,11 @@ defmodule Concord.Txn do
       })
   """
 
+  alias Concord.Engine
   alias Concord.Txn.Result
   alias Concord.Validation
 
   @timeout 5_000
-  @cluster_name :concord_cluster
 
   @doc """
   Commits a transaction spec atomically.
@@ -67,20 +67,22 @@ defmodule Concord.Txn do
           {:txn, spec}
         end
 
-      case :ra.process_command(server_id(), cmd, timeout) do
-        {:ok, {:ok, %Result{} = result}, _} ->
+      engine_opts = Keyword.take(opts, [:engine])
+
+      case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
+        {:ok, {:ok, %Result{} = result}} ->
           {:ok, result}
 
-        {:ok, {:ok, result}, _} when is_map(result) ->
+        {:ok, {:ok, result}} when is_map(result) ->
           {:ok, struct(Result, result)}
 
-        {:ok, {:error, reason}, _} ->
+        {:ok, {:error, reason}} ->
           {:error, reason}
 
-        {:timeout, _} ->
+        {:error, :timeout} ->
           {:error, :timeout}
 
-        {:error, :noproc} ->
+        {:error, :cluster_not_ready} ->
           {:error, :cluster_not_ready}
 
         {:error, reason} ->
@@ -88,6 +90,4 @@ defmodule Concord.Txn do
       end
     end
   end
-
-  defp server_id, do: {@cluster_name, node()}
 end

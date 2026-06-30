@@ -17,12 +17,9 @@ defmodule Concord do
       :ok
   """
 
-  require Logger
-
-  alias Concord.{Compression, StateMachine, TTL, Txn}
+  alias Concord.{Compression, Engine, TTL, Txn}
 
   @timeout 5_000
-  @cluster_name :concord_cluster
 
   @doc """
   Stores a key-value pair in the cluster.
@@ -49,7 +46,7 @@ defmodule Concord do
       was_compressed = compressed_value != value
 
       result =
-        case command({:put, key, compressed_value, expires_at}, timeout) do
+        case command({:put, key, compressed_value, expires_at}, timeout, opts) do
           {:ok, :ok, _} -> :ok
           {:ok, result, _} -> {:ok, result}
           {:timeout, _} -> {:error, :timeout}
@@ -86,7 +83,7 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case query({:get, key}, timeout, consistency) do
+        case query({:get, key}, timeout, consistency, opts) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -131,7 +128,7 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case command({:delete, key}, timeout) do
+        case command({:delete, key}, timeout, opts) do
           {:ok, :ok, _} -> :ok
           {:ok, result, _} -> {:ok, result}
           {:timeout, _} -> {:error, :timeout}
@@ -197,7 +194,11 @@ defmodule Concord do
       result =
         cond do
           expected != nil ->
-            unwrap_command_result({:put_if, key, compressed_value, expires_at, expected}, timeout)
+            unwrap_command_result(
+              {:put_if, key, compressed_value, expires_at, expected},
+              timeout,
+              opts
+            )
 
           condition_fn != nil ->
             evaluate_condition_then_cas(
@@ -258,7 +259,7 @@ defmodule Concord do
       result =
         cond do
           expected != nil ->
-            unwrap_command_result({:delete_if, key, expected, nil}, timeout)
+            unwrap_command_result({:delete_if, key, expected, nil}, timeout, opts)
 
           condition_fn != nil ->
             evaluate_condition_then_cas(
@@ -297,7 +298,7 @@ defmodule Concord do
     timeout = Keyword.get(opts, :timeout, @timeout)
     consistency = Keyword.get(opts, :consistency, default_consistency())
 
-    case query(:get_all, timeout, consistency) do
+    case query(:get_all, timeout, consistency, opts) do
       {:ok, {{_index, _term}, query_result}, _} -> query_result
       {:timeout, _} -> {:error, :timeout}
       {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -313,38 +314,14 @@ defmodule Concord do
   - `:consistency` - Read consistency level (default: :leader)
   """
   def status(opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @timeout)
-    consistency = Keyword.get(opts, :consistency, default_consistency())
-    server_id = server_id()
-
-    with {:ok, overview, _} <- :ra.member_overview(server_id, timeout),
-         {:ok, {{_index, _term}, {:ok, stats}}, _} <- query(:stats, timeout, consistency) do
-      # Convert overview to JSON-friendly format (recursively convert tuples to strings)
-      json_friendly_overview = make_json_friendly(overview)
-
-      {:ok,
-       %{
-         cluster: json_friendly_overview,
-         storage: stats,
-         node: node()
-       }}
-    else
-      {:error, reason} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-    end
+    Engine.status(opts)
   end
 
   @doc """
   Returns cluster members information.
   """
-  def members do
-    server_id = server_id()
-
-    case :ra.members(server_id) do
-      {:ok, members, _leader} -> {:ok, members}
-      {:error, reason} -> {:error, reason}
-      {:timeout, _} -> {:error, :timeout}
-    end
+  def members(opts \\ []) do
+    Engine.members(opts)
   end
 
   @doc """
@@ -381,7 +358,7 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case command({:touch, key, additional_ttl_seconds}, timeout) do
+        case command({:touch, key, additional_ttl_seconds}, timeout, opts) do
           {:ok, :ok, _} -> :ok
           {:ok, result, _} -> result
           {:timeout, _} -> {:error, :timeout}
@@ -422,7 +399,7 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case query({:ttl, key}, timeout, consistency) do
+        case query({:ttl, key}, timeout, consistency, opts) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -466,7 +443,7 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case query({:get_with_ttl, key}, timeout, consistency) do
+        case query({:get_with_ttl, key}, timeout, consistency, opts) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -508,7 +485,7 @@ defmodule Concord do
     timeout = Keyword.get(opts, :timeout, @timeout)
     consistency = Keyword.get(opts, :consistency, default_consistency())
 
-    case query(:get_all_with_ttl, timeout, consistency) do
+    case query(:get_all_with_ttl, timeout, consistency, opts) do
       {:ok, {{_index, _term}, query_result}, _} -> query_result
       {:timeout, _} -> {:error, :timeout}
       {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -535,7 +512,7 @@ defmodule Concord do
     timeout = Keyword.get(opts, :timeout, @timeout)
     consistency = Keyword.get(opts, :consistency, default_consistency())
 
-    case query({:prefix_scan, prefix}, timeout, consistency) do
+    case query({:prefix_scan, prefix}, timeout, consistency, opts) do
       {:ok, {{_index, _term}, {:ok, pairs}}, _} -> {:ok, decompress_pairs(pairs)}
       {:ok, {{_index, _term}, query_result}, _} -> query_result
       {:timeout, _} -> {:error, :timeout}
@@ -571,7 +548,8 @@ defmodule Concord do
           {key, value, expires_at} -> {key, value, expires_at}
         end)
 
-      result = process_batch_command_result(command({:put_many, formatted_operations}, timeout))
+      result =
+        process_batch_command_result(command({:put_many, formatted_operations}, timeout, opts))
 
       duration = System.monotonic_time() - start_time
 
@@ -627,7 +605,7 @@ defmodule Concord do
 
       # Use the query path (not a write command) for reads
       result =
-        case query({:get_many, keys}, timeout, consistency) do
+        case query({:get_many, keys}, timeout, consistency, opts) do
           {:ok, {{_index, _term}, query_result}, _} ->
             query_result
 
@@ -672,7 +650,7 @@ defmodule Concord do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
 
-      result = process_batch_command_result(command({:delete_many, keys}, timeout))
+      result = process_batch_command_result(command({:delete_many, keys}, timeout, opts))
 
       duration = System.monotonic_time() - start_time
 
@@ -706,7 +684,7 @@ defmodule Concord do
       start_time = System.monotonic_time()
 
       result =
-        case command({:touch_many, operations}, timeout) do
+        case command({:touch_many, operations}, timeout, opts) do
           {:ok, {:ok, results}, _} ->
             # Convert StateMachine results to map format
             result_map = Map.new(results)
@@ -761,12 +739,19 @@ defmodule Concord do
     end
   end
 
-  defp command(cmd, timeout) do
-    :ra.process_command(server_id(), cmd, timeout)
+  defp command(cmd, timeout, opts) do
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, result} -> {:ok, result, Engine.engine(engine_opts)}
+      {:error, :timeout} -> {:timeout, nil}
+      {:error, :cluster_not_ready} -> {:error, :noproc}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
-  defp unwrap_command_result(cmd, timeout) do
-    case command(cmd, timeout) do
+  defp unwrap_command_result(cmd, timeout, opts) do
+    case command(cmd, timeout, opts) do
       {:ok, :ok, _} -> :ok
       {:ok, {:error, reason}, _} -> {:error, reason}
       {:timeout, _} -> {:error, :timeout}
@@ -778,10 +763,10 @@ defmodule Concord do
   # Evaluate a condition function pre-consensus, then issue a CAS command.
   # Keeps anonymous functions out of the Raft log.
   defp evaluate_condition_then_cas(key, build_cmd, condition_fn, opts, timeout) do
-    case get(key, Keyword.take(opts, [:timeout, :consistency])) do
+    case get(key, Keyword.take(opts, [:timeout, :consistency, :engine])) do
       {:ok, current_value} ->
         if condition_fn.(current_value) do
-          unwrap_command_result(build_cmd.(current_value), timeout)
+          unwrap_command_result(build_cmd.(current_value), timeout, opts)
         else
           {:error, :condition_failed}
         end
@@ -791,100 +776,22 @@ defmodule Concord do
     end
   end
 
-  defp query(query, timeout, consistency) do
-    # Ra 3.0: leader_query and consistent_query require MFA tuples, not anonymous
-    # functions (anonymous functions cannot be safely serialized across nodes).
-    # Ra calls MFA as erlang:apply(M, F, A ++ [State]), so {M, :query, [q]}
-    # maps to StateMachine.query(q, state) — matching query/2 directly.
-    # local_query still accepts anonymous functions for eventual consistency.
-    mfa = {StateMachine, :query, [query]}
+  defp query(query, timeout, consistency, opts) do
+    engine_opts = Keyword.take(opts, [:engine])
 
-    result =
-      case consistency do
-        :eventual ->
-          # Use local_query for eventual consistency (fastest, may be stale)
-          target_server = select_read_replica()
-
-          :ra.local_query(
-            target_server,
-            fn state -> StateMachine.query(query, state) end,
-            timeout
-          )
-
-        :leader ->
-          # Use leader_query for balanced consistency
-          :ra.leader_query(server_id(), mfa, timeout)
-
-        :strong ->
-          # Use consistent_query for linearizable reads (slowest)
-          :ra.consistent_query(server_id(), mfa, timeout)
-
-        _ ->
-          # Default to leader query for unknown consistency levels
-          :ra.leader_query(server_id(), mfa, timeout)
-      end
-
-    # Normalize the result format:
-    # - local_query returns: {:ok, {{index, term}, result}, leader_id}
-    # - leader_query returns: {:ok, {{index, term}, result}, leader_id} or {:ok, result, not_known}
-    # - consistent_query returns: {:ok, result, leader_id}
-    case result do
-      {:ok, {{_index, _term}, query_result}, leader_id} ->
-        # Standard format from local_query or leader_query
-        {:ok, {{0, 0}, query_result}, leader_id}
-
-      {:ok, query_result, leader_id} ->
-        # Format from consistent_query or leader_query when leader unknown
-        {:ok, {{0, 0}, query_result}, leader_id}
-
-      other ->
-        # Pass through errors and timeouts
-        other
+    case Engine.query(
+           query,
+           Keyword.merge(engine_opts, timeout: timeout, consistency: consistency)
+         ) do
+      {:ok, query_result} -> {:ok, {{0, 0}, query_result}, Engine.engine(engine_opts)}
+      {:error, :timeout} -> {:timeout, nil}
+      {:error, :cluster_not_ready} -> {:error, :noproc}
+      {:error, reason} -> {:error, reason}
     end
-  end
-
-  defp server_id do
-    {@cluster_name, node()}
   end
 
   defp default_consistency do
     Application.get_env(:concord, :default_read_consistency, :leader)
-  end
-
-  # Recursively convert data structures to JSON-friendly format
-  # Converts tuples, references, PIDs, and other non-JSON types to strings
-  defp make_json_friendly(data) when is_map(data) do
-    Enum.map(data, fn {k, v} ->
-      {make_json_friendly(k), make_json_friendly(v)}
-    end)
-    |> Map.new()
-  end
-
-  defp make_json_friendly(data) when is_list(data) do
-    Enum.map(data, &make_json_friendly/1)
-  end
-
-  defp make_json_friendly(data) when is_tuple(data) do
-    inspect(data)
-  end
-
-  defp make_json_friendly(data) when is_reference(data) or is_pid(data) or is_port(data) do
-    inspect(data)
-  end
-
-  defp make_json_friendly(data), do: data
-
-  defp select_read_replica do
-    # Get cluster members for load balancing eventual consistency reads
-    case :ra.members(server_id()) do
-      {:ok, [_ | _] = members, _leader} ->
-        # Randomly select a member for load balancing
-        Enum.random(members)
-
-      _ ->
-        # Fallback to local server if we can't get members
-        server_id()
-    end
   end
 
   defp maybe_compress(value, opts) do

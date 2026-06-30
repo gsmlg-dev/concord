@@ -6,7 +6,7 @@ defmodule Concord.Application do
   use Application
   require Logger
 
-  alias Concord.{StateMachine, Telemetry, TTL}
+  alias Concord.{Engine, StateMachine, Telemetry, TTL, Turso}
   alias Concord.Sync.{Dispatcher, WatchHub}
 
   @impl true
@@ -19,14 +19,16 @@ defmodule Concord.Application do
 
   @doc false
   def children do
-    [
-      {Telemetry.Poller, []},
-      cluster_supervisor_child(),
-      {TTL, []},
-      {Dispatcher, []},
-      {WatchHub, []},
-      {Task, fn -> init_cluster() end}
-    ]
+    ([{Telemetry.Poller, []}] ++
+       turso_children() ++
+       [
+         {Engine.Local, []},
+         cluster_supervisor_child(),
+         {TTL, []},
+         {Dispatcher, []},
+         {WatchHub, []},
+         {Task, fn -> init_cluster() end}
+       ])
     |> Enum.reject(&is_nil/1)
   end
 
@@ -58,6 +60,10 @@ defmodule Concord.Application do
     ]
   end
 
+  defp turso_children do
+    if Turso.enabled?(), do: [{Turso, []}], else: []
+  end
+
   defp init_cluster do
     case wait_for_ra_system() do
       :ok ->
@@ -69,18 +75,11 @@ defmodule Concord.Application do
     end
   end
 
-  defp start_cluster(attempts \\ 3)
-
-  defp start_cluster(0) do
-    Logger.error("Failed to start Concord cluster: :system_not_started")
-    {:error, :system_not_started}
-  end
-
-  defp start_cluster(attempts) do
+  defp start_cluster(attempts \\ 3) do
     wait_for_peers()
 
     node_id = node_id()
-    cluster_name = :concord_cluster
+    cluster_name = Application.get_env(:concord, :cluster_name, :concord_cluster)
     machine = {:module, StateMachine, %{}}
 
     nodes = [Node.self() | Node.list()]
@@ -109,10 +108,14 @@ defmodule Concord.Application do
 
     case :ra.start_server(:default, server_config) do
       :ok ->
-        cluster_started(node_id)
+        Logger.info("Concord cluster started on #{node()}")
+        :ra.trigger_election(node_id)
+        :ok
 
       {:ok, _} ->
-        cluster_started(node_id)
+        Logger.info("Concord cluster started on #{node()}")
+        :ra.trigger_election(node_id)
+        :ok
 
       {:error, {:already_started, _}} ->
         Logger.info("Concord cluster already running on #{node()}")
@@ -122,32 +125,33 @@ defmodule Concord.Application do
         Logger.info("Restarting existing Concord cluster on #{node()}")
 
         case :ra.restart_server(:default, node_id) do
-          :ok -> cluster_started(node_id)
-          {:error, reason} -> cluster_start_failed(reason)
+          :ok ->
+            Logger.info("Concord cluster started on #{node()}")
+            :ra.trigger_election(node_id)
+            :ok
+
+          {:error, reason} ->
+            Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
+            {:error, reason}
         end
 
       {:error, :system_not_started} ->
-        Logger.warning("Ra system not ready while starting Concord cluster, retrying...")
-        Process.sleep(500)
+        if attempts > 1 do
+          Logger.warning("Ra system not ready while starting Concord cluster, retrying...")
+          Process.sleep(500)
 
-        with :ok <- wait_for_ra_system() do
-          start_cluster(attempts - 1)
+          with :ok <- wait_for_ra_system() do
+            start_cluster(attempts - 1)
+          end
+        else
+          Logger.error("Failed to start Concord cluster: :system_not_started")
+          {:error, :system_not_started}
         end
 
       {:error, reason} ->
-        cluster_start_failed(reason)
+        Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
+        {:error, reason}
     end
-  end
-
-  defp cluster_started(node_id) do
-    Logger.info("Concord cluster started on #{node()}")
-    :ra.trigger_election(node_id)
-    :ok
-  end
-
-  defp cluster_start_failed(reason) do
-    Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
-    {:error, reason}
   end
 
   # Wait for libcluster to discover peer nodes. If CONCORD_CLUSTER_NODES is set,

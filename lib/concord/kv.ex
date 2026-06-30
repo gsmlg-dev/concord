@@ -30,11 +30,10 @@ defmodule Concord.KV do
 
   require Logger
 
-  alias Concord.{Compression, StateMachine}
+  alias Concord.{Compression, Engine}
   alias Concord.KV.Record
 
   @timeout 5_000
-  @cluster_name :concord_cluster
   @default_list_limit 1_000
   @max_list_limit 10_000
 
@@ -67,7 +66,7 @@ defmodule Concord.KV do
           true -> {:get, key}
         end
 
-      case do_query(query_cmd, timeout, consistency) do
+      case do_query(query_cmd, timeout, consistency, opts) do
         {:ok, %Record{} = record} when not with_metadata ->
           {:ok, Compression.decompress(record.value)}
 
@@ -90,7 +89,7 @@ defmodule Concord.KV do
   def revision(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     consistency = Keyword.get(opts, :consistency, default_consistency())
-    do_query(:get_revision, timeout, consistency)
+    do_query(:get_revision, timeout, consistency, opts)
   end
 
   @doc """
@@ -108,8 +107,8 @@ defmodule Concord.KV do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
 
-      query_cmd = {:history, key, opts}
-      do_query(query_cmd, timeout, consistency)
+      query_cmd = {:history, key, Keyword.drop(opts, [:engine])}
+      do_query(query_cmd, timeout, consistency, opts)
     end
   end
 
@@ -162,7 +161,7 @@ defmodule Concord.KV do
 
     case query_cmd do
       {:error, reason} -> {:error, reason}
-      _ -> do_query(query_cmd, timeout, consistency)
+      _ -> do_query(query_cmd, timeout, consistency, opts)
     end
   end
 
@@ -204,7 +203,7 @@ defmodule Concord.KV do
            prev_kv: Keyword.get(opts, :prev_kv, false)
          }}
 
-      case do_command(cmd, timeout) do
+      case do_command(cmd, timeout, opts) do
         {:ok, result, _} -> {:ok, result}
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -226,7 +225,7 @@ defmodule Concord.KV do
 
       cmd = {:delete, key, %{prev_kv: prev_kv}}
 
-      case do_command(cmd, timeout) do
+      case do_command(cmd, timeout, opts) do
         {:ok, result, _} -> {:ok, result}
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -254,7 +253,9 @@ defmodule Concord.KV do
            failure: [{:get, {:key, key}, %{}}]
          }}
 
-      case do_command(cmd, timeout) do
+      case do_command(cmd, timeout, opts) do
+        {:ok, {:ok, %{succeeded: true} = result}, _} -> {:ok, result}
+        {:ok, {:ok, %{succeeded: false} = result}, _} -> {:ok, result}
         {:ok, %{succeeded: true} = result, _} -> {:ok, result}
         {:ok, %{succeeded: false} = result, _} -> {:ok, result}
         {:timeout, _} -> {:error, :timeout}
@@ -283,7 +284,8 @@ defmodule Concord.KV do
            failure: []
          }}
 
-      case do_command(cmd, timeout) do
+      case do_command(cmd, timeout, opts) do
+        {:ok, {:ok, result}, _} -> {:ok, result}
         {:ok, result, _} -> {:ok, result}
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -312,7 +314,8 @@ defmodule Concord.KV do
            failure: [{:get, {:key, key}, %{}}]
          }}
 
-      case do_command(cmd, timeout) do
+      case do_command(cmd, timeout, opts) do
+        {:ok, {:ok, result}, _} -> {:ok, result}
         {:ok, result, _} -> {:ok, result}
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -340,7 +343,8 @@ defmodule Concord.KV do
            failure: [{:get, {:key, key}, %{}}]
          }}
 
-      case do_command(cmd, timeout) do
+      case do_command(cmd, timeout, opts) do
+        {:ok, {:ok, result}, _} -> {:ok, result}
         {:ok, result, _} -> {:ok, result}
         {:timeout, _} -> {:error, :timeout}
         {:error, :noproc} -> {:error, :cluster_not_ready}
@@ -353,54 +357,31 @@ defmodule Concord.KV do
   # Private helpers
   # ──────────────────────────────────────────────
 
-  defp do_command(cmd, timeout) do
-    :ra.process_command(server_id(), cmd, timeout)
-  end
+  defp do_command(cmd, timeout, opts) do
+    engine_opts = Keyword.take(opts, [:engine])
 
-  defp do_query(query_cmd, timeout, consistency) do
-    mfa = {StateMachine, :query, [query_cmd]}
-
-    result =
-      case consistency do
-        :eventual ->
-          target = select_read_replica()
-
-          :ra.local_query(
-            target,
-            fn state -> StateMachine.query(query_cmd, state) end,
-            timeout
-          )
-
-        :leader ->
-          :ra.leader_query(server_id(), mfa, timeout)
-
-        :strong ->
-          :ra.consistent_query(server_id(), mfa, timeout)
-
-        _ ->
-          :ra.leader_query(server_id(), mfa, timeout)
-      end
-
-    case result do
-      {:ok, {{_index, _term}, query_result}, _leader} -> query_result
-      {:ok, query_result, _leader} -> query_result
-      {:timeout, _} -> {:error, :timeout}
-      {:error, :noproc} -> {:error, :cluster_not_ready}
+    case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, result} -> {:ok, result, Engine.engine(engine_opts)}
+      {:error, :timeout} -> {:timeout, nil}
+      {:error, :cluster_not_ready} -> {:error, :noproc}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp server_id, do: {@cluster_name, node()}
+  defp do_query(query_cmd, timeout, consistency, opts) do
+    engine_opts = Keyword.take(opts, [:engine])
+
+    case Engine.query(
+           query_cmd,
+           Keyword.merge(engine_opts, timeout: timeout, consistency: consistency)
+         ) do
+      {:ok, query_result} -> query_result
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp default_consistency do
     Application.get_env(:concord, :default_read_consistency, :leader)
-  end
-
-  defp select_read_replica do
-    case :ra.members(server_id()) do
-      {:ok, [_ | _] = members, _leader} -> Enum.random(members)
-      _ -> server_id()
-    end
   end
 
   defp maybe_compress(value, opts) do

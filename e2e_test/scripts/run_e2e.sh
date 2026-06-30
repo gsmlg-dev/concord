@@ -122,6 +122,7 @@ $ELIXIR_CMD \
     Code.require_file(\"$E2E_DIR/tests/v2_kv_test.exs\")
     Code.require_file(\"$E2E_DIR/tests/v2_txn_test.exs\")
     Code.require_file(\"$E2E_DIR/tests/v2_lease_test.exs\")
+    Code.require_file(\"$E2E_DIR/tests/engine_modes_test.exs\")
 
     ExUnit.run()
     |> case do
