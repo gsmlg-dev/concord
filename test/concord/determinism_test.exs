@@ -41,6 +41,13 @@ defmodule Concord.DeterminismTest do
     :ets.new(:concord_store, [:ordered_set, :public, :named_table])
   end
 
+  defp delete_core_ets_tables do
+    for table <- [:concord_store, :concord_current, :concord_history, :concord_leases],
+        :ets.whereis(table) != :undefined do
+      :ets.delete(table)
+    end
+  end
+
   defp assert_states_equal({:concord_kv, data_a}, {:concord_kv, data_b}) do
     for field <- @comparable_fields do
       val_a = Map.get(data_a, field)
@@ -218,6 +225,25 @@ defmodule Concord.DeterminismTest do
 
       assert [{"broken", %{value: "replacement", expires_at: nil}}] =
                :ets.lookup(:concord_store, "broken")
+    end
+
+    test "apply recreates missing ETS tables before replaying recovered Ra commands", %{
+      state: state
+    } do
+      delete_core_ets_tables()
+
+      assert {{:concord_kv, %{command_count: 1}}, :ok, []} =
+               StateMachine.apply(
+                 %{index: 1, system_time: 1_000_000},
+                 {:put, "recovered", "value", nil},
+                 state
+               )
+
+      assert [{"recovered", %{value: "value", expires_at: nil}}] =
+               :ets.lookup(:concord_store, "recovered")
+
+      assert [{"recovered", %Concord.KV.Record{value: "value"}}] =
+               :ets.lookup(:concord_current, "recovered")
     end
 
     test "prefix_scan returns an empty result when the store table is unavailable", %{
