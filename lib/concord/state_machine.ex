@@ -112,6 +112,21 @@ defmodule Concord.StateMachine do
     end
   end
 
+  defp ensure_materialized_view_tables({:concord_kv, data}) do
+    ensure_ets_table(store_table(), [:ordered_set, :named_table])
+    ensure_ets_table(current_table(), [:ordered_set, :named_table])
+    ensure_ets_table(history_table(), [:ordered_set, :named_table])
+    ensure_ets_table(leases_table(), [:set, :named_table])
+
+    data
+    |> Map.get(:indexes, %{})
+    |> Enum.each(fn {name, _spec} ->
+      name
+      |> Index.index_table_name()
+      |> ensure_ets_table()
+    end)
+  end
+
   # ──────────────────────────────────────────────
   # apply/3 — Ra callback wrapper
   # Normalizes state, delegates to apply_command,
@@ -121,6 +136,7 @@ defmodule Concord.StateMachine do
   @impl :ra_machine
   def apply(meta, command, state) do
     normalized = normalize_state(state)
+    ensure_materialized_view_tables(normalized)
 
     {new_state, result, effects} = apply_command(meta, command, normalized)
 
