@@ -20,16 +20,13 @@ defmodule Concord.Application do
   @doc false
   def children do
     ([{Telemetry.Poller, []}] ++
-       turso_children() ++
-       [
-         {Engine.Local, []},
-         cluster_supervisor_child(),
-         {TTL, []},
-         {Dispatcher, []},
-         {WatchHub, []},
-         {Task, fn -> init_cluster() end}
-       ])
+       turso_children() ++ [{Engine.Local, []}] ++ cluster_children())
     |> Enum.reject(&is_nil/1)
+  end
+
+  @doc false
+  def cluster_enabled? do
+    Application.get_env(:concord, :cluster_enabled, true)
   end
 
   @doc false
@@ -49,6 +46,20 @@ defmodule Concord.Application do
       {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]}
     else
       nil
+    end
+  end
+
+  defp cluster_children do
+    if cluster_enabled?() do
+      [
+        cluster_supervisor_child(),
+        {TTL, []},
+        {Dispatcher, []},
+        {WatchHub, []},
+        {Task, fn -> init_cluster() end}
+      ]
+    else
+      []
     end
   end
 

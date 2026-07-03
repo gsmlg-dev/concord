@@ -7,6 +7,7 @@ Complete reference for all Concord configuration options.
 ```elixir
 config :concord,
   cluster_name: :concord_cluster,
+  cluster_enabled: true,
   data_dir: "./data",
   auth_enabled: false,
   max_batch_size: 500,
@@ -88,9 +89,23 @@ config :concord,
   ]
 ```
 
+Applications that only need the durable Turso KV engine can disable Concord's
+Raft cluster runtime:
+
+```elixir
+config :concord,
+  cluster_enabled: false,
+  turso: [
+    enabled: true,
+    database: "./data/turso.db",
+    pool_size: 1
+  ]
+```
+
 Runtime releases can use environment variables:
 
 ```bash
+CONCORD_CLUSTER_ENABLED=false
 CONCORD_TURSO_ENABLED=true
 CONCORD_TURSO_DATABASE=/var/lib/concord/turso.db
 CONCORD_TURSO_POOL_SIZE=1
@@ -196,6 +211,7 @@ data_dir =
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONCORD_DATA_DIR` | `/var/lib/concord/data` | Persistent data directory (prod) |
+| `CONCORD_CLUSTER_ENABLED` | `true` | Start Concord's Raft cluster runtime |
 | `CONCORD_API_PORT` | `8080` | HTTP API port (prod) |
 | `CONCORD_API_IP` | `0.0.0.0` | HTTP API bind address (prod) |
 | `CONCORD_HTTP_ENABLED` | `true` | Enable HTTP API (prod) |

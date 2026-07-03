@@ -93,6 +93,19 @@ does not submit writes to Raft and does not provide Concord cluster membership,
 leases, watches, or secondary indexes. If `remote_url` and `auth_token` are
 configured, `Concord.Turso.sync/1` triggers Turso Cloud sync.
 
+Applications that only need the durable Turso KV engine can disable the Concord
+Raft cluster runtime while still starting the Turso pool:
+
+```elixir
+config :concord,
+  cluster_enabled: false,
+  turso: [
+    enabled: true,
+    database: "./data/turso.db",
+    pool_size: 1
+  ]
+```
+
 For applications that need a regular Ecto SQL repository backed by
 Turso/libSQL, use the optional Ecto adapter shipped by `ex_turso`:
 
