@@ -93,6 +93,34 @@ does not submit writes to Raft and does not provide Concord cluster membership,
 leases, watches, or secondary indexes. If `remote_url` and `auth_token` are
 configured, `Concord.Turso.sync/1` triggers Turso Cloud sync.
 
+For applications that need a regular Ecto SQL repository backed by
+Turso/libSQL, use the optional Ecto adapter shipped by `ex_turso`:
+
+```elixir
+def deps do
+  [
+    {:concord, "~> 2.3"},
+    {:ex_turso, "~> 0.2.0"},
+    {:ecto_sql, "~> 3.14"}
+  ]
+end
+
+defmodule MyApp.Repo do
+  use Ecto.Repo,
+    otp_app: :my_app,
+    adapter: Ecto.Adapters.Turso
+end
+
+config :my_app, MyApp.Repo,
+  database: "my_app.db",
+  pool_size: 5
+```
+
+`Ecto.Adapters.Turso` is the supported equivalent when you need schema/query
+semantics, migrations, constraints, indexes, transactions, and map/JSON fields.
+Swap the adapter and connection options in the host application when using
+PostgreSQL instead.
+
 ### Multi-Node Cluster
 
 ```bash
