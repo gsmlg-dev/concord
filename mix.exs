@@ -105,7 +105,7 @@ defmodule Concord.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.4"},
       {:db_connection, "~> 2.10"},
-      {:ex_turso, "~> 0.2.0"},
+      {:ex_turso, "~> 0.3"},
       # E2E testing (note: LocalCluster removed due to OTP 28 compatibility, using manual node spawning)
       {:http_fetch, "~> 0.10.0", only: [:e2e_test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
