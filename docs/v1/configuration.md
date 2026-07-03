@@ -103,6 +103,39 @@ configured. Turso does not provide Concord Raft semantics, leases, watches, or
 secondary indexes; those operations return explicit unsupported-operation
 errors.
 
+### Ecto SQL adapter
+
+`Concord.Turso` is a Concord KV API. Applications that need normal Ecto schema,
+query, migration, transaction, constraint/index, and map/JSON-field semantics
+should configure an Ecto repo with the optional adapter provided by `ex_turso`:
+
+```elixir
+def deps do
+  [
+    {:concord, "~> 2.3"},
+    {:ex_turso, "~> 0.2.0"},
+    {:ecto_sql, "~> 3.14"}
+  ]
+end
+
+defmodule MyApp.Repo do
+  use Ecto.Repo,
+    otp_app: :my_app,
+    adapter: Ecto.Adapters.Turso
+end
+
+config :my_app, MyApp.Repo,
+  database: "my_app.db",
+  pool_size: 5
+```
+
+`Ecto.Adapters.Turso` is the supported Turso/libSQL Ecto adapter name. It is the
+documented equivalent for applications that might otherwise look for an
+`Ecto.Adapters.Concord` module.
+
+Use a normal PostgreSQL adapter and connection configuration in the host
+application when PostgreSQL is selected instead.
+
 ## Development (config/dev.exs)
 
 ```elixir
