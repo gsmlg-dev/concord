@@ -3,6 +3,7 @@ import Config
 
 config :concord,
   cluster_name: :concord_cluster,
+  cluster_enabled: true,
   data_dir: "./data",
   max_batch_size: 500,
   # Default read consistency level: :eventual, :leader, or :strong

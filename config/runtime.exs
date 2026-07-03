@@ -14,8 +14,14 @@ data_dir =
       Path.join(System.tmp_dir!(), "concord_data/#{node_name}")
   end
 
+cluster_enabled =
+  System.get_env("CONCORD_CLUSTER_ENABLED", "true")
+  |> String.downcase()
+  |> then(&(&1 in ["1", "true", "yes", "on"]))
+
 config :concord,
   cluster_name: :concord_cluster,
+  cluster_enabled: cluster_enabled,
   data_dir: data_dir
 
 turso_enabled =

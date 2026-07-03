@@ -4,13 +4,17 @@ defmodule Concord.ApplicationTest do
   import ExUnit.CaptureLog
 
   setup do
+    concord_cluster_enabled = Application.get_env(:concord, :cluster_enabled)
     concord_clustering = Application.get_env(:concord, :clustering)
     concord_topologies = Application.get_env(:concord, :topologies)
+    concord_turso = Application.get_env(:concord, :turso)
     libcluster_topologies = Application.get_env(:libcluster, :topologies)
 
     on_exit(fn ->
+      restore_env(:concord, :cluster_enabled, concord_cluster_enabled)
       restore_env(:concord, :clustering, concord_clustering)
       restore_env(:concord, :topologies, concord_topologies)
+      restore_env(:concord, :turso, concord_turso)
       restore_env(:libcluster, :topologies, libcluster_topologies)
     end)
 
@@ -88,6 +92,51 @@ defmodule Concord.ApplicationTest do
            end)
   end
 
+  test "omits Raft cluster runtime children when cluster is disabled" do
+    Application.put_env(:concord, :cluster_enabled, false)
+
+    children = Concord.Application.children()
+
+    assert child?(children, Concord.Engine.Local)
+    refute child?(children, Cluster.Supervisor)
+    refute child?(children, Concord.TTL)
+    refute child?(children, Concord.Sync.Dispatcher)
+    refute child?(children, Concord.Sync.WatchHub)
+
+    refute Enum.any?(children, fn
+             {Task, _args} -> true
+             _child -> false
+           end)
+  end
+
+  @tag :tmp_dir
+  test "starts Turso without starting the Raft cluster runtime", %{tmp_dir: tmp_dir} do
+    stop_concord()
+    stop_ra()
+
+    Application.put_env(:concord, :cluster_enabled, false)
+
+    Application.put_env(:concord, :turso,
+      enabled: true,
+      database: Path.join(tmp_dir, "turso.db"),
+      pool_size: 1
+    )
+
+    assert {:ok, _started} = Application.ensure_all_started(:concord)
+
+    assert Process.whereis(Concord.Turso.DB)
+    assert Process.whereis(Concord.TTL) == nil
+    assert Process.whereis(Concord.Sync.Dispatcher) == nil
+    assert Process.whereis(Concord.Sync.WatchHub) == nil
+    assert {:error, :system_not_started} = :ra_system.lookup_name(:default, :server_sup)
+
+    assert :ok = Concord.Turso.put("app:turso", "value")
+    assert {:ok, "value"} = Concord.Turso.get("app:turso")
+  after
+    stop_concord()
+    stop_ra()
+  end
+
   test "starts default Ra system before starting Concord cluster" do
     stop_concord()
     stop_ra()
@@ -134,6 +183,13 @@ defmodule Concord.ApplicationTest do
   defp cluster_supervisor_child do
     Enum.find(Concord.Application.children(), fn
       {Cluster.Supervisor, _args} -> true
+      _child -> false
+    end)
+  end
+
+  defp child?(children, module) do
+    Enum.any?(children, fn
+      {^module, _args} -> true
       _child -> false
     end)
   end
