@@ -16,8 +16,8 @@ Concord is an **embedded key-value database** for Elixir with Raft consensus (Ra
 ```bash
 mix compile                    # Build
 mix test                       # Unit tests (uses --no-start alias)
-mix test test/concord_test.exs # Single file
-mix test test/concord_test.exs:42  # Single test by line
+mix test apps/concord/test/concord_test.exs # Single file
+mix test apps/concord/test/concord_test.exs:42  # Single test by line
 mix test --cover               # Coverage (threshold: 50%)
 mix lint                       # Credo + Dialyzer
 mix credo                      # Linter only (max line length: 120)
@@ -95,13 +95,13 @@ These exist in the codebase but are out of scope for an embedded database:
 
 ### Adding a New Feature
 
-1. **API layer** (`lib/concord.ex`): Validate inputs, call `:ra.process_command` for writes or `:ra.consistent_query` for reads. Handle nested Ra result tuples.
+1. **API layer** (`apps/concord/lib/concord.ex`): Validate inputs, call `:ra.process_command` for writes or `:ra.consistent_query` for reads. Handle nested Ra result tuples.
 
-2. **State machine command** (`lib/concord/state_machine.ex`): Add `apply_command/3` clause. Return `{{:concord_kv, new_state}, result, effects}`. Use `meta_time(meta)` for timestamps. Emit telemetry.
+2. **State machine command** (`apps/concord/lib/concord/state_machine.ex`): Add `apply_command/3` clause. Return `{{:concord_kv, new_state}, result, effects}`. Use `meta_time(meta)` for timestamps. Emit telemetry.
 
-3. **State machine query** (`lib/concord/state_machine.ex`): Add `query/2` clause. Return `{:ok, result}`. No state modification.
+3. **State machine query** (`apps/concord/lib/concord/state_machine.ex`): Add `query/2` clause. Return `{:ok, result}`. No state modification.
 
-4. **Tests**: `test/concord/feature_test.exs`, `async: false`, use `Concord.TestHelper.start_test_cluster()` in setup, clean up ETS between tests.
+4. **Tests**: `apps/concord/test/concord/feature_test.exs`, `async: false`, use `Concord.TestHelper.start_test_cluster()` in setup, clean up ETS between tests.
 
 ## Testing Notes
 

@@ -88,11 +88,11 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
-    - name: Update version in mix.exs
+    - name: Update Concord version
       run: |
-        sed -i "s/version: \".*\"/version: \"${{ steps.version.outputs.version }}\"/" mix.exs
-        echo "Updated mix.exs:"
-        grep "version:" mix.exs
+        sed -i "s/version: \".*\"/version: \"${{ steps.version.outputs.version }}\"/" apps/concord/mix.exs
+        echo "Updated apps/concord/mix.exs:"
+        grep "version:" apps/concord/mix.exs
 
     - name: Compile project
       env:
@@ -102,12 +102,14 @@ jobs:
     - name: Generate documentation
       env:
         MIX_ENV: prod
+      working-directory: apps/concord
       run: mix docs
 
     - name: Publish to Hex.pm
       env:
         MIX_ENV: prod
         HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+      working-directory: apps/concord
       run: mix hex.publish --yes
 
     - name: Create GitHub Release

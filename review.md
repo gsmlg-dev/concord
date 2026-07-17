@@ -59,7 +59,7 @@ The project is **architecturally ambitious and well-structured**, with a clear V
 
 ### Bug: `put_many` Skips Secondary Index Updates
 
-**File:** `lib/concord/state_machine.ex:1254-1275`
+**File:** `apps/concord/lib/concord/state_machine.ex:1254-1275`
 **Severity:** High
 
 `execute_put_many_batch/1` inserts KV pairs into ETS but does not call `update_indexes_on_put/4`. In contrast, `execute_delete_many_batch/2` correctly calls `remove_from_all_indexes/3` before deleting. Single `{:put, ...}` commands update indexes correctly (line 181).
@@ -70,7 +70,7 @@ This means any batch write via `Concord.put_many/2` silently leaves secondary in
 
 ### Bug: Backup Creation Reads from ETS, Not Raft State
 
-**File:** `lib/concord/backup.ex`
+**File:** `apps/concord/lib/concord/backup.ex`
 **Severity:** Medium
 
 Backup creation reads data via `:ets.tab2list(:concord_store)` rather than extracting it from the Raft state machine query. During a leadership change or network partition, ETS may contain stale or partial data. The backup could capture an inconsistent snapshot.
@@ -79,7 +79,7 @@ Backup creation reads data via `:ets.tab2list(:concord_store)` rather than extra
 
 ### Design Issue: Query Functions Use Wall-Clock Time for TTL
 
-**File:** `lib/concord/state_machine.ex:803,821,844,862,885,911`
+**File:** `apps/concord/lib/concord/state_machine.ex:803,821,844,862,885,911`
 **Severity:** Low
 
 All `query/2` clauses use `System.system_time(:second)` to check TTL expiry. Commands use `meta_time(meta)` (leader-assigned time). If the leader's clock drifts ahead of a follower serving a local query, the follower may return a value the leader considers expired.
@@ -88,7 +88,7 @@ This is acceptable for read-only queries (they don't modify state), but creates 
 
 ### Design Issue: `cleanup_expired` Uses N+1 Pattern
 
-**File:** `lib/concord/state_machine.ex:335-384`
+**File:** `apps/concord/lib/concord/state_machine.ex:335-384`
 **Severity:** Low (performance)
 
 Expired key cleanup first calls `:ets.select` to get all keys, then does a second `:ets.lookup` per key to check expiry. For large stores this is O(2N). A single `:ets.select` with a match guard on `expires_at` would be O(N).
@@ -178,7 +178,7 @@ Expired key cleanup first calls `:ets.select` to get all keys, then does a secon
 
 **Secondary index extractor specs are undocumented** in user-facing guides. The `{:map_get, key}` / `{:nested, keys}` / `{:identity}` / `{:element, n}` syntax is only documented in CLAUDE.md and code comments. Users will try to pass anonymous functions and hit `:badfun` errors in production.
 
-**`Concord.Query` module exists but is under-documented.** The module is real (verified at `lib/concord/query.ex`), but the guides show usage examples without specifying which operations go through Raft and which are local ETS scans.
+**`Concord.Query` module exists but is under-documented.** The module is real (verified at `apps/concord/lib/concord/query.ex`), but the guides show usage examples without specifying which operations go through Raft and which are local ETS scans.
 
 ---
 

@@ -32,7 +32,7 @@ Concord currently violates this rule in multiple places.
 
 ### Issue 1: Wall-Clock Time Inside `apply_command/3`
 
-**Location:** `lib/concord/state_machine.ex:31,34`
+**Location:** `apps/concord/lib/concord/state_machine.ex:31,34`
 
 ```elixir
 # Line 31 — called during :cleanup_expired, :touch, query handlers
@@ -80,9 +80,9 @@ The `system_time` in Ra's metadata is set by the leader when the command is prop
 ### Issue 2: Anonymous Functions Stored in Raft Log and State
 
 **Location:**
-- `lib/concord/index.ex:112` — index extractor functions
-- `lib/concord.ex:204` — `put_if` condition functions
-- `lib/concord.ex:260` — `delete_if` condition functions
+- `apps/concord/lib/concord/index.ex:112` — index extractor functions
+- `apps/concord/lib/concord.ex:204` — `put_if` condition functions
+- `apps/concord/lib/concord.ex:260` — `delete_if` condition functions
 
 **How it breaks:**
 
@@ -137,7 +137,7 @@ end
 
 ### Issue 3: Auth Tokens Bypass Raft Entirely
 
-**Location:** `lib/concord/auth.ex:63,75` — `TokenStore.put/2`, `TokenStore.delete/1`
+**Location:** `apps/concord/lib/concord/auth.ex:63,75` — `TokenStore.put/2`, `TokenStore.delete/1`
 
 ```elixir
 # Direct ETS write — no Ra consensus
@@ -183,7 +183,7 @@ The token value is generated pre-consensus (non-deterministic generation is fine
 
 ### Issue 4: RBAC Bypasses Raft Entirely
 
-**Location:** `lib/concord/rbac.ex:98,155,198,220,266,286` — all mutations are direct ETS writes
+**Location:** `apps/concord/lib/concord/rbac.ex:98,155,198,220,266,286` — all mutations are direct ETS writes
 
 **How it breaks:** Same as auth tokens. All role definitions, role grants, and ACL rules are node-local. In a cluster, RBAC state is inconsistent across nodes. After restart, all RBAC configuration is lost.
 
@@ -207,7 +207,7 @@ Store RBAC state in the machine state map (`data.roles`, `data.role_grants`, `da
 
 ### Issue 5: Multi-Tenancy Bypasses Raft Entirely
 
-**Location:** `lib/concord/multi_tenancy.ex:153,227,262,372`
+**Location:** `apps/concord/lib/concord/multi_tenancy.ex:153,227,262,372`
 
 **How it breaks:** Same as auth/RBAC. Tenant definitions, quotas, and usage tracking are node-local.
 
@@ -230,7 +230,7 @@ Store RBAC state in the machine state map (`data.roles`, `data.role_grants`, `da
 
 ### Issue 6: Snapshot Does Not Capture Complete State
 
-**Location:** `lib/concord/state_machine.ex:675-685`
+**Location:** `apps/concord/lib/concord/state_machine.ex:675-685`
 
 ```elixir
 def snapshot({:concord_kv, _data}) do
@@ -252,7 +252,7 @@ After a snapshot-based restore (follower catching up, or node restart where Ra u
 
 ### Issue 7: Backup Restore Bypasses Raft
 
-**Location:** `lib/concord/backup.ex:340-344`
+**Location:** `apps/concord/lib/concord/backup.ex:340-344`
 
 ```elixir
 defp apply_backup(entries) do
@@ -291,7 +291,7 @@ end
 
 ### Issue 8: ETS Table Is `:public`
 
-**Location:** `lib/concord/state_machine.ex:42`
+**Location:** `apps/concord/lib/concord/state_machine.ex:42`
 
 ```elixir
 :ets.new(:concord_store, [:set, :public, :named_table])
@@ -309,13 +309,13 @@ Any process on the node can call `:ets.insert(:concord_store, ...)` or `:ets.del
 :ets.new(:concord_store, [:set, :protected, :named_table])
 ```
 
-Note: Index ETS tables (`lib/concord/state_machine.ex:421`) have the same issue and should also be `:protected`.
+Note: Index ETS tables (`apps/concord/lib/concord/state_machine.ex:421`) have the same issue and should also be `:protected`.
 
 ---
 
 ### Issue 9: `get_many` Routed as a Write Command
 
-**Location:** `lib/concord/state_machine.ex:330-348`
+**Location:** `apps/concord/lib/concord/state_machine.ex:330-348`
 
 ```elixir
 def apply_command(meta, {:get_many, keys}, {:concord_kv, data}) when is_list(keys) do
@@ -395,7 +395,7 @@ These invariants must hold at all times for Concord's state machine to be correc
 │  - Compression (encode value before replication)                │
 │  - Convert anonymous functions to declarative specs             │
 │                                                                 │
-│  Module: Concord (lib/concord.ex)                               │
+│  Module: Concord (apps/concord/lib/concord.ex)                               │
 ├─────────────────────────────────────────────────────────────────┤
 │  LAYER 2: APPLY (Post-Commit Deterministic Mutation)            │
 │                                                                 │
@@ -418,7 +418,7 @@ These invariants must hold at all times for Concord's state machine to be correc
 │                                                                 │
 │  For timestamps: use Map.get(meta, :system_time) from Ra.       │
 │                                                                 │
-│  Module: Concord.StateMachine (lib/concord/state_machine.ex)    │
+│  Module: Concord.StateMachine (apps/concord/lib/concord/state_machine.ex)    │
 ├─────────────────────────────────────────────────────────────────┤
 │  LAYER 3: QUERY (Read-Only, No Mutations)                       │
 │                                                                 │
@@ -901,7 +901,7 @@ In a Raft cluster, only the leader handles consistent reads. To scale reads:
 ### Priority 0: CRITICAL (Fix Before Any Production Use)
 
 - [ ] **Remove wall-clock time from `apply_command`**
-  - File: `lib/concord/state_machine.ex:31,34`
+  - File: `apps/concord/lib/concord/state_machine.ex:31,34`
   - Change `current_timestamp()` to use `Map.get(meta, :system_time)` from Ra metadata
   - Change `expired?/1` inside apply_command to accept a `now` parameter derived from meta
   - Keep wall-clock `expired?/1` in query handlers (reads are not replayed)
@@ -918,66 +918,66 @@ In a Raft cluster, only the leader handles consistent reads. To scale reads:
     ```
 
 - [ ] **Replace anonymous functions in Raft log/state with declarative specs**
-  - File: `lib/concord/index.ex:112` — index extractor functions
-  - File: `lib/concord.ex:204,260` — `put_if`/`delete_if` condition functions
-  - Create `lib/concord/index/extractor.ex` with declarative spec evaluation
+  - File: `apps/concord/lib/concord/index.ex:112` — index extractor functions
+  - File: `apps/concord/lib/concord.ex:204,260` — `put_if`/`delete_if` condition functions
+  - Create `apps/concord/lib/concord/index/extractor.ex` with declarative spec evaluation
   - Update `create_index/3` API to accept spec tuples instead of functions
   - Remove `condition` option from `put_if`/`delete_if` or convert to pre-consensus evaluation
 
 ### Priority 1: HIGH (Fix Before Multi-Node Deployment)
 
 - [ ] **Fix snapshot to capture complete state**
-  - File: `lib/concord/state_machine.ex:675-685`
+  - File: `apps/concord/lib/concord/state_machine.ex:675-685`
   - Add `@impl :ra_machine` annotation to `snapshot/1`
   - Return `%{version: N, kv_entries: ..., indexes: ..., tokens: ..., roles: ..., ...}`
   - Implement `migrate_snapshot/1` for backward compatibility with existing V1 snapshots
 
 - [ ] **Fix `snapshot_installed/4` to restore complete state**
-  - File: `lib/concord/state_machine.ex:658-673`
+  - File: `apps/concord/lib/concord/state_machine.ex:658-673`
   - Restore all ETS tables (tokens, roles, grants, ACLs, tenants)
   - Rebuild secondary index ETS tables from index definitions + KV data
 
 - [ ] **Route auth token mutations through Raft**
-  - File: `lib/concord/auth.ex` — replace direct ETS writes with Ra commands
+  - File: `apps/concord/lib/concord/auth.ex` — replace direct ETS writes with Ra commands
   - Add `apply_command` clauses: `{:auth_create_token, token, permissions}`, `{:auth_revoke_token, token}`
   - Generate token pre-consensus, replicate the value
   - Keep `verify_token/1` as a local ETS read (no Raft needed for verification)
 
 - [ ] **Route RBAC mutations through Raft**
-  - File: `lib/concord/rbac.ex` — replace all direct ETS writes
+  - File: `apps/concord/lib/concord/rbac.ex` — replace all direct ETS writes
   - Add `apply_command` clauses for all role/grant/ACL operations
   - Keep `check_permission/3` as a local ETS read
 
 - [ ] **Route tenant definition mutations through Raft**
-  - File: `lib/concord/multi_tenancy.ex` — replace create/delete/update_quota ETS writes
+  - File: `apps/concord/lib/concord/multi_tenancy.ex` — replace create/delete/update_quota ETS writes
   - Keep usage counters and rate limiting as node-local (intentionally approximate)
 
 - [ ] **Fix backup restore to go through Raft**
-  - File: `lib/concord/backup.ex:340-344` — `apply_backup/1`
+  - File: `apps/concord/lib/concord/backup.ex:340-344` — `apply_backup/1`
   - Submit backup entries as a Raft command `{:restore_from_backup, entries}`
   - All nodes apply the same restore atomically
 
 ### Priority 2: MEDIUM
 
 - [ ] **Make all ETS tables `:protected`**
-  - File: `lib/concord/state_machine.ex:42` — `:concord_store`
-  - File: `lib/concord/state_machine.ex:421` — index tables
+  - File: `apps/concord/lib/concord/state_machine.ex:42` — `:concord_store`
+  - File: `apps/concord/lib/concord/state_machine.ex:421` — index tables
   - All ETS tables created in `init/1` and `apply_command` should use `:protected`
   - Note: The Ra server process owns these tables. `init/1` runs in the Ra process, so it's the owner.
 
 - [ ] **Move `get_many` from apply_command to query**
-  - File: `lib/concord/state_machine.ex:330-348`
+  - File: `apps/concord/lib/concord/state_machine.ex:330-348`
   - Remove the `apply_command` clause for `{:get_many, keys}`
   - Add a `query({:get_many, keys}, ...)` clause (already partially exists at line 606)
   - Update `Concord.get_many/2` to use query path instead of command path
 
 - [ ] **Add explicit log compaction via `release_cursor`**
-  - File: `lib/concord/state_machine.ex` — in `apply_command` return effects
+  - File: `apps/concord/lib/concord/state_machine.ex` — in `apply_command` return effects
   - Add `{:release_cursor, index, machine_state}` effect after large operations
   - Consider periodic cursor release (e.g., every 1000 applied entries)
 
 - [ ] **Remove hardcoded startup sleep**
-  - File: `lib/concord/application.ex:132` — `Process.sleep(1000)`
+  - File: `apps/concord/lib/concord/application.ex:132` — `Process.sleep(1000)`
   - Replace with a loop that checks Ra system readiness:
     ```elixir
     defp wait_for_ra_system(retries \\ 20) do
@@ -998,7 +998,7 @@ In a Raft cluster, only the leader handles consistent reads. To scale reads:
   - Or accept the overhead — `:telemetry.execute` is fast (~1μs)
 
 - [ ] **Add `@impl :ra_machine` to `snapshot/1`**
-  - File: `lib/concord/state_machine.ex:675`
+  - File: `apps/concord/lib/concord/state_machine.ex:675`
   - Verify Ra 2.17.1 expects this callback name and arity
 
 - [ ] **Add compression config consistency check**
@@ -1170,7 +1170,7 @@ These invariants must be verified for every PR that touches the state machine:
 
 ### PR Review Checklist
 
-For any code change that touches `lib/concord/state_machine.ex`:
+For any code change that touches `apps/concord/lib/concord/state_machine.ex`:
 
 - [ ] Does the change call any system time function inside `apply_command`?
 - [ ] Does the change introduce any randomness inside `apply_command`?
@@ -1191,7 +1191,7 @@ This plan is designed to be executed as a sequence of independent, backwards-com
 
 **PR 1: Deterministic time in apply_command**
 
-Scope: `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/state_machine.ex`
 
 1. Add a `defp meta_time(meta)` helper that extracts `Map.get(meta, :system_time)` and converts to seconds
 2. Change `apply_command(meta, :cleanup_expired, ...)` to pass `meta_time(meta)` to expiry checks
@@ -1209,7 +1209,7 @@ Scope: `config/runtime.exs`
 
 **PR 3: Replace anonymous functions with declarative specs**
 
-Scope: `lib/concord/index.ex`, `lib/concord/index/extractor.ex` (new), `lib/concord/state_machine.ex`, `lib/concord.ex`
+Scope: `apps/concord/lib/concord/index.ex`, `apps/concord/lib/concord/index/extractor.ex` (new), `apps/concord/lib/concord/state_machine.ex`, `apps/concord/lib/concord.ex`
 
 1. Create `Concord.Index.Extractor` module with spec-based extraction
 2. Change `Index.create/3` to accept spec tuples instead of functions
@@ -1222,7 +1222,7 @@ Scope: `lib/concord/index.ex`, `lib/concord/index/extractor.ex` (new), `lib/conc
 
 **PR 4: Comprehensive snapshot format**
 
-Scope: `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/state_machine.ex`
 
 1. Increment `@snapshot_version` to 3
 2. Update `snapshot/1` to return `%{version: 3, kv_entries: ..., indexes: ..., ...}`
@@ -1235,7 +1235,7 @@ Scope: `lib/concord/state_machine.ex`
 
 **PR 5: Auth tokens through Raft**
 
-Scope: `lib/concord/auth.ex`, `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/auth.ex`, `apps/concord/lib/concord/state_machine.ex`
 
 1. Add `apply_command` clauses for `{:auth_create_token, ...}`, `{:auth_revoke_token, ...}`
 2. Update `Auth.create_token/1` to generate token pre-consensus, then submit command
@@ -1245,7 +1245,7 @@ Scope: `lib/concord/auth.ex`, `lib/concord/state_machine.ex`
 
 **PR 6: RBAC through Raft**
 
-Scope: `lib/concord/rbac.ex`, `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/rbac.ex`, `apps/concord/lib/concord/state_machine.ex`
 
 1. Add `apply_command` clauses for all RBAC mutations
 2. Update `RBAC.create_role/2`, `grant_role/2`, etc. to submit Ra commands
@@ -1255,7 +1255,7 @@ Scope: `lib/concord/rbac.ex`, `lib/concord/state_machine.ex`
 
 **PR 7: Tenant definitions through Raft**
 
-Scope: `lib/concord/multi_tenancy.ex`, `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/multi_tenancy.ex`, `apps/concord/lib/concord/state_machine.ex`
 
 1. Add `apply_command` clauses for tenant create/delete/update_quota
 2. Keep usage counters and rate limiting as node-local
@@ -1264,7 +1264,7 @@ Scope: `lib/concord/multi_tenancy.ex`, `lib/concord/state_machine.ex`
 
 **PR 8: Fix backup restore**
 
-Scope: `lib/concord/backup.ex`, `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/backup.ex`, `apps/concord/lib/concord/state_machine.ex`
 
 1. Add `apply_command` clause for `{:restore_from_backup, entries}`
 2. Update `Backup.restore/2` to submit through Ra instead of direct ETS writes
@@ -1274,7 +1274,7 @@ Scope: `lib/concord/backup.ex`, `lib/concord/state_machine.ex`
 
 **PR 9: Protected ETS tables**
 
-Scope: `lib/concord/state_machine.ex`
+Scope: `apps/concord/lib/concord/state_machine.ex`
 
 1. Change all `:ets.new` calls to use `:protected` instead of `:public`
 2. Verify that all ETS writes happen only in the Ra process (via `apply_command` or `init/1` or `snapshot_installed/4`)
@@ -1282,7 +1282,7 @@ Scope: `lib/concord/state_machine.ex`
 
 **PR 10: Log compaction and readiness**
 
-Scope: `lib/concord/state_machine.ex`, `lib/concord/application.ex`
+Scope: `apps/concord/lib/concord/state_machine.ex`, `apps/concord/lib/concord/application.ex`
 
 1. Add `{:release_cursor, index, state}` to effects in `apply_command` for large operations
 2. Replace `Process.sleep(1000)` with proper Ra system readiness check

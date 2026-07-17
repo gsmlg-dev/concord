@@ -107,7 +107,7 @@ Runtime releases can use environment variables:
 ```bash
 CONCORD_CLUSTER_ENABLED=false
 CONCORD_TURSO_ENABLED=true
-CONCORD_TURSO_DATABASE=/var/lib/concord/turso.db
+CONCORD_TURSO_DATABASE=/var/apps/concord/lib/concord/turso.db
 CONCORD_TURSO_POOL_SIZE=1
 CONCORD_TURSO_REMOTE_URL=libsql://example.turso.io
 CONCORD_TURSO_AUTH_TOKEN=...
@@ -177,7 +177,7 @@ config :logger, level: :warning
 
 ```elixir
 config :concord,
-  data_dir: {:system, "CONCORD_DATA_DIR", "/var/lib/concord"},
+  data_dir: {:system, "CONCORD_DATA_DIR", "/var/apps/concord/lib/concord"},
   auth_enabled: true,
   http: [
     enabled: {:system, "CONCORD_HTTP_ENABLED", true},
@@ -198,7 +198,7 @@ node_name = System.get_env("NODE_NAME", "node")
 data_dir =
   case config_env() do
     :prod ->
-      System.get_env("CONCORD_DATA_DIR", "/var/lib/concord/data/#{node_name}")
+      System.get_env("CONCORD_DATA_DIR", "/var/apps/concord/lib/concord/data/#{node_name}")
     _dev_or_test ->
       Path.join(System.tmp_dir!(), "concord_data/#{node_name}")
   end
@@ -210,7 +210,7 @@ data_dir =
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONCORD_DATA_DIR` | `/var/lib/concord/data` | Persistent data directory (prod) |
+| `CONCORD_DATA_DIR` | `/var/apps/concord/lib/concord/data` | Persistent data directory (prod) |
 | `CONCORD_CLUSTER_ENABLED` | `true` | Start Concord's Raft cluster runtime |
 | `CONCORD_API_PORT` | `8080` | HTTP API port (prod) |
 | `CONCORD_API_IP` | `0.0.0.0` | HTTP API bind address (prod) |

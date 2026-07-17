@@ -103,13 +103,13 @@ Specs: `{:map_get, key}`, `{:nested, [path]}`, `{:identity}`, `{:element, n}`
 
 ## Adding Features to Concord
 
-1. **API layer** (`lib/concord.ex`): Validate inputs, call `command/2` for writes or query functions for reads. Handle nested Ra tuples.
+1. **API layer** (`apps/concord/lib/concord.ex`): Validate inputs, call `command/2` for writes or query functions for reads. Handle nested Ra tuples.
 
-2. **State machine command** (`lib/concord/state_machine.ex`): Add `apply_command/3` clause. Return `{{:concord_kv, new_state}, result, effects}`. Use `meta_time(meta)` for timestamps.
+2. **State machine command** (`apps/concord/lib/concord/state_machine.ex`): Add `apply_command/3` clause. Return `{{:concord_kv, new_state}, result, effects}`. Use `meta_time(meta)` for timestamps.
 
-3. **State machine query** (`lib/concord/state_machine.ex`): Add `query/2` clause. Return `{:ok, result}`. No state modification.
+3. **State machine query** (`apps/concord/lib/concord/state_machine.ex`): Add `query/2` clause. Return `{:ok, result}`. No state modification.
 
-4. **Tests**: `test/concord/feature_test.exs`, `async: false`, call `Concord.TestHelper.start_test_cluster()` in setup.
+4. **Tests**: `apps/concord/test/concord/feature_test.exs`, `async: false`, call `Concord.TestHelper.start_test_cluster()` in setup.
 
 ### State Machine State Shape
 
@@ -168,7 +168,7 @@ config :concord,
   event_stream: [enabled: false, buffer_size: 10_000]
 ```
 
-Runtime: prod uses `CONCORD_DATA_DIR` (default `/var/lib/concord/data/`), dev/test use `/tmp`.
+Runtime: prod uses `CONCORD_DATA_DIR` (default `/var/apps/concord/lib/concord/data/`), dev/test use `/tmp`.
 
 ## Detailed References
 

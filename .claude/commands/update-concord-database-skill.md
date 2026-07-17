@@ -3,20 +3,20 @@ Perform a fresh, comprehensive analysis of the Concord project and update the co
 ## Analysis Steps
 
 1. **Read all source files** to capture the current state of the codebase:
-   - `lib/concord.ex` — All public API functions, options, return types
-   - `lib/concord/state_machine.ex` — All commands, queries, state shape, snapshot logic
-   - `lib/concord/auth.ex` — Auth API
-   - `lib/concord/rbac.ex` — RBAC API
-   - `lib/concord/multi_tenancy.ex` — Multi-tenancy API
-   - `lib/concord/index.ex` and `lib/concord/index/extractor.ex` — Index API and extractor specs
-   - `lib/concord/backup.ex` — Backup/restore API
-   - `lib/concord/ttl.ex` — TTL management
-   - `lib/concord/query.ex` — Query language API
-   - `lib/concord/event_stream.ex` — Event streaming API
-   - `lib/concord/compression.ex` — Compression API
-   - `lib/concord/web/router.ex` and `lib/concord/web/authenticated_router.ex` — HTTP routes
-   - `lib/concord/web/api_controller.ex` — HTTP handler details
-   - `lib/concord/application.ex` — Supervisor tree
+   - `apps/concord/lib/concord.ex` — All public API functions, options, return types
+   - `apps/concord/lib/concord/state_machine.ex` — All commands, queries, state shape, snapshot logic
+   - `apps/concord/lib/concord/auth.ex` — Auth API
+   - `apps/concord/lib/concord/rbac.ex` — RBAC API
+   - `apps/concord/lib/concord/multi_tenancy.ex` — Multi-tenancy API
+   - `apps/concord/lib/concord/index.ex` and `apps/concord/lib/concord/index/extractor.ex` — Index API and extractor specs
+   - `apps/concord/lib/concord/backup.ex` — Backup/restore API
+   - `apps/concord/lib/concord/ttl.ex` — TTL management
+   - `apps/concord/lib/concord/query.ex` — Query language API
+   - `apps/concord/lib/concord/event_stream.ex` — Event streaming API
+   - `apps/concord/lib/concord/compression.ex` — Compression API
+   - `apps/concord/lib/concord/web/router.ex` and `apps/concord/lib/concord/web/authenticated_router.ex` — HTTP routes
+   - `apps/concord/lib/concord/web/api_controller.ex` — HTTP handler details
+   - `apps/concord/lib/concord/application.ex` — Supervisor tree
    - `config/config.exs` — All configuration options
    - `config/runtime.exs` — Runtime configuration
    - `CLAUDE.md` — Correctness invariants and architecture

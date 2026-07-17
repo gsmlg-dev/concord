@@ -3,7 +3,7 @@
     %{
       name: "default",
       files: %{
-        included: ["lib/", "src/"],
+        included: ["apps/concord/lib/", "src/"],
         excluded: [~r"/_build/", ~r"/deps/", ~r"/node_modules/"]
       },
       requires: [],

@@ -189,7 +189,7 @@ Six phases, each independently shippable:
 
 The design succeeds if:
 
-1. **No domain vocabulary leaks into Concord's public API.** Reviewable: search the codebase for "task", "agent", "job", "claim" in `lib/concord/*.ex` after implementation — should appear in tests/examples only.
+1. **No domain vocabulary leaks into Concord's public API.** Reviewable: search the codebase for "task", "agent", "job", "claim" in `apps/concord/lib/concord/*.ex` after implementation — should appear in tests/examples only.
 2. **The reference agent coordination application** (`examples/agent-coordination.md`) is implementable on the public API with no escape hatches.
 3. **A 5-node cluster sustains ≥1000 commits/sec at p99 commit latency <50ms** on commodity SSD + LAN.
 4. **Watch fan-out to 100 subscribers** does not measurably degrade commit throughput.

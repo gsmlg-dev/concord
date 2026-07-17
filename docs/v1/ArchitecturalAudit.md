@@ -38,7 +38,7 @@ Concord delegates **all** Raft log persistence to Ra 2.17.1. It implements zero 
 | Snapshots | Binary term serialization | `{data_dir}/{uid}/snapshots/` |
 | Raft metadata | `currentTerm`, `votedFor` | Ra internal files |
 
-The server config at `lib/concord/application.ex:148-158` passes `log_init_args` with `uid` and `data_dir` to Ra, which manages the complete lifecycle.
+The server config at `apps/concord/lib/concord/application.ex:148-158` passes `log_init_args` with `uid` and `data_dir` to Ra, which manages the complete lifecycle.
 
 > **Assessment:** This delegation to Ra is architecturally correct. Ra's WAL achieves O(1) append cost with batch fsync, segment rotation for bounded file sizes, and efficient prefix truncation via snapshot-anchored compaction. Reimplementing this would be a net negative.
 
@@ -75,12 +75,12 @@ On restart, the sequence is:
 
 ### 1.4 Snapshotting Strategy
 
-The `snapshot/1` function at `lib/concord/state_machine.ex:675` dumps `:ets.tab2list(:concord_store)`.
+The `snapshot/1` function at `apps/concord/lib/concord/state_machine.ex:675` dumps `:ets.tab2list(:concord_store)`.
 
 **Critical Bug:** The function discards the state machine's metadata tuple `{:concord_kv, %{indexes: ...}}` — it only returns raw ETS data. After snapshot-based recovery, `init/1` returns `{:concord_kv, %{indexes: %{}}}`, so all index definitions are silently lost. The function also lacks the `@impl :ra_machine` annotation, raising questions about its integration with Ra's snapshot lifecycle.
 
 ```elixir
-# CURRENT (buggy) — lib/concord/state_machine.ex:675-685
+# CURRENT (buggy) — apps/concord/lib/concord/state_machine.ex:675-685
 def snapshot({:concord_kv, _data}) do
   data = :ets.tab2list(:concord_store)
   # ... telemetry ...
