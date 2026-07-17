@@ -920,14 +920,14 @@ defmodule Concord.Engine.Turso do
   end
 
   defp query_rows(conn, sql, params \\ []) do
-    case ExTurso.query(conn, sql, params) do
-      {:ok, %ExTurso.Result{rows: rows}} -> {:ok, rows}
+    case Elixir.Turso.query(conn, sql, params) do
+      {:ok, %Elixir.Turso.Result{rows: rows}} -> {:ok, rows}
       {:error, error} -> {:error, normalize_error(error)}
     end
   end
 
   defp execute(conn, sql, params \\ []) do
-    case ExTurso.execute(conn, sql, params) do
+    case Elixir.Turso.execute(conn, sql, params) do
       {:ok, _result} -> :ok
       {:error, error} -> {:error, normalize_error(error)}
     end
@@ -943,7 +943,7 @@ defmodule Concord.Engine.Turso do
   defp operation_name(name) when is_atom(name), do: name
   defp operation_name(operation), do: operation
 
-  defp normalize_error(%ExTurso.Error{code: code, message: message}) do
+  defp normalize_error(%Elixir.Turso.Error{code: code, message: message}) do
     {:turso_error, code || :error, message}
   end
 

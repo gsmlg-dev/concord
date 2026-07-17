@@ -16,7 +16,7 @@ defmodule Concord.TursoEngineTest do
     stop_turso_pool()
 
     db_path = Path.join(tmp_dir, "concord_turso.db")
-    start_supervised!({ExTurso, database: db_path, name: Concord.Turso.DB, pool_size: 1})
+    start_supervised!({Elixir.Turso, database: db_path, name: Concord.Turso.DB, pool_size: 1})
 
     on_exit(fn -> stop_turso_pool() end)
 

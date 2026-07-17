@@ -31,6 +31,9 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
@@ -40,6 +43,7 @@ jobs:
           path: |
             deps
             _build/prod
+            apps/ex_turso/native/ex_turso/target
           key: ${{ runner.os }}-e2e-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
             ${{ runner.os }}-e2e-${{ matrix.otp }}-${{ matrix.elixir }}-

@@ -1,6 +1,8 @@
 # config/config.exs
 import Config
 
+config :rustler_precompiled, :force_build, ex_turso: true
+
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: true,

@@ -52,6 +52,13 @@ defmodule Concord.MixProject do
           ]
         ]
       ],
+      dialyzer: [
+        plt_add_apps: [:ex_unit, :mix, :iex, :ex_turso],
+        plt_file: {:no_warn, "../../plts/dialyzer.plt"},
+        ignore_warnings: "../../.dialyzer_ignore.exs",
+        flags: [],
+        list_unused_filters: false
+      ],
       test_coverage: [summary: [threshold: 50]]
     ]
   end
@@ -98,13 +105,21 @@ defmodule Concord.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.4"},
       {:db_connection, "~> 2.10"},
-      {:ex_turso, "~> 0.3"},
+      ex_turso_dep(),
       # E2E testing (note: LocalCluster removed due to OTP 28 compatibility, using manual node spawning)
       {:http_fetch, "~> 0.10.0", only: [:e2e_test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}
     ]
+  end
+
+  defp ex_turso_dep do
+    if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
+      {:ex_turso, "~> 0.4"}
+    else
+      {:ex_turso, "~> 0.4", in_umbrella: true}
+    end
   end
 
   defp aliases do

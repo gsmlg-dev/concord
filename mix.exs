@@ -4,11 +4,12 @@ defmodule Concord.Umbrella.MixProject do
   def project do
     [
       apps_path: "apps",
+      apps: [:concord, :ex_turso],
       elixir: "~> 1.17",
       releases: releases(),
       aliases: aliases(),
       dialyzer: [
-        plt_add_apps: [:ex_unit, :mix, :iex],
+        plt_add_apps: [:ex_unit, :mix, :iex, :ex_turso],
         plt_file: {:no_warn, "plts/dialyzer.plt"},
         ignore_warnings: ".dialyzer_ignore.exs",
         flags: [],
@@ -29,9 +30,9 @@ defmodule Concord.Umbrella.MixProject do
 
   defp aliases do
     [
-      test: "test --no-start",
+      test: "cmd mix test",
       "test.e2e": "cmd ./e2e_test/scripts/run_e2e.sh",
-      lint: ["credo --strict", "dialyzer --ignore-exit-status"]
+      lint: ["credo --strict", "cmd --app concord mix dialyzer --ignore-exit-status"]
     ]
   end
 end

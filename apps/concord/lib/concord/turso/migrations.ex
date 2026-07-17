@@ -1,6 +1,8 @@
 defmodule Concord.Turso.Migrations do
   @moduledoc false
 
+  alias Elixir.Turso, as: TursoClient
+
   @default_db Concord.Turso.DB
 
   @spec migrate(DBConnection.conn()) :: :ok | {:error, term()}
@@ -39,7 +41,7 @@ defmodule Concord.Turso.Migrations do
   end
 
   defp execute(db, sql) do
-    case ExTurso.execute(db, sql) do
+    case TursoClient.execute(db, sql) do
       {:ok, _result} -> :ok
       {:error, error} -> {:error, error}
     end

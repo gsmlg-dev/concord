@@ -8,13 +8,14 @@ defmodule Concord.Turso do
   """
 
   alias Concord.APIOptions
+  alias Elixir.Turso, as: TursoClient
 
   @db __MODULE__.DB
 
   @doc false
   def child_spec(opts) do
     opts = Keyword.merge(pool_options(), opts)
-    ExTurso.child_spec(opts)
+    TursoClient.child_spec(opts)
   end
 
   @doc false
@@ -85,7 +86,7 @@ defmodule Concord.Turso do
 
     case Process.whereis(@db) do
       nil -> {:error, :engine_not_started}
-      _pid -> ExTurso.sync(@db, timeout: timeout)
+      _pid -> TursoClient.sync(@db, timeout: timeout)
     end
   end
 

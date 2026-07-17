@@ -128,7 +128,7 @@ should configure an Ecto repo with the optional adapter provided by `ex_turso`:
 def deps do
   [
     {:concord, "~> 2.3"},
-    {:ex_turso, "~> 0.3"},
+    {:ex_turso, "~> 0.4"},
     {:ecto_sql, "~> 3.14"}
   ]
 end
