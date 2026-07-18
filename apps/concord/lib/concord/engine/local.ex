@@ -2,8 +2,8 @@ defmodule Concord.Engine.Local do
   @moduledoc """
   Node-local Concord KV engine.
 
-  This engine reuses `Concord.StateMachine` command and query semantics without
-  starting a Raft cluster. It is intentionally local to the current BEAM node:
+  This engine runs the protocol-independent state-machine core without starting
+  a replication protocol. It is intentionally local to the current BEAM node:
   data is not replicated and does not participate in quorum writes.
   """
 
@@ -12,6 +12,9 @@ defmodule Concord.Engine.Local do
   @behaviour Concord.Engine
 
   alias Concord.{StateMachine, StorageScope}
+  alias Concord.StateMachine.Core
+  alias Concord.StateMachine.Core.Context
+  alias Concord.StateMachine.Observer
 
   @timeout 5_000
 
@@ -23,7 +26,13 @@ defmodule Concord.Engine.Local do
 
   @impl true
   def init(_opts) do
-    machine_state = with_local_scope(fn -> StateMachine.init(%{}) end)
+    machine_state =
+      with_local_scope(fn ->
+        state = Core.init()
+        StateMachine.materialize(state)
+        state
+      end)
+
     {:ok, %__MODULE__{machine_state: machine_state}}
   end
 
@@ -72,16 +81,31 @@ defmodule Concord.Engine.Local do
   @impl true
   def handle_call({:command, command}, _from, %__MODULE__{} = state) do
     next_index = state.applied_index + 1
-    meta = %{index: next_index, system_time: System.system_time(:millisecond)}
 
-    {machine_state, result, _effects} =
-      with_local_scope(fn -> StateMachine.apply(meta, command, state.machine_state) end)
+    context =
+      Context.new!(
+        op_number: next_index,
+        timestamp_ms: System.system_time(:millisecond)
+      )
+
+    {result, machine_state} =
+      with_local_scope(fn ->
+        previous_state = state.machine_state
+        {result, machine_state} = Core.apply(context, command, previous_state)
+        StateMachine.materialize(machine_state)
+        Observer.committed(context, command, previous_state, machine_state, :local)
+        {result, machine_state}
+      end)
 
     {:reply, {:ok, result}, %{state | machine_state: machine_state, applied_index: next_index}}
   end
 
   def handle_call({:query, query}, _from, %__MODULE__{} = state) do
-    result = with_local_scope(fn -> StateMachine.query(query, state.machine_state) end)
+    result =
+      Core.query(query, state.machine_state, %{
+        timestamp_ms: System.system_time(:millisecond)
+      })
+
     {:reply, {:ok, result}, state}
   end
 
@@ -93,7 +117,9 @@ defmodule Concord.Engine.Local do
         clear_ets(StorageScope.table(:history))
         clear_ets(StorageScope.table(:leases))
 
-        StateMachine.init(%{})
+        state = Core.init()
+        StateMachine.materialize(state)
+        state
       end)
 
     {:reply, :ok, %__MODULE__{machine_state: machine_state}}

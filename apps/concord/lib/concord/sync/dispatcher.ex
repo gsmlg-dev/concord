@@ -36,10 +36,7 @@ defmodule Concord.Sync.Dispatcher do
 
   @impl true
   def handle_cast({:dispatch, events}, state) do
-    # Write to change log
-    ChangeLog.append(events)
-
-    # Forward to watch hub
+    events = ChangeLog.append_new(events)
     WatchHub.notify(events)
 
     :telemetry.execute(

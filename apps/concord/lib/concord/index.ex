@@ -166,36 +166,13 @@ defmodule Concord.Index do
   def reindex(name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     engine_opts = Keyword.take(opts, [:engine])
-    opts = Keyword.merge(engine_opts, timeout: timeout)
 
-    with {:ok, pairs} <- Concord.get_all(opts),
-         {:ok, indexes} <- list(opts) do
-      if name in indexes do
-        case Engine.query(
-               {:get_index_extractor, name},
-               Keyword.merge(engine_opts, timeout: timeout, consistency: :strong)
-             ) do
-          {:ok, {:ok, extractor}} ->
-            with_engine_scope(engine_opts, fn ->
-              table_name = index_table_name(name)
-
-              if :ets.whereis(table_name) != :undefined do
-                :ets.delete_all_objects(table_name)
-              end
-
-              Enum.each(pairs, fn {key, value} ->
-                Extractor.index_value(table_name, key, value, extractor)
-              end)
-            end)
-
-            :ok
-
-          _ ->
-            {:error, :not_found}
-        end
-      else
-        {:error, :not_found}
-      end
+    case Engine.command({:reindex, name}, Keyword.put(engine_opts, :timeout, timeout)) do
+      {:ok, :ok} -> :ok
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, :cluster_not_ready} -> {:error, :cluster_not_ready}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -224,12 +201,5 @@ defmodule Concord.Index do
 
   defp validate_extractor(extractor) do
     if Extractor.valid?(extractor), do: :ok, else: {:error, :invalid_extractor}
-  end
-
-  defp with_engine_scope(engine_opts, fun) do
-    case Engine.engine(engine_opts) do
-      Engine.Local -> StorageScope.with_scope(:local, fun)
-      _ -> fun.()
-    end
   end
 end

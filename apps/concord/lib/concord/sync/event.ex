@@ -7,6 +7,7 @@ defmodule Concord.Sync.Event do
 
   ## Fields
 
+  - `id` — stable `{source, operation_number, mutation_index}` identity
   - `type` — `:put` or `:delete`
   - `key` — the affected key
   - `revision` — cluster revision of this event
@@ -19,6 +20,7 @@ defmodule Concord.Sync.Event do
   @type event_type :: :put | :delete
 
   @type t :: %__MODULE__{
+          id: term(),
           type: event_type(),
           key: binary(),
           revision: non_neg_integer(),
@@ -27,6 +29,7 @@ defmodule Concord.Sync.Event do
         }
 
   defstruct [
+    :id,
     :type,
     :key,
     :revision,

@@ -1,7 +1,8 @@
 defmodule Concord.Application do
   @moduledoc """
   Application supervisor for Concord embedded key-value store.
-  Starts and manages the Raft consensus cluster, telemetry, TTL cleanup, and node discovery.
+  Starts and manages the configured replication engine, telemetry, TTL cleanup,
+  and node discovery.
   """
   use Application
   require Logger
@@ -30,6 +31,11 @@ defmodule Concord.Application do
   end
 
   @doc false
+  def replication_engine do
+    Application.get_env(:concord, :replication_engine, :raft)
+  end
+
+  @doc false
   def prometheus_enabled? do
     Application.get_env(:concord, :prometheus_enabled, false)
   end
@@ -51,13 +57,7 @@ defmodule Concord.Application do
 
   defp cluster_children do
     if cluster_enabled?() do
-      [
-        cluster_supervisor_child(),
-        {TTL, []},
-        {Dispatcher, []},
-        {WatchHub, []},
-        {Task, fn -> init_cluster() end}
-      ]
+      replication_engine_children(replication_engine())
     else
       []
     end
@@ -73,6 +73,30 @@ defmodule Concord.Application do
 
   defp turso_children do
     if Turso.enabled?(), do: [{Turso, []}], else: []
+  end
+
+  defp replication_engine_children(:raft) do
+    [
+      cluster_supervisor_child(),
+      {TTL, []},
+      {Dispatcher, []},
+      {WatchHub, []},
+      {Task, fn -> init_cluster() end}
+    ]
+  end
+
+  defp replication_engine_children(:vsr) do
+    [
+      {TTL, []},
+      {Dispatcher, []},
+      {WatchHub, []},
+      {Concord.Engine.VSR.Supervisor, []}
+    ]
+  end
+
+  defp replication_engine_children(engine) do
+    raise ArgumentError,
+          "unsupported Concord replication engine: #{inspect(engine)}; expected :raft or :vsr"
   end
 
   defp init_cluster do

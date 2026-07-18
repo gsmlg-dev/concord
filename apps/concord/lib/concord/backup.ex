@@ -33,6 +33,8 @@ defmodule Concord.Backup do
 
   require Logger
 
+  alias Concord.Engine
+
   @backup_extension ".backup"
   @default_backup_dir "./backups"
 
@@ -61,11 +63,13 @@ defmodule Concord.Backup do
   - `:path` - Directory to store backup (default: "./backups")
   - `:compress` - Compress backup file (default: true)
   - `:include_metadata` - Include cluster metadata (default: true)
+  - `:engine` - Override the configured replication engine
+  - `:timeout` - Snapshot query timeout in milliseconds
 
   ## Returns
 
   - `{:ok, backup_path}` - Path to created backup file
-  - `{:error, :cluster_not_ready}` - Ra cluster is unavailable; start Concord or retry after the cluster is ready
+  - `{:error, :cluster_not_ready}` - The configured cluster engine is unavailable
   - `{:error, reason}` - Error creating backup
 
   ## Examples
@@ -82,7 +86,7 @@ defmodule Concord.Backup do
     compress = Keyword.get(opts, :compress, true)
 
     with :ok <- File.mkdir_p(backup_dir),
-         {:ok, snapshot} <- get_cluster_snapshot(),
+         {:ok, snapshot} <- get_cluster_snapshot(opts),
          {:ok, backup_data} <- build_backup(snapshot),
          {:ok, backup_path} <- write_backup(backup_dir, backup_data, compress) do
       Logger.info("Backup created successfully: #{backup_path}")
@@ -104,6 +108,8 @@ defmodule Concord.Backup do
 
   - `:force` - Skip confirmation prompts (default: false)
   - `:verify` - Verify backup integrity before restore (default: true)
+  - `:engine` - Override the configured replication engine
+  - `:timeout` - Replicated restore timeout in milliseconds (default: 30000)
 
   ## Returns
 
@@ -125,7 +131,7 @@ defmodule Concord.Backup do
     with {:exists, true} <- {:exists, File.exists?(backup_path)},
          {:verify, {:ok, :valid}} <- maybe_verify(backup_path, verify),
          {:ok, backup_data} <- read_backup(backup_path),
-         :ok <- apply_backup(backup_data) do
+         :ok <- apply_backup(backup_data, opts) do
       Logger.info("Backup restored successfully from: #{backup_path}")
       :ok
     else
@@ -270,34 +276,21 @@ defmodule Concord.Backup do
 
   # Private functions
 
-  # Named function for Ra 3.0 MFA-based consistent_query.
-  # Ra 3.0 no longer accepts anonymous functions in remote queries.
-  @doc false
-  def do_snapshot_query({:concord_kv, data}) do
-    kv_data = :ets.tab2list(:concord_store)
+  defp get_cluster_snapshot(opts) do
+    engine_opts =
+      opts
+      |> Keyword.take([:engine, :timeout])
+      |> Keyword.put(:consistency, :strong)
 
-    %{
-      version: 2,
-      kv_data: kv_data,
-      indexes: Map.get(data, :indexes, %{})
-    }
-  end
-
-  defp get_cluster_snapshot do
-    server_id = {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
-
-    case :ra.consistent_query(server_id, {__MODULE__, :do_snapshot_query, []}) do
-      {:ok, %{version: 2} = snapshot, _leader} ->
+    case Engine.query(:backup_snapshot, engine_opts) do
+      {:ok, {:ok, %{version: 2} = snapshot}} ->
         {:ok, snapshot}
 
-      {:error, :noproc} ->
-        {:error, :cluster_not_ready}
+      {:ok, {:error, reason}} ->
+        {:error, reason}
 
       {:error, reason} ->
         {:error, reason}
-
-      {:timeout, _} ->
-        {:error, :timeout}
     end
   end
 
@@ -356,21 +349,20 @@ defmodule Concord.Backup do
     end
   end
 
-  defp apply_backup(%{metadata: metadata, data: snapshot_data}) do
+  defp apply_backup(%{metadata: metadata, data: snapshot_data}, opts) do
     Logger.info("Applying backup from #{metadata.timestamp}, #{metadata.entry_count} entries")
 
-    # Route backup restore through Raft consensus so all nodes are consistent
-    server_id = {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
+    engine_opts =
+      opts
+      |> Keyword.take([:engine, :timeout])
+      |> Keyword.put_new(:timeout, 30_000)
 
-    case :ra.process_command(server_id, {:restore_backup, snapshot_data}, 30_000) do
-      {:ok, :ok, _} ->
+    case Engine.command({:restore_backup, snapshot_data}, engine_opts) do
+      {:ok, :ok} ->
         :ok
 
-      {:error, :noproc} ->
-        {:error, :cluster_not_ready}
-
-      {:timeout, _} ->
-        {:error, :timeout}
+      {:ok, {:error, reason}} ->
+        {:error, reason}
 
       {:error, reason} ->
         {:error, reason}

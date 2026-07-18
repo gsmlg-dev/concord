@@ -21,11 +21,14 @@ defmodule Concord.Engine do
   def module(Concord.Engine.Cluster), do: Concord.Engine.Cluster
   def module(Concord.Engine.Local), do: Concord.Engine.Local
   def module(Concord.Engine.Turso), do: Concord.Engine.Turso
+  def module(Concord.Engine.VSR), do: Concord.Engine.VSR
   def module(:kv_cluster), do: Concord.Engine.Cluster
   def module(:cluster), do: Concord.Engine.Cluster
   def module(:raft), do: Concord.Engine.Cluster
   def module(:raft_ets), do: Concord.Engine.Cluster
   def module(:concord), do: Concord.Engine.Cluster
+  def module(:vsr), do: Concord.Engine.VSR
+  def module(:viewstamped_replication), do: Concord.Engine.VSR
   def module(:kv_local), do: Concord.Engine.Local
   def module(:local), do: Concord.Engine.Local
   def module(:ets_local), do: Concord.Engine.Local
@@ -58,5 +61,11 @@ defmodule Concord.Engine do
 
   @doc false
   @spec engine(keyword()) :: module()
-  def engine(opts), do: opts |> Keyword.get(:engine, :kv_cluster) |> module()
+  def engine(opts) do
+    opts
+    |> Keyword.get_lazy(:engine, fn ->
+      Application.get_env(:concord, :replication_engine, :raft)
+    end)
+    |> module()
+  end
 end

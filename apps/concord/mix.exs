@@ -4,7 +4,7 @@ defmodule Concord.MixProject do
   def project do
     [
       app: :concord,
-      version: "2.0.1",
+      version: "3.0.0-alpha.0",
       elixir: "~> 1.17",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
@@ -100,6 +100,7 @@ defmodule Concord.MixProject do
   defp deps do
     [
       {:ra, "~> 3.0"},
+      {:viewstamped_replication, in_umbrella: true},
       {:libcluster, "~> 3.3"},
       {:telemetry, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},

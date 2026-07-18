@@ -31,12 +31,31 @@ defmodule Concord.Sync.ChangeLog do
   """
   @spec append([Event.t()]) :: :ok
   def append(events) when is_list(events) do
-    Enum.each(events, fn %Event{revision: rev} = event ->
-      :ets.insert(@table, {{rev, 0}, event})
+    events
+    |> Enum.with_index()
+    |> Enum.each(fn {%Event{} = event, index} ->
+      :ets.insert(@table, {event_key(event, index), event})
     end)
 
     maybe_compact()
     :ok
+  end
+
+  @doc false
+  @spec append_new([Event.t()]) :: [Event.t()]
+  def append_new(events) when is_list(events) do
+    inserted =
+      events
+      |> Enum.with_index()
+      |> Enum.reduce([], fn {%Event{} = event, index}, acc ->
+        if :ets.insert_new(@table, {event_key(event, index), event}),
+          do: [event | acc],
+          else: acc
+      end)
+      |> Enum.reverse()
+
+    maybe_compact()
+    inserted
   end
 
   @doc """
@@ -57,7 +76,7 @@ defmodule Concord.Sync.ChangeLog do
 
       _ ->
         :ets.select(@table, match_spec)
-        |> Enum.sort_by(& &1.revision)
+        |> Enum.sort_by(&{&1.revision, &1.id})
         |> Enum.take(limit)
     end
   end
@@ -124,4 +143,9 @@ defmodule Concord.Sync.ChangeLog do
         :ok
     end
   end
+
+  defp event_key(%Event{revision: revision, id: nil}, index),
+    do: {revision, {:legacy, index}}
+
+  defp event_key(%Event{revision: revision, id: id}, _index), do: {revision, id}
 end

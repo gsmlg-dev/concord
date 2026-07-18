@@ -6,6 +6,19 @@ config :rustler_precompiled, :force_build, ex_turso: true
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: true,
+  # Replicated engine: :raft (default) or :vsr
+  replication_engine: :raft,
+  # VSR membership is explicit and ordered; supported sizes are 1, 3, and 5.
+  vsr: [
+    group_id: :concord_cluster,
+    replica_id: nil,
+    members: [],
+    transport: :distribution,
+    storage: :file,
+    storage_path: nil,
+    bootstrap: false,
+    retry_timeout: 100
+  ],
   data_dir: "./data",
   max_batch_size: 500,
   # Default read consistency level: :eventual, :leader, or :strong

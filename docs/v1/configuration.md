@@ -8,6 +8,7 @@ Complete reference for all Concord configuration options.
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: true,
+  replication_engine: :raft,  # :raft or :vsr
   data_dir: "./data",
   auth_enabled: false,
   max_batch_size: 500,
@@ -67,7 +68,8 @@ Storage/concurrency selection is API-based, not global configuration-based.
 
 | API | Behavior |
 |-----|----------|
-| `Concord` / `Concord.Cluster` | Default Raft-backed cluster API. Writes go through Raft quorum replication. |
+| `Concord` | Replicated cluster API. Uses Raft by default or VSR when `replication_engine: :vsr` is configured. |
+| `Concord.Cluster` | Explicit Raft-backed cluster API. |
 | `Concord.Local` | Node-local KV API. Data stays on the current BEAM node and is not written to the Raft cluster. |
 | `Concord.Turso` | Durable node-local KV API backed by `ex_turso`. Data is written to a local Turso database file and is not written to the Raft cluster. |
 
@@ -75,6 +77,48 @@ Canonical sub-APIs follow the same split: `Concord.KV` and
 `Concord.Cluster.KV` use the cluster engine, while `Concord.Local.KV` uses the
 local engine. Pass `engine: :turso` to canonical APIs when using Turso-specific
 calls such as `Concord.KV.history/2` or `Concord.Txn.commit/2`.
+
+### Viewstamped Replication
+
+Raft remains the default replication engine. VSR uses an explicit, ordered
+membership list; it never derives protocol membership from connected Erlang
+nodes. Membership order determines the primary for each view and must be
+identical on every replica.
+
+```elixir
+config :concord,
+  replication_engine: :vsr,
+  vsr: [
+    group_id: :concord_cluster,
+    replica_id: :"concord1@example.net",
+    members: [
+      %{id: :"concord1@example.net", endpoint: :"concord1@example.net"},
+      %{id: :"concord2@example.net", endpoint: :"concord2@example.net"},
+      %{id: :"concord3@example.net", endpoint: :"concord3@example.net"}
+    ],
+    transport: :distribution,
+    storage: :file,
+    storage_path: "/var/lib/concord/data/vsr/concord1",
+    bootstrap: false,
+    retry_timeout: 100
+  ]
+```
+
+VSR supports configurations of one, three, or five replicas. Set `bootstrap:
+true` only when creating a new configuration, and set it back to `false` for
+subsequent starts using the same durable storage. VSR reads are replicated
+barriers and therefore linearizable; `:eventual`, `:leader`, and `:strong`
+query options all use the same barrier path.
+
+For releases, `CONCORD_VSR_MEMBERS` is a comma-separated ordered list. A member
+can be a node name or an explicit `id=endpoint` pair:
+
+```bash
+CONCORD_REPLICATION_ENGINE=vsr
+CONCORD_VSR_REPLICA_ID=concord1@example.net
+CONCORD_VSR_MEMBERS=concord1@example.net,concord2@example.net,concord3@example.net
+CONCORD_VSR_BOOTSTRAP=true
+```
 
 ### Turso
 
@@ -211,7 +255,16 @@ data_dir =
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONCORD_DATA_DIR` | `/var/apps/concord/lib/concord/data` | Persistent data directory (prod) |
-| `CONCORD_CLUSTER_ENABLED` | `true` | Start Concord's Raft cluster runtime |
+| `CONCORD_CLUSTER_ENABLED` | `true` | Start Concord's configured replication runtime |
+| `CONCORD_REPLICATION_ENGINE` | `raft` | Replication engine: `raft` or `vsr` |
+| `CONCORD_VSR_GROUP_ID` | `concord_cluster` | VSR configuration group identifier |
+| `CONCORD_VSR_REPLICA_ID` | current Erlang node | Local VSR member identifier |
+| `CONCORD_VSR_MEMBERS` | empty | Ordered comma-separated VSR members (`id` or `id=endpoint`) |
+| `CONCORD_VSR_TRANSPORT` | `distribution` | VSR transport: `distribution` or `local` |
+| `CONCORD_VSR_STORAGE` | `file` | VSR storage: `file` or `memory` |
+| `CONCORD_VSR_STORAGE_PATH` | `<data_dir>/vsr/<replica_id>` | Durable VSR WAL/checkpoint directory |
+| `CONCORD_VSR_BOOTSTRAP` | `false` | Bootstrap a new VSR configuration |
+| `CONCORD_VSR_RETRY_TIMEOUT` | `100` | VSR client retry interval in milliseconds |
 | `CONCORD_API_PORT` | `8080` | HTTP API port (prod) |
 | `CONCORD_API_IP` | `0.0.0.0` | HTTP API bind address (prod) |
 | `CONCORD_HTTP_ENABLED` | `true` | Enable HTTP API (prod) |
