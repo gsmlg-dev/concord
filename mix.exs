@@ -4,7 +4,7 @@ defmodule Concord.Umbrella.MixProject do
   def project do
     [
       apps_path: "apps",
-      apps: [:concord, :ex_turso],
+      apps: [:concord, :ex_turso, :viewstamped_replication],
       elixir: "~> 1.17",
       releases: releases(),
       aliases: aliases(),

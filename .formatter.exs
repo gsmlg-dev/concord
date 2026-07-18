@@ -1,5 +1,5 @@
 [
-  subdirectories: ["apps/concord", "apps/ex_turso"],
+  subdirectories: ["apps/*"],
   inputs: [
     "{mix,.formatter}.exs",
     "config/**/*.{ex,exs}"
