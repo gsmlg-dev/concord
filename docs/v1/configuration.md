@@ -168,7 +168,7 @@ should configure an Ecto repo with the optional adapter provided by `ex_turso`:
 ```elixir
 def deps do
   [
-    {:concord, "~> 3.0.0-alpha"},
+    {:concord, "~> 3.0.0-beta"},
     {:ex_turso, "~> 0.4"},
     {:ecto_sql, "~> 3.14"}
   ]

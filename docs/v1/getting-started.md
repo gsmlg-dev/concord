@@ -7,7 +7,7 @@ Add Concord to your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:concord, "~> 3.0.0-alpha"}
+    {:concord, "~> 3.0.0-beta"}
   ]
 end
 ```

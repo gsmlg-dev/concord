@@ -51,10 +51,39 @@ jobs:
         MIX_ENV: test
       run: mix test
 
+  publish-vsr:
+    name: Publish VSR to Hex.pm
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Erlang/OTP
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27'
+        elixir-version: '1.18'
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Publish VSR to Hex.pm
+      env:
+        HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+      working-directory: apps/viewstamped_replication
+      run: |
+        if mix hex.info viewstamped_replication 0.1.0 >/dev/null 2>&1; then
+          echo "viewstamped_replication 0.1.0 is already published"
+        else
+          mix hex.publish --yes
+        fi
+
   publish:
     name: Publish to Hex.pm
     runs-on: ubuntu-latest
-    needs: test
+    needs: publish-vsr
     permissions:
       contents: write
 

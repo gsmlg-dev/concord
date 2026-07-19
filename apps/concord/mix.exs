@@ -4,7 +4,7 @@ defmodule Concord.MixProject do
   def project do
     [
       app: :concord,
-      version: "3.0.0-alpha.0",
+      version: "3.0.0-beta.0",
       elixir: "~> 1.17",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
@@ -99,7 +99,7 @@ defmodule Concord.MixProject do
 
   defp deps do
     [
-      {:viewstamped_replication, in_umbrella: true},
+      viewstamped_replication_dep(),
       {:telemetry, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.4"},
@@ -118,6 +118,14 @@ defmodule Concord.MixProject do
       {:ex_turso, "~> 0.4"}
     else
       {:ex_turso, "~> 0.4", in_umbrella: true}
+    end
+  end
+
+  defp viewstamped_replication_dep do
+    if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
+      {:viewstamped_replication, "~> 0.1"}
+    else
+      {:viewstamped_replication, in_umbrella: true}
     end
   end
 

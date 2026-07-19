@@ -85,6 +85,6 @@ must be deterministic and free of arbitrary external side effects.
 This application uses the VSR terms **primary**, **backup**, **replica**,
 **view**, **view change**, **operation number**, and **commit number**.
 
-See
-[`docs/adr/0001-viewstamped-replication-application.md`](../../docs/adr/0001-viewstamped-replication-application.md)
+See the
+[Viewstamped Replication application ADR](https://github.com/gsmlg-dev/concord/blob/main/docs/adr/0001-viewstamped-replication-application.md)
 for the architectural decision and scope.

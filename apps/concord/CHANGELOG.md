@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.0] - 2026-07-19
+
 ### Added
 - Add the standalone `viewstamped_replication` application and use it as
   Concord's replicated runtime.
+- Publish `viewstamped_replication` 0.1.0 as Concord's protocol runtime
+  dependency.
 - Add three-node VSR release tests for KV, MVCC, transactions, leases, engine
   isolation, primary failover, and strong reads.
 
@@ -154,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add required Hex.pm package metadata.
 - Fix early formatting, lint, coverage, and release workflow failures.
 
-[Unreleased]: https://github.com/gsmlg-dev/concord/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/gsmlg-dev/concord/compare/v3.0.0-beta.0...HEAD
+[3.0.0-beta.0]: https://github.com/gsmlg-dev/concord/compare/v2.0.1...v3.0.0-beta.0
 [2.0.1]: https://github.com/gsmlg-dev/concord/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/gsmlg-dev/concord/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/gsmlg-dev/concord/compare/v1.0.2...v1.1.0
