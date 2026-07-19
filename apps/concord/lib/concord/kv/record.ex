@@ -43,6 +43,28 @@ defmodule Concord.KV.Record do
   ]
 
   @doc """
+  Builds the next live record for a key at the given revision.
+
+  Existing live records retain their creation revision and increment their
+  version. New keys and keys recreated after a tombstone start at version one.
+  """
+  @spec next(term(), non_neg_integer(), t() | nil, non_neg_integer() | nil, map()) :: t()
+  def next(value, revision, previous, expires_at, opts \\ %{}) do
+    live_previous? = previous && previous.version > 0
+
+    %__MODULE__{
+      value: value,
+      create_revision: if(live_previous?, do: previous.create_revision, else: revision),
+      mod_revision: revision,
+      version: if(live_previous?, do: previous.version + 1, else: 1),
+      expires_at: expires_at,
+      lease_id: Map.get(opts, :lease),
+      content_type: Map.get(opts, :content_type),
+      metadata: Map.get(opts, :metadata, %{}) || %{}
+    }
+  end
+
+  @doc """
   Returns `true` if this record is a tombstone (deleted key).
   """
   @spec tombstone?(t()) :: boolean()

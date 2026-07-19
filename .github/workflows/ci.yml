@@ -150,15 +150,18 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
 
+      - name: Compile umbrella dependencies
+        run: mix compile --warnings-as-errors
+
       - name: Restore Dialyzer PLT cache
         uses: actions/cache@v4
         with:
-          path: priv/plts
+          path: plts
           key: ${{ runner.os }}-dialyzer-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-dialyzer-
 
       - name: Run Dialyzer
-        run: mix cmd --app concord mix dialyzer --halt-exit-status
+        run: mix do --app concord cmd mix dialyzer
 
   ex-turso-native:
     name: Turso Native

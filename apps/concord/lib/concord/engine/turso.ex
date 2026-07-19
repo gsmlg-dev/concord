@@ -440,20 +440,7 @@ defmodule Concord.Engine.Turso do
   defp put_record_at_revision(conn, key, value, expires_at, opts, revision) do
     with {:ok, previous} <- fetch_current(conn, key) do
       with :ok <- maybe_insert_previous(conn, key, previous) do
-        record = %Record{
-          value: value,
-          create_revision:
-            if(previous && previous.version > 0,
-              do: previous.create_revision,
-              else: revision
-            ),
-          mod_revision: revision,
-          version: if(previous && previous.version > 0, do: previous.version + 1, else: 1),
-          expires_at: expires_at,
-          lease_id: Map.get(opts, :lease),
-          content_type: Map.get(opts, :content_type),
-          metadata: Map.get(opts, :metadata, %{}) || %{}
-        }
+        record = Record.next(value, revision, previous, expires_at, opts)
 
         with :ok <- upsert_current(conn, key, record) do
           {:ok, %{revision: revision, prev_kv: if(Map.get(opts, :prev_kv, false), do: previous)}}

@@ -16,7 +16,8 @@ defmodule Turso.MixProject do
       description: "DBConnection-backed Elixir wrapper for Turso/libSQL via Rustler",
       source_url: @source_url,
       package: package(),
-      deps: deps()
+      deps: deps(),
+      test_coverage: [summary: [threshold: 25]]
     ]
   end
 

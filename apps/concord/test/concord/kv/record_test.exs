@@ -32,6 +32,50 @@ defmodule Concord.KV.RecordTest do
     end
   end
 
+  describe "next/5" do
+    test "creates the first live record with optional metadata" do
+      assert %Record{
+               value: "value",
+               create_revision: 7,
+               mod_revision: 7,
+               version: 1,
+               expires_at: 100,
+               lease_id: 3,
+               content_type: "text/plain",
+               metadata: %{"source" => "test"}
+             } =
+               Record.next("value", 7, nil, 100, %{
+                 lease: 3,
+                 content_type: "text/plain",
+                 metadata: %{"source" => "test"}
+               })
+    end
+
+    test "retains the creation revision and increments a live record version" do
+      previous = %Record{
+        value: "old",
+        create_revision: 2,
+        mod_revision: 4,
+        version: 3
+      }
+
+      assert %Record{
+               value: "new",
+               create_revision: 2,
+               mod_revision: 8,
+               version: 4,
+               metadata: %{}
+             } = Record.next("new", 8, previous, nil)
+    end
+
+    test "restarts the record lifecycle after a tombstone" do
+      tombstone = %Record{create_revision: 2, mod_revision: 6, version: 0}
+
+      assert %Record{create_revision: 9, mod_revision: 9, version: 1} =
+               Record.next("new", 9, tombstone, nil)
+    end
+  end
+
   describe "expired?/2" do
     test "returns false when expires_at is nil" do
       record = %Record{expires_at: nil}

@@ -116,17 +116,7 @@ defmodule Concord.StateMachine.Core do
     old_value = decompress_record(previous)
     revision = state.revision + 1
 
-    record = %Record{
-      value: value,
-      create_revision:
-        if(previous && previous.version > 0, do: previous.create_revision, else: revision),
-      mod_revision: revision,
-      version: if(previous && previous.version > 0, do: previous.version + 1, else: 1),
-      expires_at: expires_at,
-      lease_id: Map.get(opts, :lease),
-      content_type: Map.get(opts, :content_type),
-      metadata: Map.get(opts, :metadata, %{}) || %{}
-    }
+    record = Record.next(value, revision, previous, expires_at, opts)
 
     state =
       state
@@ -389,13 +379,8 @@ defmodule Concord.StateMachine.Core do
 
       state =
         Enum.reduce(state.store, state, fn {key, stored}, acc ->
-          case extract_value(stored) do
-            {value, _expires_at} ->
-              update_one_index(acc, name, key, Compression.decompress(value))
-
-            _ ->
-              acc
-          end
+          {value, _expires_at} = extract_value(stored)
+          update_one_index(acc, name, key, Compression.decompress(value))
         end)
 
       {:ok, state}
@@ -549,13 +534,8 @@ defmodule Concord.StateMachine.Core do
   defp do_query(:get_all, state, now) do
     values =
       Enum.reduce(state.store, %{}, fn {key, stored}, acc ->
-        case extract_value(stored) do
-          {value, expires_at} ->
-            if expired?(expires_at, now), do: acc, else: Map.put(acc, key, value)
-
-          _ ->
-            acc
-        end
+        {value, expires_at} = extract_value(stored)
+        if expired?(expires_at, now), do: acc, else: Map.put(acc, key, value)
       end)
 
     {:ok, values}
@@ -564,17 +544,13 @@ defmodule Concord.StateMachine.Core do
   defp do_query(:get_all_with_ttl, state, now) do
     values =
       Enum.reduce(state.store, %{}, fn {key, stored}, acc ->
-        case extract_value(stored) do
-          {value, expires_at} ->
-            if expired?(expires_at, now) do
-              acc
-            else
-              ttl = if expires_at, do: max(0, expires_at - now), else: nil
-              Map.put(acc, key, %{value: value, ttl: ttl})
-            end
+        {value, expires_at} = extract_value(stored)
 
-          _ ->
-            acc
+        if expired?(expires_at, now) do
+          acc
+        else
+          ttl = if expires_at, do: max(0, expires_at - now), else: nil
+          Map.put(acc, key, %{value: value, ttl: ttl})
         end
       end)
 
@@ -604,13 +580,8 @@ defmodule Concord.StateMachine.Core do
       state.store
       |> Enum.filter(fn {key, _} -> String.starts_with?(key, prefix) end)
       |> Enum.reduce([], fn {key, stored}, acc ->
-        case extract_value(stored) do
-          {value, expires_at} ->
-            if expired?(expires_at, now), do: acc, else: [{key, value} | acc]
-
-          _ ->
-            acc
-        end
+        {value, expires_at} = extract_value(stored)
+        if expired?(expires_at, now), do: acc, else: [{key, value} | acc]
       end)
 
     {:ok, values}
@@ -857,10 +828,8 @@ defmodule Concord.StateMachine.Core do
   defp fetch_legacy(state, key) do
     case Map.fetch(state.store, key) do
       {:ok, stored} ->
-        case extract_value(stored) do
-          {value, expires_at} -> {:ok, value, expires_at}
-          _ -> {:error, :invalid_stored_format}
-        end
+        {value, expires_at} = extract_value(stored)
+        {:ok, value, expires_at}
 
       :error ->
         {:error, :not_found}
@@ -977,25 +946,21 @@ defmodule Concord.StateMachine.Core do
     state = %{state | index_entries: entries}
 
     Enum.reduce(state.store, state, fn {key, stored}, acc ->
-      case extract_value(stored) do
-        {value, _expires_at} -> update_indexes(acc, key, nil, Compression.decompress(value))
-        _ -> acc
-      end
+      {value, _expires_at} = extract_value(stored)
+      update_indexes(acc, key, nil, Compression.decompress(value))
     end)
   end
 
   defp validate_put_many(operations) do
-    cond do
-      length(operations) > 500 ->
-        {:error, :batch_too_large}
-
-      true ->
-        Enum.reduce_while(operations, :ok, fn operation, :ok ->
-          case validate_put(operation) do
-            :ok -> {:cont, :ok}
-            error -> {:halt, error}
-          end
-        end)
+    if length(operations) > 500 do
+      {:error, :batch_too_large}
+    else
+      Enum.reduce_while(operations, :ok, fn operation, :ok ->
+        case validate_put(operation) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
     end
   end
 
@@ -1172,17 +1137,7 @@ defmodule Concord.StateMachine.Core do
         ttl -> now_seconds(context) + ttl
       end
 
-    record = %Record{
-      value: value,
-      create_revision:
-        if(previous && previous.version > 0, do: previous.create_revision, else: revision),
-      mod_revision: revision,
-      version: if(previous && previous.version > 0, do: previous.version + 1, else: 1),
-      expires_at: expires_at,
-      lease_id: Map.get(opts, :lease),
-      content_type: Map.get(opts, :content_type),
-      metadata: Map.get(opts, :metadata, %{}) || %{}
-    }
+    record = Record.next(value, revision, previous, expires_at, opts)
 
     state =
       state

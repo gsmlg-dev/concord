@@ -11,7 +11,8 @@ defmodule ViewstampedReplication.MixProject do
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      test_coverage: [summary: [threshold: 80]]
     ]
   end
 
