@@ -142,6 +142,13 @@ jobs:
       working-directory: apps/concord
       run: mix docs
 
+    - name: Install Hex package dependencies
+      env:
+        MIX_ENV: prod
+        CONCORD_HEX_BUILD: "1"
+      working-directory: apps/concord
+      run: mix deps.get
+
     - name: Publish to Hex.pm
       env:
         MIX_ENV: prod
