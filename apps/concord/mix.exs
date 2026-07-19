@@ -110,7 +110,7 @@ defmodule Concord.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}
-    ]
+    ] ++ hex_build_deps()
   end
 
   defp ex_turso_dep do
@@ -126,6 +126,18 @@ defmodule Concord.MixProject do
       {:viewstamped_replication, "~> 0.1"}
     else
       {:viewstamped_replication, in_umbrella: true}
+    end
+  end
+
+  defp hex_build_deps do
+    if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
+      [
+        # TODO(upstream): gsmlg-dev/ex_turso#15
+        # WORKAROUND(upstream): gsmlg-dev/ex_turso#15
+        {:rustler, "~> 0.38", runtime: false}
+      ]
+    else
+      []
     end
   end
 
