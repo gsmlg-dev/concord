@@ -45,7 +45,9 @@ Concord.put_if("config", new_cfg, condition: fn old -> old.version < 2 end)
 
 Returns: `:ok | {:error, :condition_failed | :not_found | :missing_condition | :conflicting_conditions}`
 
-**Important**: Condition functions are evaluated at the API layer pre-consensus, then converted to CAS commands with `expected: current_value` before entering the Raft log. This keeps the log deterministic.
+**Important**: Condition functions are evaluated at the API layer before
+replication, then converted to CAS commands with `expected: current_value`.
+This keeps the replicated log deterministic.
 
 ### `Concord.delete_if(key, opts)`
 Same options as `put_if` (`:expected` or `:condition`).
@@ -83,7 +85,7 @@ Returns: `{:ok, [server_ids]}`
 
 ## Auth API (`Concord.Auth`)
 
-All mutations go through Raft consensus.
+All mutations go through VSR.
 
 ```elixir
 Concord.Auth.create_token(permissions)   # => {:ok, token_string}
@@ -111,7 +113,7 @@ Concord.RBAC.check_permission(token, operation, key)
 
 ## Multi-Tenancy (`Concord.MultiTenancy`)
 
-Tenant definitions via Raft; usage counters are node-local.
+Tenant definitions are replicated; usage counters are node-local.
 
 ```elixir
 Concord.MultiTenancy.create_tenant(id, opts)    # auto-creates RBAC role + ACLs
@@ -132,7 +134,7 @@ Tenant definition shape:
 
 ```elixir
 Concord.Backup.create(path: "/backups")          # => {:ok, path}
-Concord.Backup.restore(path)                      # => :ok (submits {:restore_backup, entries} via Raft)
+Concord.Backup.restore(path)                      # => :ok (submits a replicated restore command)
 Concord.Backup.list(path)                         # => {:ok, [backup_info]}
 Concord.Backup.verify(path)                       # => {:ok, :valid | :invalid}
 Concord.Backup.cleanup(path: p, keep_count: 10)   # => {:ok, deleted_count}
@@ -168,7 +170,7 @@ Concord.Index.list()
 Concord.Index.reindex_all()
 ```
 
-Extractor specs (declarative, safe for Raft):
+Extractor specs (declarative, safe for replication):
 - `{:map_get, :field}` — extract map field
 - `{:nested, [:path, :to, :field]}` — nested extraction
 - `{:identity}` — index raw value
@@ -188,10 +190,9 @@ Concord.Compression.stats(value)                   # => %{original_size: n, comp
 ```elixir
 :timeout              # Operation timed out
 :unauthorized         # Invalid or missing auth token
-:cluster_not_ready    # Ra cluster not initialized
+:cluster_not_ready    # VSR cluster not initialized
 :invalid_key          # Key must be binary string, 1-1024 bytes
 :not_found            # Key doesn't exist or expired
-:noproc               # Ra process not running
 :condition_failed     # CAS condition not met
 :missing_condition    # put_if/delete_if without expected or condition
 :conflicting_conditions  # Both expected and condition provided

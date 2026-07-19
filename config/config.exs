@@ -6,8 +6,6 @@ config :rustler_precompiled, :force_build, ex_turso: true
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: true,
-  # Replicated engine: :raft (default) or :vsr
-  replication_engine: :raft,
   # VSR membership is explicit and ordered; supported sizes are 1, 3, and 5.
   vsr: [
     group_id: :concord_cluster,
@@ -133,13 +131,6 @@ config :opentelemetry_exporter,
   otlp_protocol: :grpc,
   otlp_endpoint: "http://localhost:4317",
   otlp_headers: []
-
-config :libcluster,
-  topologies: [
-    concord: [
-      strategy: Cluster.Strategy.Gossip
-    ]
-  ]
 
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",

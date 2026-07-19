@@ -3,7 +3,7 @@ defmodule Concord.Local do
   Node-local Concord API.
 
   This module uses the local KV engine explicitly. Data written through this
-  API stays on the current BEAM node and is not submitted to the Raft cluster.
+  API stays on the current BEAM node and is not submitted to the VSR cluster.
   """
 
   alias Concord.APIOptions

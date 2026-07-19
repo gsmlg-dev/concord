@@ -2,9 +2,8 @@ defmodule Concord.Engine do
   @moduledoc """
   Storage engine boundary for Concord's public KV surface.
 
-  `Concord` uses `Concord.Engine.Cluster` by default to preserve the current
-  Raft-backed behavior. Explicit APIs such as `Concord.Local` pass a different
-  engine per call.
+  `Concord` uses `Concord.Engine.VSR` by default. Explicit APIs such as
+  `Concord.Local` pass a different engine per call.
   """
 
   @type command :: term()
@@ -18,15 +17,12 @@ defmodule Concord.Engine do
 
   @doc false
   @spec module(atom() | module()) :: module()
-  def module(Concord.Engine.Cluster), do: Concord.Engine.Cluster
   def module(Concord.Engine.Local), do: Concord.Engine.Local
   def module(Concord.Engine.Turso), do: Concord.Engine.Turso
   def module(Concord.Engine.VSR), do: Concord.Engine.VSR
-  def module(:kv_cluster), do: Concord.Engine.Cluster
-  def module(:cluster), do: Concord.Engine.Cluster
-  def module(:raft), do: Concord.Engine.Cluster
-  def module(:raft_ets), do: Concord.Engine.Cluster
-  def module(:concord), do: Concord.Engine.Cluster
+  def module(:kv_cluster), do: Concord.Engine.VSR
+  def module(:cluster), do: Concord.Engine.VSR
+  def module(:concord), do: Concord.Engine.VSR
   def module(:vsr), do: Concord.Engine.VSR
   def module(:viewstamped_replication), do: Concord.Engine.VSR
   def module(:kv_local), do: Concord.Engine.Local
@@ -63,9 +59,7 @@ defmodule Concord.Engine do
   @spec engine(keyword()) :: module()
   def engine(opts) do
     opts
-    |> Keyword.get_lazy(:engine, fn ->
-      Application.get_env(:concord, :replication_engine, :raft)
-    end)
+    |> Keyword.get(:engine, :vsr)
     |> module()
   end
 end

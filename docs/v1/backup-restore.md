@@ -52,7 +52,7 @@ mix concord.backup cleanup --keep-days 7
 # Create backup
 {:ok, backup_path} = Concord.Backup.create(path: "/mnt/backups")
 
-# If Concord's Ra cluster is not running or not ready:
+# If Concord's VSR cluster is not running or not ready:
 {:error, :cluster_not_ready} = Concord.Backup.create(path: "/mnt/backups")
 
 # List backups
@@ -89,7 +89,7 @@ Backups are compressed Erlang term files (`.backup`) containing:
 
 Features:
 - Compressed storage for efficient disk usage
-- Atomic snapshots via Ra consensus
+- Atomic logical snapshots through VSR
 - Compatible across cluster nodes
 
 ## Automated Backups

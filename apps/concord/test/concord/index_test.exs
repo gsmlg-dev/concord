@@ -5,6 +5,10 @@ defmodule Concord.IndexTest do
     # Start test cluster
     :ok = Concord.TestHelper.start_test_cluster()
 
+    on_exit(fn ->
+      Concord.TestHelper.stop_test_cluster()
+    end)
+
     # Wait a bit for cluster to fully initialize
     Process.sleep(100)
 
@@ -119,7 +123,7 @@ defmodule Concord.IndexTest do
       :ok = Concord.Index.create("posts_by_tag", fn post -> post.tags end)
 
       :ok = Concord.put("post:1", %{title: "Elixir", tags: ["elixir", "functional"]})
-      :ok = Concord.put("post:2", %{title: "Raft", tags: ["distributed", "consensus"]})
+      :ok = Concord.put("post:2", %{title: "VSR", tags: ["distributed", "consensus"]})
       :ok = Concord.put("post:3", %{title: "OTP", tags: ["elixir", "otp"]})
 
       {:ok, keys} = Concord.Index.lookup("posts_by_tag", "elixir")

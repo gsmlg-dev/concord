@@ -563,18 +563,18 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "concord_cluster_commit_index",
+          "expr": "viewstamped_replication_commit_number",
           "refId": "A",
-          "legendFormat": "Commit Index"
+          "legendFormat": "Commit Number"
         }
       ],
-      "title": "Raft Commit Index",
+      "title": "VSR Commit Number",
       "type": "timeseries"
     }
   ],
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["concord", "distributed-kv", "raft"],
+  "tags": ["concord", "distributed-kv", "vsr"],
   "templating": {
     "list": [
       {

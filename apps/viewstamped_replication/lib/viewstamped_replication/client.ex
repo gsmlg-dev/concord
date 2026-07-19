@@ -8,7 +8,7 @@ defmodule ViewstampedReplication.Client do
 
   use GenServer
 
-  alias ViewstampedReplication.{Replica, Request}
+  alias ViewstampedReplication.{Member, Replica, Request}
   alias ViewstampedReplication.Reply
 
   @enforce_keys [:group_id, :client_id, :replicas]
@@ -136,12 +136,13 @@ defmodule ViewstampedReplication.Client do
     GenServer.reply(pending.from, {:ok, reply.result})
 
     primary_index = rem(reply.view_number, length(state.replicas))
+    believed_primary = state.replicas |> Enum.at(primary_index) |> replica_identity()
 
     {:noreply,
      %{
        state
        | pending: nil,
-         believed_primary: Enum.at(state.replicas, primary_index)
+         believed_primary: believed_primary
      }}
   end
 
@@ -184,7 +185,7 @@ defmodule ViewstampedReplication.Client do
   defp initial_target_index(%{believed_primary: nil}), do: 0
 
   defp initial_target_index(state) do
-    Enum.find_index(state.replicas, &(&1 == state.believed_primary)) || 0
+    Enum.find_index(state.replicas, &(replica_identity(&1) == state.believed_primary)) || 0
   end
 
   defp cancel_pending_timers(pending) do
@@ -198,7 +199,7 @@ defmodule ViewstampedReplication.Client do
   defp handle_protocol_error(state, pending, {:error, {:not_primary, primary_id}}) do
     believed_primary = normalize_replica(primary_id, state.group_id)
 
-    case Enum.find_index(state.replicas, &(&1 == believed_primary)) do
+    case Enum.find_index(state.replicas, &(replica_identity(&1) == believed_primary)) do
       nil ->
         {:noreply, state}
 
@@ -217,9 +218,15 @@ defmodule ViewstampedReplication.Client do
   defp handle_protocol_error(state, _pending, _retryable_error), do: {:noreply, state}
 
   defp normalize_replica(pid, _group_id) when is_pid(pid), do: pid
+  defp normalize_replica(%Member{} = member, group_id), do: {group_id, member}
   defp normalize_replica({group_id, replica_id}, _group_id), do: {group_id, replica_id}
   defp normalize_replica(replica_id, group_id), do: {group_id, replica_id}
 
   defp normalize_primary(nil, _group_id), do: nil
-  defp normalize_primary(primary, group_id), do: normalize_replica(primary, group_id)
+
+  defp normalize_primary(primary, group_id),
+    do: primary |> normalize_replica(group_id) |> replica_identity()
+
+  defp replica_identity({group_id, %Member{id: replica_id}}), do: {group_id, replica_id}
+  defp replica_identity(replica), do: replica
 end

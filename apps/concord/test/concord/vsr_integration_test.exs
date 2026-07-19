@@ -11,10 +11,9 @@ defmodule Concord.VSRIntegrationTest do
   end
 
   setup context do
-    start_supervised!({Concord.Sync.WatchHub, []})
-    start_supervised!({Concord.Sync.Dispatcher, []})
+    start_unless_running(Concord.Sync.WatchHub)
+    start_unless_running(Concord.Sync.Dispatcher)
 
-    previous_engine = Application.fetch_env(:concord, :replication_engine)
     previous_vsr = Application.fetch_env(:concord, :vsr)
     group_id = {:concord_vsr_test, System.unique_integer([:positive, :monotonic])}
     member_endpoint = {:local_test_endpoint, group_id}
@@ -33,7 +32,6 @@ defmodule Concord.VSRIntegrationTest do
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
-    Application.put_env(:concord, :replication_engine, :vsr)
     Application.put_env(:concord, :vsr, opts)
 
     {:ok, supervisor} = Engine.VSR.Supervisor.start_link(opts)
@@ -41,7 +39,6 @@ defmodule Concord.VSRIntegrationTest do
 
     on_exit(fn ->
       stop_supervisor(supervisor)
-      restore_env(:replication_engine, previous_engine)
       restore_env(:vsr, previous_vsr)
     end)
 
@@ -260,6 +257,10 @@ defmodule Concord.VSRIntegrationTest do
     if Process.alive?(supervisor), do: Supervisor.stop(supervisor)
   catch
     :exit, _reason -> :ok
+  end
+
+  defp start_unless_running(module) do
+    if is_nil(Process.whereis(module)), do: start_supervised!({module, []})
   end
 
   defp restore_env(key, {:ok, value}), do: Application.put_env(:concord, key, value)

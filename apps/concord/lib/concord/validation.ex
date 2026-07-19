@@ -1,9 +1,9 @@
 defmodule Concord.Validation do
   @moduledoc """
-  Recursive validation for Raft command safety.
+  Recursive validation for replicated command safety.
 
   Walks any Elixir term to ensure it contains no anonymous functions, PIDs,
-  ports, or references — values that break Raft determinism and serialization.
+  ports, or references — values that break deterministic serialization.
   Also enforces depth and size limits.
   """
 
@@ -87,7 +87,7 @@ defmodule Concord.Validation do
   # ──────────────────────────────────────────────
 
   @doc """
-  Validates a transaction spec before Raft submission.
+  Validates a transaction spec before replicated submission.
 
   Checks structural correctness, limit compliance, and recursive safety.
   """

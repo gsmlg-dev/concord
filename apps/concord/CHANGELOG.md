@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add the standalone `viewstamped_replication` application and use it as
+  Concord's replicated runtime.
+- Add three-node VSR release tests for KV, MVCC, transactions, leases, engine
+  isolation, primary failover, and strong reads.
+
 ### Changed
 - Rebuilt the changelog with the full published package release history.
+- Make Viewstamped Replication the only replicated engine in Concord 3.0.
+- Require explicit, ordered membership for multi-node VSR configurations.
+
+### Removed
+- Remove the Ra runtime, dependency, configuration switch, test harness, and
+  operational scripts. Concord 3.0 does not read or migrate Ra storage.
 
 ### Fixed
 - Align source package metadata and installation docs with the released 2.x API package.

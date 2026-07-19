@@ -2,22 +2,23 @@
 
 `viewstamped_replication` is a standalone, protocol-generic OTP application for
 replicating deterministic state machines with Viewstamped Replication (VSR). It
-does not depend on Concord and does not change Concord's current replication
-engine.
+does not depend on Concord. Concord depends on this application and uses it as
+its only replicated engine.
 
 ## Status
 
 This application implements the pure protocol kernel, supervised replica
 runtime, client sessions, normal operation, view changes, recovery, state
 transfer, storage adapters, transport adapters, and telemetry emission. It is
-still **not production-ready**.
+the replication runtime for Concord 3.0.
 
-The remaining limitations include:
+The supported production profile is a fixed, explicitly configured
+three-replica group that tolerates one crash failure. Current operational
+constraints are:
 
 - fixed membership with no reconfiguration protocol;
-- no automatic log-compaction policy or storage-format migration;
-- distributed transport and whole-cluster recovery need broader operational
-  testing;
+- no automatic log-compaction or storage-retention policy;
+- no storage-format migration between incompatible VSR releases;
 - snapshots are explicit rather than managed by a production checkpoint
   policy.
 

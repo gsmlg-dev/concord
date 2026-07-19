@@ -78,7 +78,7 @@ defmodule Concord.MixProject do
   defp package do
     [
       description:
-        "An embedded distributed key-value store for Elixir with Raft consensus. Think SQLite but replicated.",
+        "An embedded distributed key-value store for Elixir with Viewstamped Replication. Think SQLite but replicated.",
       licenses: ["MIT"],
       files: [
         "lib",
@@ -99,9 +99,7 @@ defmodule Concord.MixProject do
 
   defp deps do
     [
-      {:ra, "~> 3.0"},
       {:viewstamped_replication, in_umbrella: true},
-      {:libcluster, "~> 3.3"},
       {:telemetry, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.4"},

@@ -1,5 +1,5 @@
 defmodule Concord.Cluster.KV do
-  @moduledoc "Explicit Raft-cluster `Concord.KV` API."
+  @moduledoc "Explicit VSR-cluster `Concord.KV` API."
 
   alias Concord.{APIOptions, KV}
 

@@ -3,7 +3,7 @@ defmodule Concord.TTLTest do
   alias Concord.{StateMachine, TTL}
 
   setup_all do
-    Application.ensure_all_started(:concord)
+    if is_nil(Process.whereis(TTL)), do: start_supervised!({TTL, []})
     :ok
   end
 

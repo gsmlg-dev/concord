@@ -19,20 +19,6 @@ cluster_enabled =
   |> String.downcase()
   |> then(&(&1 in ["1", "true", "yes", "on"]))
 
-replication_engine =
-  case System.get_env("CONCORD_REPLICATION_ENGINE", "raft") |> String.downcase() do
-    "raft" ->
-      :raft
-
-    "vsr" ->
-      :vsr
-
-    value ->
-      raise """
-      invalid CONCORD_REPLICATION_ENGINE=#{inspect(value)}; expected "raft" or "vsr"
-      """
-  end
-
 vsr_group_id =
   System.get_env("CONCORD_VSR_GROUP_ID", "concord_cluster")
   |> String.to_atom()
@@ -54,6 +40,10 @@ vsr_members =
         [id: id_and_endpoint, endpoint: id_and_endpoint]
     end
   end)
+  |> case do
+    [] -> [[id: vsr_replica_id, endpoint: node()]]
+    members -> members
+  end
 
 vsr_transport =
   case System.get_env("CONCORD_VSR_TRANSPORT", "distribution") |> String.downcase() do
@@ -77,7 +67,6 @@ vsr_bootstrap =
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: cluster_enabled,
-  replication_engine: replication_engine,
   vsr: [
     group_id: vsr_group_id,
     replica_id: vsr_replica_id,
@@ -126,42 +115,3 @@ config :concord,
       System.get_env("CONCORD_TURSO_REMOTE_URL") || System.get_env("TURSO_DATABASE_URL"),
     auth_token: turso_auth_token
   ]
-
-# Ra data_dir configuration.
-# In production/release mode, we configure Ra's data_dir and ensure it exists.
-# In test mode, the test helper manages Ra separately.
-if config_env() == :prod do
-  ra_data_dir = Path.join(data_dir, "ra")
-  File.mkdir_p!(ra_data_dir)
-
-  config :ra,
-    data_dir: :erlang.binary_to_list(ra_data_dir)
-end
-
-# libcluster discovery strategy
-# If CONCORD_CLUSTER_NODES is set (comma-separated), use Epmd strategy (deterministic).
-# Otherwise, use Gossip strategy (multicast auto-discovery).
-cluster_topology =
-  case System.get_env("CONCORD_CLUSTER_NODES") do
-    nil ->
-      [
-        concord_gossip: [
-          strategy: Cluster.Strategy.Gossip
-        ]
-      ]
-
-    nodes_str ->
-      nodes =
-        nodes_str
-        |> String.split(",", trim: true)
-        |> Enum.map(&String.to_atom(String.trim(&1)))
-
-      [
-        concord_epmd: [
-          strategy: Cluster.Strategy.Epmd,
-          config: [hosts: nodes]
-        ]
-      ]
-  end
-
-config :libcluster, topologies: cluster_topology

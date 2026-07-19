@@ -1,8 +1,6 @@
 defmodule Concord.LeaseIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias Concord.KV.Record
-
   setup do
     :ok = Concord.TestHelper.start_test_cluster()
 
@@ -13,13 +11,16 @@ defmodule Concord.LeaseIntegrationTest do
     :ok
   end
 
-  # Helper to run a Ra query using the correct MFA format
-  defp ra_query(query_term) do
-    mfa = {Concord.StateMachine, :query, [query_term]}
+  defp replicated_query(query_term) do
+    case Concord.Engine.query(query_term) do
+      {:ok, result} -> result
+      error -> error
+    end
+  end
 
-    case :ra.leader_query({:concord_cluster, node()}, mfa) do
-      {:ok, {{_, _}, result}, _} -> result
-      {:ok, result, _} -> result
+  defp replicated_command(command) do
+    case Concord.Engine.command(command) do
+      {:ok, result} -> result
       error -> error
     end
   end
@@ -28,16 +29,15 @@ defmodule Concord.LeaseIntegrationTest do
     test "grants a lease with TTL" do
       cmd = {:grant_lease, 30, %{}}
 
-      {:ok, result, _} =
-        :ra.process_command({:concord_cluster, node()}, cmd)
+      result = replicated_command(cmd)
 
       assert {:ok, %{lease_id: id, ttl: 30}} = result
       assert is_integer(id) and id > 0
     end
 
     test "lease IDs are sequential" do
-      {:ok, r1, _} = :ra.process_command({:concord_cluster, node()}, {:grant_lease, 30, %{}})
-      {:ok, r2, _} = :ra.process_command({:concord_cluster, node()}, {:grant_lease, 60, %{}})
+      r1 = replicated_command({:grant_lease, 30, %{}})
+      r2 = replicated_command({:grant_lease, 60, %{}})
 
       {:ok, %{lease_id: id1}} = r1
       {:ok, %{lease_id: id2}} = r2
@@ -47,19 +47,16 @@ defmodule Concord.LeaseIntegrationTest do
 
   describe "lease: keep_alive" do
     test "refreshes lease TTL" do
-      {:ok, {:ok, %{lease_id: id}}, _} =
-        :ra.process_command({:concord_cluster, node()}, {:grant_lease, 10, %{}})
+      {:ok, %{lease_id: id}} = replicated_command({:grant_lease, 10, %{}})
 
       # Keep alive should succeed
-      {:ok, result, _} =
-        :ra.process_command({:concord_cluster, node()}, {:keep_alive_lease, id, %{}})
+      result = replicated_command({:keep_alive_lease, id, %{}})
 
       assert result == :ok
     end
 
     test "fails for non-existent lease" do
-      {:ok, result, _} =
-        :ra.process_command({:concord_cluster, node()}, {:keep_alive_lease, 999_999, %{}})
+      result = replicated_command({:keep_alive_lease, 999_999, %{}})
 
       assert result == {:error, :lease_not_found}
     end
@@ -67,12 +64,11 @@ defmodule Concord.LeaseIntegrationTest do
 
   describe "lease: key attachment" do
     test "put with lease attaches key to lease" do
-      {:ok, {:ok, %{lease_id: id}}, _} =
-        :ra.process_command({:concord_cluster, node()}, {:grant_lease, 60, %{}})
+      {:ok, %{lease_id: id}} = replicated_command({:grant_lease, 60, %{}})
 
       # Put a key with the lease
       cmd = {:put, "leased_key", "value", %{lease: id}}
-      {:ok, _result, _} = :ra.process_command({:concord_cluster, node()}, cmd)
+      _result = replicated_command(cmd)
 
       # Verify key is attached to the lease
       case :ets.lookup(:concord_leases, id) do
@@ -88,20 +84,18 @@ defmodule Concord.LeaseIntegrationTest do
   describe "lease: revoke" do
     test "revokes lease and deletes attached keys" do
       # Grant lease
-      {:ok, {:ok, %{lease_id: id}}, _} =
-        :ra.process_command({:concord_cluster, node()}, {:grant_lease, 60, %{}})
+      {:ok, %{lease_id: id}} = replicated_command({:grant_lease, 60, %{}})
 
       # Put keys with lease
-      :ra.process_command({:concord_cluster, node()}, {:put, "lk1", "v1", %{lease: id}})
-      :ra.process_command({:concord_cluster, node()}, {:put, "lk2", "v2", %{lease: id}})
+      replicated_command({:put, "lk1", "v1", %{lease: id}})
+      replicated_command({:put, "lk2", "v2", %{lease: id}})
 
       # Verify keys exist
       assert {:ok, "v1"} = Concord.get("lk1")
       assert {:ok, "v2"} = Concord.get("lk2")
 
       # Revoke
-      {:ok, result, _} =
-        :ra.process_command({:concord_cluster, node()}, {:revoke_lease, id, %{}})
+      result = replicated_command({:revoke_lease, id, %{}})
 
       assert {:ok, %{deleted_keys: 2}} = result
 
@@ -114,8 +108,7 @@ defmodule Concord.LeaseIntegrationTest do
     end
 
     test "revoke non-existent lease returns error" do
-      {:ok, result, _} =
-        :ra.process_command({:concord_cluster, node()}, {:revoke_lease, 888_888, %{}})
+      result = replicated_command({:revoke_lease, 888_888, %{}})
 
       assert result == {:error, :lease_not_found}
     end
@@ -123,10 +116,9 @@ defmodule Concord.LeaseIntegrationTest do
 
   describe "lease: queries" do
     test "lease_info returns lease details" do
-      {:ok, {:ok, %{lease_id: id}}, _} =
-        :ra.process_command({:concord_cluster, node()}, {:grant_lease, 120, %{}})
+      {:ok, %{lease_id: id}} = replicated_command({:grant_lease, 120, %{}})
 
-      result = ra_query({:lease_info, id})
+      result = replicated_query({:lease_info, id})
       assert {:ok, lease} = result
       assert lease.id == id
       assert lease.ttl == 120
@@ -135,10 +127,10 @@ defmodule Concord.LeaseIntegrationTest do
     end
 
     test "list_leases returns all leases" do
-      :ra.process_command({:concord_cluster, node()}, {:grant_lease, 30, %{}})
-      :ra.process_command({:concord_cluster, node()}, {:grant_lease, 60, %{}})
+      replicated_command({:grant_lease, 30, %{}})
+      replicated_command({:grant_lease, 60, %{}})
 
-      result = ra_query(:list_leases)
+      result = replicated_query(:list_leases)
       assert {:ok, leases} = result
       assert length(leases) >= 2
     end

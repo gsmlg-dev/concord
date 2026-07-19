@@ -33,7 +33,7 @@ defmodule Concord.TursoEngineTest do
     assert node == node()
   end
 
-  test "stores, reads, deletes, and isolates values from the Raft engine" do
+  test "stores, reads, deletes, and isolates values from the VSR engine" do
     key = unique_key("crud")
 
     assert :ok = Concord.Turso.put(key, %{source: :turso})

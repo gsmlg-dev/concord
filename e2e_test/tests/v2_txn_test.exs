@@ -6,7 +6,7 @@ defmodule Concord.E2E.V2TxnTest do
 
   describe "transactions across cluster" do
     test "atomic create-if-absent" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       spec = %{
         compare: [{:exists, "e2e:txn:create", :==, false}],
@@ -14,7 +14,7 @@ defmodule Concord.E2E.V2TxnTest do
         failure: []
       }
 
-      {:ok, result} = :rpc.call(leader, Concord.Txn, :commit, [spec])
+      {:ok, result} = :rpc.call(primary, Concord.Txn, :commit, [spec])
       assert result.succeeded == true
 
       assert :ok = Cluster.wait_replicated("e2e:txn:create", {:ok, "atomically_created"})
@@ -22,7 +22,7 @@ defmodule Concord.E2E.V2TxnTest do
     end
 
     test "concurrent create-if-absent — exactly one wins" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       tasks =
         for i <- 1..10 do
@@ -33,7 +33,7 @@ defmodule Concord.E2E.V2TxnTest do
               failure: []
             }
 
-            :rpc.call(leader, Concord.Txn, :commit, [spec])
+            :rpc.call(primary, Concord.Txn, :commit, [spec])
           end)
         end
 
@@ -57,10 +57,10 @@ defmodule Concord.E2E.V2TxnTest do
     end
 
     test "multi-key atomic transfer" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
-      :rpc.call(leader, Concord, :put, ["e2e:acct:A", 1000])
-      :rpc.call(leader, Concord, :put, ["e2e:acct:B", 500])
+      :rpc.call(primary, Concord, :put, ["e2e:acct:A", 1000])
+      :rpc.call(primary, Concord, :put, ["e2e:acct:B", 500])
       Process.sleep(300)
 
       spec = %{
@@ -75,7 +75,7 @@ defmodule Concord.E2E.V2TxnTest do
         failure: []
       }
 
-      {:ok, result} = :rpc.call(leader, Concord.Txn, :commit, [spec])
+      {:ok, result} = :rpc.call(primary, Concord.Txn, :commit, [spec])
       assert result.succeeded == true
 
       Process.sleep(500)
@@ -90,13 +90,13 @@ defmodule Concord.E2E.V2TxnTest do
     end
 
     test "prefix delete in transaction" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       for i <- 1..5 do
-        :rpc.call(leader, Concord, :put, ["e2e:txn:batch:#{i}", "v#{i}"])
+        :rpc.call(primary, Concord, :put, ["e2e:txn:batch:#{i}", "v#{i}"])
       end
 
-      :rpc.call(leader, Concord, :put, ["e2e:txn:keep", "safe"])
+      :rpc.call(primary, Concord, :put, ["e2e:txn:keep", "safe"])
       Process.sleep(300)
 
       spec = %{
@@ -105,7 +105,7 @@ defmodule Concord.E2E.V2TxnTest do
         failure: []
       }
 
-      {:ok, result} = :rpc.call(leader, Concord.Txn, :commit, [spec])
+      {:ok, result} = :rpc.call(primary, Concord.Txn, :commit, [spec])
       assert result.succeeded == true
 
       Process.sleep(500)
@@ -122,7 +122,7 @@ defmodule Concord.E2E.V2TxnTest do
     end
 
     test "failed compare — no mutation" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       spec = %{
         compare: [{:exists, "e2e:txn:ghost", :==, true}],
@@ -130,7 +130,7 @@ defmodule Concord.E2E.V2TxnTest do
         failure: []
       }
 
-      {:ok, result} = :rpc.call(leader, Concord.Txn, :commit, [spec])
+      {:ok, result} = :rpc.call(primary, Concord.Txn, :commit, [spec])
       assert result.succeeded == false
 
       Process.sleep(300)

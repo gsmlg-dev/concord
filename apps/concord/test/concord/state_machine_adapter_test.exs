@@ -3,7 +3,7 @@ defmodule Concord.StateMachineAdapterTest do
 
   alias Concord.StateMachine
 
-  test "keeps the Ra tuple contract while storing complete service state" do
+  test "keeps the compatibility tuple while storing complete service state" do
     state = StateMachine.init(%{})
 
     {state, result, effects} =
@@ -24,7 +24,7 @@ defmodule Concord.StateMachineAdapterTest do
             }} = state
   end
 
-  test "emits release_cursor only in the Ra adapter" do
+  test "does not emit protocol-specific effects" do
     state =
       {:concord_kv,
        %{
@@ -49,10 +49,7 @@ defmodule Concord.StateMachineAdapterTest do
 
     assert {:concord_kv, %{command_count: 1_000}} = state
 
-    assert [
-             {:release_cursor, 1_000,
-              %{__concord_snapshot_version__: 4, state: %Concord.StateMachine.Core.State{}}}
-           ] = effects
+    assert effects == []
   end
 
   test "snapshot installation migrates v3 data into adapter materialized views" do

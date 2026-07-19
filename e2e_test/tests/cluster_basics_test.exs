@@ -10,30 +10,30 @@ defmodule Concord.E2E.ClusterBasicsTest do
       assert length(connected) == 3, "Expected 3 nodes, got #{length(connected)}: #{inspect(connected)}"
     end
 
-    test "raft leader is elected" do
-      leader = Cluster.find_leader()
-      assert leader != nil, "No Raft leader found"
-      assert leader in Cluster.nodes()
-      IO.puts("  ✓ Leader: #{leader}")
+    test "VSR primary is elected" do
+      primary = Cluster.find_primary()
+      assert primary != nil, "No VSR primary found"
+      assert primary in Cluster.nodes()
+      IO.puts("  ✓ Primary: #{primary}")
     end
   end
 
   describe "data replication" do
     test "writes replicate to all nodes" do
-      leader = Cluster.find_leader()
-      :ok = :rpc.call(leader, Concord, :put, ["e2e:repl:1", "hello"])
+      primary = Cluster.find_primary()
+      :ok = :rpc.call(primary, Concord, :put, ["e2e:repl:1", "hello"])
 
       assert :ok = Cluster.wait_replicated("e2e:repl:1", {:ok, "hello"})
       IO.puts("  ✓ Write replicated to all 3 nodes")
     end
 
     test "concurrent writes maintain consistency" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       tasks =
         for i <- 1..50 do
           Task.async(fn ->
-            :rpc.call(leader, Concord, :put, ["e2e:conc:#{i}", "v#{i}"])
+            :rpc.call(primary, Concord, :put, ["e2e:conc:#{i}", "v#{i}"])
           end)
         end
 
@@ -50,19 +50,19 @@ defmodule Concord.E2E.ClusterBasicsTest do
     end
 
     test "deletes replicate to all nodes" do
-      leader = Cluster.find_leader()
-      :ok = :rpc.call(leader, Concord, :put, ["e2e:del:1", "doomed"])
+      primary = Cluster.find_primary()
+      :ok = :rpc.call(primary, Concord, :put, ["e2e:del:1", "doomed"])
       Cluster.wait_replicated("e2e:del:1", {:ok, "doomed"})
 
-      :ok = :rpc.call(leader, Concord, :delete, ["e2e:del:1"])
+      :ok = :rpc.call(primary, Concord, :delete, ["e2e:del:1"])
       assert :ok = Cluster.wait_replicated("e2e:del:1", {:error, :not_found})
       IO.puts("  ✓ Delete replicated to all nodes")
     end
 
     test "bulk put_many replicates" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
       data = for i <- 1..20, do: {"e2e:bulk:#{i}", %{index: i}}
-      {:ok, _} = :rpc.call(leader, Concord, :put_many, [data])
+      {:ok, _} = :rpc.call(primary, Concord, :put_many, [data])
 
       Process.sleep(1000)
 

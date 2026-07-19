@@ -39,7 +39,7 @@ defmodule Concord.StateMachine.Core.State do
   Complete immutable state of the Concord key-value service.
 
   The legacy and MVCC representations intentionally coexist while the public
-  command formats are supported. Unlike the former Ra adapter, no service data
+  command formats are supported. Unlike the former protocol adapter, no service data
   is stored outside this value.
   """
 

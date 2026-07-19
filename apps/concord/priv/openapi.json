@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Concord HTTP API",
-    "description": "A distributed, strongly-consistent key-value store built on Raft consensus algorithm. This REST API provides complete access to Concord's distributed KV operations, bulk processing, and TTL management capabilities.",
+    "description": "A distributed, strongly-consistent key-value store built on Viewstamped Replication. This REST API provides complete access to Concord's distributed KV operations, bulk processing, and TTL management capabilities.",
     "version": "1.0.0",
     "contact": {
       "name": "Concord Development Team",

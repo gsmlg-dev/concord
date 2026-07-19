@@ -3,7 +3,7 @@ defmodule Concord.Turso do
   Explicit Turso-backed Concord API.
 
   This API uses a local Turso database through `ex_turso`. It is durable and
-  node-local: it does not submit writes to the Raft cluster and it does not
+  node-local: it does not submit writes to the VSR cluster and it does not
   replicate data to Concord cluster peers.
   """
 

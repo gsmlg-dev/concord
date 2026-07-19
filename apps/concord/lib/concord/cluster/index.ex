@@ -1,5 +1,5 @@
 defmodule Concord.Cluster.Index do
-  @moduledoc "Explicit Raft-cluster `Concord.Index` API."
+  @moduledoc "Explicit VSR-cluster `Concord.Index` API."
 
   alias Concord.{APIOptions, Index}
 

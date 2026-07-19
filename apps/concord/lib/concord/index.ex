@@ -10,7 +10,7 @@ defmodule Concord.Index do
 
   - **Automatic Maintenance**: Indexes update automatically on put/delete
   - **Multiple Indexes**: Support for multiple indexes per store
-  - **Declarative Extractors**: Define indexes with data specs (safe for Raft replication)
+  - **Declarative Extractors**: Define indexes with data specs (safe for replication)
   - **Backward Compatible**: Anonymous functions still accepted during migration
   - **Efficient Lookups**: O(1) lookup by indexed value
   - **Multi-value Support**: Index multiple values per key (e.g., tags)
@@ -28,7 +28,7 @@ defmodule Concord.Index do
 
   ## Legacy Function Extractors (Deprecated)
 
-      # Still works but stores anonymous functions in Raft log — unsafe across upgrades
+      # Still works but stores anonymous functions in the replicated log — unsafe across upgrades
       :ok = Concord.Index.create("by_email", fn u -> u.email end)
   """
 

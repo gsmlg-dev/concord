@@ -5,7 +5,8 @@ defmodule Concord.DeterminismTest do
   @moduledoc """
   Tests that the state machine produces identical output when given identical
   input, regardless of how many times it is replayed. This is the core
-  correctness property required by Raft: `apply/3` must be a pure function
+  correctness property required by replicated state machines: `apply/3` must be
+  a pure function
   of (meta, command, state).
   """
 
@@ -29,7 +30,7 @@ defmodule Concord.DeterminismTest do
   end
 
   # Ensure the ETS table exists and is owned by the current process.
-  # A previous test's Ra server may still be shutting down, leaving a table
+  # A previous test process may still be shutting down, leaving a table
   # that will vanish when the owner dies — delete and recreate to be safe.
   defp ensure_owned_ets do
     try do
@@ -108,7 +109,7 @@ defmodule Concord.DeterminismTest do
       state_b = replay(commands, state)
       ets_b = :ets.tab2list(:concord_store) |> Enum.sort()
 
-      # Assert Raft state is identical
+      # Assert replicated state is identical
       assert_states_equal(state_a, state_b)
 
       # Assert ETS materialized view is identical
@@ -227,7 +228,7 @@ defmodule Concord.DeterminismTest do
                :ets.lookup(:concord_store, "broken")
     end
 
-    test "apply recreates missing ETS tables before replaying recovered Ra commands", %{
+    test "apply recreates missing ETS tables before replaying recovered commands", %{
       state: state
     } do
       delete_core_ets_tables()

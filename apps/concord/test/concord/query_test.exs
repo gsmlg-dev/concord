@@ -7,6 +7,10 @@ defmodule Concord.QueryTest do
     # Start test cluster
     :ok = Concord.TestHelper.start_test_cluster()
 
+    on_exit(fn ->
+      Concord.TestHelper.stop_test_cluster()
+    end)
+
     # Clear all data before each test
     case Concord.get_all() do
       {:ok, pairs} ->

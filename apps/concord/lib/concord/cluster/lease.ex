@@ -1,5 +1,5 @@
 defmodule Concord.Cluster.Lease do
-  @moduledoc "Explicit Raft-cluster `Concord.Lease` API."
+  @moduledoc "Explicit VSR-cluster `Concord.Lease` API."
 
   alias Concord.{APIOptions, Lease}
 

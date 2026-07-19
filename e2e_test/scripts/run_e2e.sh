@@ -4,8 +4,8 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────
 # Concord E2E Test Orchestrator
 #
-# Builds an OTP release, starts a 3-node cluster with Gossip
-# discovery, waits for Raft leader election, runs RPC-based
+# Builds an OTP release, starts a 3-node VSR cluster, waits for
+# readiness, runs RPC-based
 # ExUnit tests against the cluster, then tears everything down.
 # ──────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ NC='\033[0m'
 
 COOKIE="concord_e2e_secret"
 NODE_COUNT=3
-DATA_BASE="$PROJECT_DIR/_build/e2e_data"
+DATA_BASE="$PROJECT_DIR/_build/e2e_data/vsr"
 
 cleanup() {
   echo -e "\n${YELLOW}Stopping cluster...${NC}"
@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo -e "${YELLOW}═══════════════════════════════════════${NC}"
-echo -e "${YELLOW}  Concord E2E Test Suite (Release Mode)${NC}"
+echo -e "${YELLOW}  Concord VSR E2E Test Suite (Release Mode)${NC}"
 echo -e "${YELLOW}═══════════════════════════════════════${NC}"
 
 # ── Step 1: Build release ──────────────────────────────────
@@ -41,6 +41,7 @@ cd "$PROJECT_DIR"
 MIX_CMD="${MIX_CMD:-mix}"
 ELIXIR_CMD="${ELIXIR_CMD:-elixir}"
 
+rm -rf "$PROJECT_DIR/_build/prod/rel/concord"
 MIX_ENV=prod $MIX_CMD release concord --overwrite --quiet 2>&1
 RELEASE_BIN="$PROJECT_DIR/_build/prod/rel/concord/bin/concord"
 
@@ -55,25 +56,27 @@ echo -e "\n${YELLOW}[2/4] Starting ${NODE_COUNT}-node cluster...${NC}"
 "$SCRIPT_DIR/start_cluster.sh" "$RELEASE_BIN" "$DATA_BASE" "$COOKIE" "$NODE_COUNT"
 echo -e "${GREEN}✓ Cluster started${NC}"
 
-# ── Step 3: Wait for Raft leader ───────────────────────────
-echo -e "\n${YELLOW}[3/4] Waiting for Raft leader election...${NC}"
+# ── Step 3: Wait for VSR readiness ─────────────────────────
+echo -e "\n${YELLOW}[3/4] Waiting for VSR readiness...${NC}"
 
 MAX_WAIT=60
 ELAPSED=0
-LEADER_FOUND=false
+PRIMARY_FOUND=false
 
 while [ $ELAPSED -lt $MAX_WAIT ]; do
   # Use 'rpc' to query the running node (not 'eval' which starts a new VM)
-  RESULT=$(RELEASE_NODE="concord_e2e1@127.0.0.1" RELEASE_COOKIE="$COOKIE" \
-    "$RELEASE_BIN" rpc "
-      case :ra.members({:concord_cluster, node()}) do
-        {:ok, _, {_, _}} -> IO.puts(\"leader_ready\")
-        _ -> IO.puts(\"waiting\")
-      end
-    " 2>/dev/null || echo "error")
+  CHECK='
+    case Concord.status() do
+      {:ok, %{engine: :vsr, cluster: %{status: :normal}}} -> IO.puts("engine_ready")
+      _ -> IO.puts("waiting")
+    end
+  '
 
-  if echo "$RESULT" | grep -q "leader_ready"; then
-    LEADER_FOUND=true
+  RESULT=$(RELEASE_NODE="concord_e2e1@127.0.0.1" RELEASE_COOKIE="$COOKIE" \
+    "$RELEASE_BIN" rpc "$CHECK" 2>/dev/null || echo "error")
+
+  if echo "$RESULT" | grep -q "engine_ready"; then
+    PRIMARY_FOUND=true
     break
   fi
 
@@ -83,15 +86,15 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
 done
 echo ""
 
-if [ "$LEADER_FOUND" = false ]; then
-  echo -e "${RED}✗ Raft leader not elected within ${MAX_WAIT}s${NC}"
+if [ "$PRIMARY_FOUND" = false ]; then
+  echo -e "${RED}✗ VSR did not become ready within ${MAX_WAIT}s${NC}"
   # Show node1 state for debugging
   echo -e "${YELLOW}Debug: Node1 state:${NC}"
   RELEASE_NODE="concord_e2e1@127.0.0.1" RELEASE_COOKIE="$COOKIE" \
-    "$RELEASE_BIN" rpc "IO.inspect(Node.list(), label: :peers); IO.inspect(:ra.members({:concord_cluster, node()}), label: :ra)" 2>&1 || true
+    "$RELEASE_BIN" rpc "IO.inspect(Node.list(), label: :peers); IO.inspect(Concord.status(), label: :concord)" 2>&1 || true
   exit 1
 fi
-echo -e "${GREEN}✓ Raft leader elected (${ELAPSED}s)${NC}"
+echo -e "${GREEN}✓ VSR ready (${ELAPSED}s)${NC}"
 
 # ── Step 4: Run tests ─────────────────────────────────────
 echo -e "\n${YELLOW}[4/4] Running E2E tests via RPC...${NC}\n"
@@ -100,6 +103,8 @@ cd "$PROJECT_DIR"
 
 # The test runner connects as a distributed node and runs ExUnit
 # tests that use :rpc.call to exercise the cluster.
+set +e
+
 $ELIXIR_CMD \
   --name "e2e_tester@127.0.0.1" \
   --cookie "$COOKIE" \
@@ -132,6 +137,33 @@ $ELIXIR_CMD \
   "
 
 EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 0 ]; then
+  $ELIXIR_CMD \
+    --name "e2e_failover_tester@127.0.0.1" \
+    --cookie "$COOKIE" \
+    -e "
+      ExUnit.start(trace: true, max_failures: 1, timeout: 60_000)
+      nodes = [
+        :\"concord_e2e1@127.0.0.1\",
+        :\"concord_e2e2@127.0.0.1\",
+        :\"concord_e2e3@127.0.0.1\"
+      ]
+      Enum.each(nodes, &Node.connect/1)
+      Code.require_file(\"$E2E_DIR/support/e2e_cluster.ex\")
+      Code.require_file(\"$E2E_DIR/tests/vsr_cluster_test.exs\")
+
+      ExUnit.run()
+      |> case do
+        %{failures: 0} -> System.halt(0)
+        _ -> System.halt(1)
+      end
+    "
+
+  EXIT_CODE=$?
+fi
+
+set -e
 
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then

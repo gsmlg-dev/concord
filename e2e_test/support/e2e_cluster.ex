@@ -1,7 +1,7 @@
 # E2E Cluster helpers for RPC-based testing against a running release cluster.
 defmodule Concord.E2E.Cluster do
   @moduledoc """
-  Helpers for interacting with a running Concord release cluster via RPC.
+  Helpers for interacting with a running Concord VSR release cluster via RPC.
 
   The cluster nodes are expected to be named concord_e2eN@127.0.0.1
   and already running when tests execute.
@@ -21,42 +21,42 @@ defmodule Concord.E2E.Cluster do
     Enum.filter(@default_nodes, &Node.connect/1)
   end
 
-  @doc "Finds the current Raft leader node."
-  def find_leader(node_list \\ @default_nodes) do
+  @doc "Finds the node running the current VSR primary replica."
+  def find_primary(node_list \\ @default_nodes) do
     Enum.find(node_list, fn node ->
-      case :rpc.call(node, :ra, :members, [{:concord_cluster, node}]) do
-        {:ok, _members, {_, leader_node}} -> leader_node == node
-        _ -> false
+      case :rpc.call(node, Concord, :status, []) do
+        {:ok, %{cluster: %{replica_id: replica_id, primary_id: replica_id}}} -> true
+        _result -> false
       end
     end)
   end
 
-  @doc "Waits until a Raft leader is available, up to timeout_ms."
-  def wait_for_leader(timeout_ms \\ 15_000) do
+  @doc "Waits until a VSR primary is available, up to timeout_ms."
+  def wait_for_primary(timeout_ms \\ 15_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_leader(deadline)
+    do_wait_primary(deadline)
   end
 
-  defp do_wait_leader(deadline) do
-    case find_leader() do
+  defp do_wait_primary(deadline) do
+    case find_primary() do
       nil ->
         if System.monotonic_time(:millisecond) < deadline do
           Process.sleep(500)
-          do_wait_leader(deadline)
+          do_wait_primary(deadline)
         else
           {:error, :timeout}
         end
 
-      leader ->
-        {:ok, leader}
+      primary ->
+        {:ok, primary}
     end
   end
 
-  @doc "Runs a Concord function on the leader node via RPC."
-  def rpc_leader(mod, fun, args) do
-    case find_leader() do
-      nil -> {:error, :no_leader}
-      leader -> :rpc.call(leader, mod, fun, args)
+  @doc "Runs a Concord function on the primary node via RPC."
+  def rpc_primary(mod, fun, args) do
+    case find_primary() do
+      nil -> {:error, :no_primary}
+      primary -> :rpc.call(primary, mod, fun, args)
     end
   end
 
@@ -67,28 +67,19 @@ defmodule Concord.E2E.Cluster do
     end)
   end
 
-  @doc "Runs a Ra leader_query on a node using MFA format."
-  def ra_query(node, query_term) do
-    mfa = {Concord.StateMachine, :query, [query_term]}
-
-    case :rpc.call(node, :ra, :leader_query, [{:concord_cluster, node}, mfa]) do
-      {:ok, {{_, _}, result}, _} -> result
-      {:ok, result, _} -> result
+  @doc "Runs a replicated query through the VSR engine on a node."
+  def replicated_query(node, query_term) do
+    case :rpc.call(node, Concord.Engine, :query, [query_term]) do
+      {:ok, result} -> result
       error -> error
     end
   end
 
-  @doc "Sends a Ra process_command on the leader."
-  def ra_command(cmd) do
-    case find_leader() do
-      nil ->
-        {:error, :no_leader}
-
-      leader ->
-        case :rpc.call(leader, :ra, :process_command, [{:concord_cluster, leader}, cmd]) do
-          {:ok, result, _} -> {:ok, result}
-          error -> error
-        end
+  @doc "Submits a command through the VSR engine."
+  def replicated_command(command) do
+    case find_primary() do
+      nil -> {:error, :no_primary}
+      primary -> :rpc.call(primary, Concord.Engine, :command, [command])
     end
   end
 
@@ -100,7 +91,7 @@ defmodule Concord.E2E.Cluster do
 
   defp do_wait_replicated(key, expected, deadline) do
     results = rpc_all(Concord, :get, [key])
-    all_match = Enum.all?(results, fn {_node, val} -> val == expected end)
+    all_match = Enum.all?(results, fn {_node, value} -> value == expected end)
 
     if all_match do
       :ok

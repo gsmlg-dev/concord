@@ -7,7 +7,7 @@ Add Concord to your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:concord, "~> 2.0"}
+    {:concord, "~> 3.0.0-alpha"}
   ]
 end
 ```
@@ -72,18 +72,25 @@ See [HTTP API Guide](API_USAGE_EXAMPLES.md) for full examples including authenti
 
 ## Multi-Node Cluster
 
+Use the same ordered membership list on every node. Bootstrap only the first
+start of a new cluster.
+
 ```bash
+export CONCORD_VSR_MEMBERS=n1@127.0.0.1,n2@127.0.0.1,n3@127.0.0.1
+export CONCORD_VSR_BOOTSTRAP=true
+
 # Terminal 1
-iex --name n1@127.0.0.1 --cookie concord -S mix
+CONCORD_VSR_REPLICA_ID=n1@127.0.0.1 iex --name n1@127.0.0.1 --cookie concord -S mix
 
 # Terminal 2
-iex --name n2@127.0.0.1 --cookie concord -S mix
+CONCORD_VSR_REPLICA_ID=n2@127.0.0.1 iex --name n2@127.0.0.1 --cookie concord -S mix
 
 # Terminal 3
-iex --name n3@127.0.0.1 --cookie concord -S mix
+CONCORD_VSR_REPLICA_ID=n3@127.0.0.1 iex --name n3@127.0.0.1 --cookie concord -S mix
 ```
 
-Nodes discover each other automatically via libcluster gossip.
+For later starts against the same durable storage, set
+`CONCORD_VSR_BOOTSTRAP=false`.
 
 ## Authentication
 

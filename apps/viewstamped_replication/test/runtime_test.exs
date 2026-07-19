@@ -61,16 +61,20 @@ defmodule ViewstampedReplication.RuntimeTest do
 
   test "client session submits a command and advances its stable request number" do
     group_id = unique_group()
+    configuration = configuration(group_id)
 
     start_supervised!(
       {ViewstampedReplication.ReplicaSupervisor,
-       configuration: configuration(group_id), state_machine: MapStateMachine, bootstrap: true}
+       configuration: configuration, state_machine: MapStateMachine, bootstrap: true}
     )
 
     client =
       start_supervised!(
         {Client,
-         group_id: group_id, client_id: {:client, group_id}, replicas: [1], retry_timeout: 20}
+         group_id: group_id,
+         client_id: {:client, group_id},
+         replicas: configuration.members,
+         retry_timeout: 20}
       )
 
     assert {:ok, :ok} =
@@ -370,7 +374,7 @@ defmodule ViewstampedReplication.RuntimeTest do
     Configuration.new!(
       group_id: group_id,
       replica_id: 1,
-      members: [%Member{id: 1, endpoint: {:local, group_id, 1}}]
+      members: [%Member{id: 1, endpoint: :local_endpoint}]
     )
   end
 

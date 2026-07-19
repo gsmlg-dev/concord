@@ -5,13 +5,13 @@
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://hexdocs.pm/concord/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> A distributed, strongly-consistent embedded key-value store built in Elixir using the Raft consensus algorithm.
+> A distributed, strongly-consistent embedded key-value store built in Elixir using Viewstamped Replication.
 
 **Concord** is an **embedded database** for Elixir applications — think SQLite for distributed coordination. Starts with your application, no separate infrastructure needed. Strong consistency guarantees with ETS-backed read performance.
 
 ## Key Features
 
-- **Strong Consistency** — Raft consensus ensures all nodes agree on data
+- **Strong Consistency** — Viewstamped Replication ensures all nodes agree on data
 - **High Performance** — ETS-backed reads with microsecond-level latency
 - **Embedded Design** — Starts with your app, no external infrastructure
 - **Configurable Consistency** — Choose eventual, leader, or strong per operation
@@ -27,7 +27,7 @@
 
 ```elixir
 def deps do
-  [{:concord, "~> 2.0"}]
+  [{:concord, "~> 3.0.0-alpha"}]
 end
 ```
 
@@ -49,15 +49,15 @@ Concord.put_many([{"k1", "v1"}, {"k2", "v2", 600}])
 # Conditional update (compare-and-swap)
 Concord.put_if("counter", 1, expected: 0)
 
-# Read consistency levels
-Concord.get("key", consistency: :eventual)  # Fast, may be stale
-Concord.get("key", consistency: :leader)    # Default, balanced
-Concord.get("key", consistency: :strong)    # Linearizable
+# All accepted consistency names currently use a linearizable VSR query barrier
+Concord.get("key", consistency: :eventual)
+Concord.get("key", consistency: :leader)
+Concord.get("key", consistency: :strong)
 ```
 
 ### Storage APIs
 
-Concord's default API remains the existing Raft-backed cluster API:
+Concord's default API uses the VSR-backed cluster:
 
 ```elixir
 Concord.put("cluster:key", "value")
@@ -72,7 +72,7 @@ Concord.Local.KV.put("local:record", %{value: 1})
 ```
 
 The local API uses the same Concord command/query semantics with separate
-node-local ETS tables. It does not submit writes to Raft and does not replicate
+node-local ETS tables. It does not submit writes to VSR and does not replicate
 data to cluster peers.
 
 For durable node-local storage backed by Turso/libSQL, enable the Turso engine
@@ -89,12 +89,12 @@ Concord.Turso.txn(%{
 ```
 
 `Concord.Turso` uses `ex_turso` and persists data to a local database file. It
-does not submit writes to Raft and does not provide Concord cluster membership,
+does not submit writes to VSR and does not provide Concord cluster membership,
 leases, watches, or secondary indexes. If `remote_url` and `auth_token` are
 configured, `Concord.Turso.sync/1` triggers Turso Cloud sync.
 
 Applications that only need the durable Turso KV engine can disable the Concord
-Raft cluster runtime while still starting the Turso pool:
+VSR cluster runtime while still starting the Turso pool:
 
 ```elixir
 config :concord,
@@ -112,7 +112,7 @@ Turso/libSQL, use the optional Ecto adapter shipped by `ex_turso`:
 ```elixir
 def deps do
   [
-    {:concord, "~> 2.3"},
+    {:concord, "~> 3.0.0-alpha"},
     {:ex_turso, "~> 0.4"},
     {:ecto_sql, "~> 3.14"}
   ]
@@ -136,10 +136,17 @@ PostgreSQL instead.
 
 ### Multi-Node Cluster
 
+Every replica must use the same ordered membership list. Bootstrap is enabled
+only for the first start of a new cluster; restart durable replicas with
+`CONCORD_VSR_BOOTSTRAP=false`.
+
 ```bash
-iex --name n1@127.0.0.1 --cookie concord -S mix  # Terminal 1
-iex --name n2@127.0.0.1 --cookie concord -S mix  # Terminal 2
-iex --name n3@127.0.0.1 --cookie concord -S mix  # Terminal 3
+export CONCORD_VSR_MEMBERS=n1@127.0.0.1,n2@127.0.0.1,n3@127.0.0.1
+export CONCORD_VSR_BOOTSTRAP=true
+
+CONCORD_VSR_REPLICA_ID=n1@127.0.0.1 iex --name n1@127.0.0.1 --cookie concord -S mix
+CONCORD_VSR_REPLICA_ID=n2@127.0.0.1 iex --name n2@127.0.0.1 --cookie concord -S mix
+CONCORD_VSR_REPLICA_ID=n3@127.0.0.1 iex --name n3@127.0.0.1 --cookie concord -S mix
 ```
 
 ## Performance
@@ -164,7 +171,7 @@ Performance varies significantly depending on hardware, cluster size, network to
 | Feature | Concord | etcd | Consul | ZooKeeper |
 |---------|---------|------|--------|-----------|
 | Language | Elixir | Go | Go | Java |
-| Consistency | Strong (Raft) | Strong (Raft) | Strong (Raft) | Strong (Zab) |
+| Consistency | Strong (VSR) | Strong (Raft) | Strong (Raft) | Strong (Zab) |
 | Storage | In-memory (ETS) | Disk (WAL) | Memory + Disk | Disk |
 | Read Latency | 1-5ms | 5-20ms | 5-15ms | 5-20ms |
 | Embedded | Yes | No | No | No |
@@ -192,6 +199,4 @@ MIT License — See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [Ra](https://github.com/rabbitmq/ra) library by the RabbitMQ team
-- [libcluster](https://github.com/bitwalker/libcluster) for cluster management
-- The Raft paper by Ongaro & Ousterhout
+- The Viewstamped Replication and Viewstamped Replication Revisited papers

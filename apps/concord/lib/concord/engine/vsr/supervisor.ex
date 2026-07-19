@@ -35,7 +35,7 @@ defmodule Concord.Engine.VSR.Supervisor do
       name: VSR.Client,
       group_id: configuration.group_id,
       client_id: Keyword.get_lazy(opts, :client_id, &default_client_id/0),
-      replicas: Enum.map(configuration.members, & &1.id),
+      replicas: configuration.members,
       retry_timeout: Keyword.get(opts, :retry_timeout, 100)
     ]
 

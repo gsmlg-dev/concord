@@ -3,7 +3,7 @@ defmodule Concord do
   Public API for the Concord distributed key-value store.
 
   Concord is a CP (Consistent + Partition-tolerant) distributed KV store
-  built on the Raft consensus algorithm via the `ra` library.
+  built on Viewstamped Replication.
 
   ## Examples
 
@@ -190,7 +190,7 @@ defmodule Concord do
 
       # If a condition function is provided, evaluate it PRE-CONSENSUS
       # and convert to a CAS (compare-and-swap) operation with :expected.
-      # This keeps anonymous functions out of the Raft log.
+      # This keeps anonymous functions out of the replicated log.
       result =
         cond do
           expected != nil ->
@@ -761,7 +761,7 @@ defmodule Concord do
   end
 
   # Evaluate a condition function pre-consensus, then issue a CAS command.
-  # Keeps anonymous functions out of the Raft log.
+  # Keeps anonymous functions out of the replicated log.
   defp evaluate_condition_then_cas(key, build_cmd, condition_fn, opts, timeout) do
     case get(key, Keyword.take(opts, [:timeout, :consistency, :engine])) do
       {:ok, current_value} ->

@@ -42,7 +42,12 @@ for i in $(seq 1 "$NODE_COUNT"); do
   CONCORD_DATA_DIR="$NODE_DATA" \
   CONCORD_TURSO_ENABLED="true" \
   CONCORD_TURSO_DATABASE="$NODE_DATA/turso.db" \
-  CONCORD_CLUSTER_NODES="$CLUSTER_NODES" \
+  CONCORD_VSR_GROUP_ID="concord_cluster" \
+  CONCORD_VSR_REPLICA_ID="$NODE_NAME" \
+  CONCORD_VSR_MEMBERS="$CLUSTER_NODES" \
+  CONCORD_VSR_TRANSPORT="distribution" \
+  CONCORD_VSR_STORAGE="file" \
+  CONCORD_VSR_BOOTSTRAP="true" \
   NODE_NAME="concord_e2e${i}" \
     "$RELEASE_BIN" daemon \
     > "$LOG_FILE" 2>&1
@@ -53,6 +58,6 @@ for i in $(seq 1 "$NODE_COUNT"); do
   echo -e "${GREEN}✓${NC} Started $NODE_NAME"
 done
 
-# Wait for Epmd discovery + Raft cluster formation
+# Wait for VSR cluster formation
 echo "  Waiting for cluster formation..."
 sleep 8

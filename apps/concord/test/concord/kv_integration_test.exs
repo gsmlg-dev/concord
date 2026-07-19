@@ -13,13 +13,9 @@ defmodule Concord.KV.IntegrationTest do
     :ok
   end
 
-  # Helper to run a Ra query using the correct MFA format
-  defp ra_query(query_term) do
-    mfa = {Concord.StateMachine, :query, [query_term]}
-
-    case :ra.leader_query({:concord_cluster, node()}, mfa) do
-      {:ok, {{_, _}, result}, _} -> result
-      {:ok, result, _} -> result
+  defp replicated_query(query_term) do
+    case Concord.Engine.query(query_term) do
+      {:ok, result} -> result
       error -> error
     end
   end
@@ -117,14 +113,14 @@ defmodule Concord.KV.IntegrationTest do
     test "returns full Record struct" do
       Concord.put("rec_key", "hello")
 
-      result = ra_query({:get_record, "rec_key"})
+      result = replicated_query({:get_record, "rec_key"})
       assert {:ok, %Record{} = rec} = result
       assert rec.version == 1
       assert rec.mod_revision > 0
     end
 
     test "returns error for missing key" do
-      result = ra_query({:get_record, "no_such_key"})
+      result = replicated_query({:get_record, "no_such_key"})
       assert result == {:error, :not_found}
     end
   end
@@ -133,7 +129,7 @@ defmodule Concord.KV.IntegrationTest do
     test "returns current cluster revision" do
       Concord.put("rev_test", "value")
 
-      result = ra_query(:get_revision)
+      result = replicated_query(:get_revision)
       assert {:ok, rev} = result
       assert is_integer(rev) and rev > 0
     end
@@ -162,7 +158,7 @@ defmodule Concord.KV.IntegrationTest do
       Concord.put("/items/3", "c")
       Concord.put("/other/1", "d")
 
-      result = ra_query({:list, {:prefix, "/items/"}, %{limit: 100}})
+      result = replicated_query({:list, {:prefix, "/items/"}, %{limit: 100}})
       assert {:ok, records, meta} = result
       assert length(records) == 3
       assert meta.has_more == false
@@ -171,7 +167,7 @@ defmodule Concord.KV.IntegrationTest do
     test "list with limit returns has_more" do
       for i <- 1..5, do: Concord.put("/pg/#{i}", "v#{i}")
 
-      result = ra_query({:list, {:prefix, "/pg/"}, %{limit: 2}})
+      result = replicated_query({:list, {:prefix, "/pg/"}, %{limit: 2}})
       assert {:ok, records, meta} = result
       assert length(records) == 2
       assert meta.has_more == true

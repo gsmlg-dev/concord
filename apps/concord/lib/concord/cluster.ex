@@ -1,9 +1,9 @@
 defmodule Concord.Cluster do
   @moduledoc """
-  Explicit Raft-cluster Concord API.
+  Explicit Viewstamped Replication cluster API.
 
-  `Concord` itself remains cluster-backed for compatibility. This module exists
-  when call sites should state the storage/concurrency model directly.
+  `Concord` itself is cluster-backed. This module exists when call sites should
+  state the replicated storage model directly.
   """
 
   alias Concord.APIOptions

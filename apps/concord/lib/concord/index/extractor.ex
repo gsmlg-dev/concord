@@ -3,7 +3,7 @@ defmodule Concord.Index.Extractor do
   Declarative index extractor specifications.
 
   All specs are plain data (tuples of atoms/binaries/integers) — no anonymous
-  functions. This makes them safe to serialize in the Raft log and snapshots
+  functions. This makes them safe to serialize in the replicated log and snapshots
   across code versions without risk of `:badfun` errors.
 
   ## Supported Specs

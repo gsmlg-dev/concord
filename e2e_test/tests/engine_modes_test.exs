@@ -5,16 +5,16 @@ defmodule Concord.E2E.EngineModesTest do
   @moduletag :e2e
 
   describe "engine API selection" do
-    test "explicit cluster API writes through Raft and replicates" do
-      leader = Cluster.find_leader()
+    test "explicit cluster API writes through VSR and replicates" do
+      primary = Cluster.find_primary()
       key = unique_key("cluster")
 
-      :ok = :rpc.call(leader, Concord.Cluster, :put, [key, "cluster-value"])
+      :ok = :rpc.call(primary, Concord.Cluster, :put, [key, "cluster-value"])
 
       assert :ok = Cluster.wait_replicated(key, {:ok, "cluster-value"})
 
       assert_all_nodes(Concord.Cluster, :get, [key], {:ok, "cluster-value"})
-      assert {:ok, "cluster-value"} = :rpc.call(leader, Concord, :get, [key])
+      assert {:ok, "cluster-value"} = :rpc.call(primary, Concord, :get, [key])
 
       IO.puts("  ✓ Concord.Cluster writes replicate and remain visible via Concord")
     end
@@ -34,15 +34,15 @@ defmodule Concord.E2E.EngineModesTest do
       assert_all_nodes(Concord, :get, [key], {:error, :not_found})
       assert_all_nodes(Concord.Cluster, :get, [key], {:error, :not_found})
 
-      IO.puts("  ✓ Concord.Local writes do not replicate or enter the Raft store")
+      IO.puts("  ✓ Concord.Local writes do not replicate or enter the VSR store")
     end
 
     test "local and cluster APIs keep same key isolated" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
       [local_node | other_nodes] = Cluster.nodes()
       key = unique_key("same-key")
 
-      {:ok, _} = :rpc.call(leader, Concord.Cluster.KV, :put, [key, "cluster-kv"])
+      {:ok, _} = :rpc.call(primary, Concord.Cluster.KV, :put, [key, "cluster-kv"])
       assert :ok = Cluster.wait_replicated(key, {:ok, "cluster-kv"})
 
       {:ok, _} = :rpc.call(local_node, Concord.Local.KV, :put, [key, "local-kv"])
@@ -57,30 +57,30 @@ defmodule Concord.E2E.EngineModesTest do
       IO.puts("  ✓ Same key can hold independent values in local and cluster engines")
     end
 
-    test "turso API persists node-local data without entering Raft" do
-      leader = Cluster.find_leader()
-      other_nodes = Cluster.nodes() -- [leader]
+    test "turso API persists node-local data without entering VSR" do
+      primary = Cluster.find_primary()
+      other_nodes = Cluster.nodes() -- [primary]
       key = unique_key("turso")
 
-      assert :ok = :rpc.call(leader, Concord.Turso, :put, [key, "turso-value"])
-      assert {:ok, "turso-value"} = :rpc.call(leader, Concord.Turso, :get, [key])
+      assert :ok = :rpc.call(primary, Concord.Turso, :put, [key, "turso-value"])
+      assert {:ok, "turso-value"} = :rpc.call(primary, Concord.Turso, :get, [key])
 
       assert {:ok, %{engine: :turso, storage: %{size: size}}} =
-               :rpc.call(leader, Concord.Turso, :status, [])
+               :rpc.call(primary, Concord.Turso, :status, [])
 
       assert size >= 1
 
-      assert {:error, :not_found} = :rpc.call(leader, Concord, :get, [key])
-      assert {:error, :not_found} = :rpc.call(leader, Concord.Local, :get, [key])
+      assert {:error, :not_found} = :rpc.call(primary, Concord, :get, [key])
+      assert {:error, :not_found} = :rpc.call(primary, Concord.Local, :get, [key])
 
       for node <- other_nodes do
         assert {:error, :not_found} = :rpc.call(node, Concord.Turso, :get, [key])
       end
 
-      assert :ok = restart_turso_pool(leader)
-      assert {:ok, "turso-value"} = :rpc.call(leader, Concord.Turso, :get, [key])
+      assert :ok = restart_turso_pool(primary)
+      assert {:ok, "turso-value"} = :rpc.call(primary, Concord.Turso, :get, [key])
 
-      IO.puts("  ✓ Concord.Turso persists local data outside Raft")
+      IO.puts("  ✓ Concord.Turso persists local data outside VSR")
     end
   end
 

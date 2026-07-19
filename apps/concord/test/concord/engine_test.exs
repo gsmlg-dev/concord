@@ -21,7 +21,7 @@ defmodule Concord.EngineTest do
       :ok
     end
 
-    test "stores data on the current node without a Raft cluster" do
+    test "stores data on the current node without a VSR cluster" do
       assert :ok = Concord.Local.put("local:key", %{value: 1})
       assert {:ok, %{value: 1}} = Concord.Local.get("local:key")
 

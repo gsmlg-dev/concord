@@ -139,12 +139,7 @@ defmodule Concord.BulkOperationsIntegrationTest do
       Process.sleep(2100)
 
       # Manually trigger cleanup to ensure expired keys are removed
-      try do
-        :ra.process_command({:concord_cluster, node()}, :cleanup_expired, 5000)
-      rescue
-        # Ignore if cleanup fails
-        _ -> :ok
-      end
+      assert {:ok, _result} = Concord.Engine.command(:cleanup_expired, timeout: 5_000)
 
       # Should return not found for expired keys
       assert Concord.get_many(["ttl_key1", "ttl_key2"]) ==

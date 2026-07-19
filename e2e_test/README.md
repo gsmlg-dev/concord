@@ -11,7 +11,7 @@ across a real 3-node OTP release cluster.
 │                                                             │
 │  1. mix release concord          (build OTP release)        │
 │  2. start_cluster.sh             (3 daemon nodes)           │
-│  3. wait for Raft leader         (rpc health check)         │
+│  3. wait for engine readiness    (rpc health check)         │
 │  4. elixir --name tester@...     (ExUnit via RPC)           │
 │  5. stop_cluster.sh              (cleanup)                  │
 └─────────────────────────────────────────────────────────────┘
@@ -20,7 +20,7 @@ across a real 3-node OTP release cluster.
 **Key design decisions:**
 - **Release mode**: Tests run against real `_build/prod/rel/concord` binaries
 - **RPC-based**: Test runner connects as a 4th distributed node, uses `:rpc.call`
-- **Epmd discovery**: `CONCORD_CLUSTER_NODES` env var provides deterministic peer discovery
+- **Explicit membership**: every node receives the same ordered `CONCORD_VSR_MEMBERS`
 - **Turso enabled**: Each node gets its own local `turso.db` under `_build/e2e_data`
 - **No LocalCluster**: Avoids OTP 28+ compatibility issues
 
@@ -32,7 +32,12 @@ across a real 3-node OTP release cluster.
 
 # Or via mix alias
 mix test.e2e
+
 ```
+
+The suite starts three VSR release nodes with explicit ordered membership and
+file-backed storage. It runs the full behavior suite first, then verifies strong
+reads before and after primary failure.
 
 ### Prerequisites
 
@@ -40,11 +45,11 @@ mix test.e2e
 - EPMD running (`epmd -daemon`)
 - ~1GB RAM for 3-node cluster
 
-## Test Suite (24 tests)
+## VSR Test Suite
 
 ### Cluster Basics (`tests/cluster_basics_test.exs`)
 - All 3 nodes connected
-- Raft leader elected
+- VSR primary elected
 - Writes replicate to all nodes
 - Concurrent writes (50 ops) maintain consistency
 - Deletes replicate
@@ -71,10 +76,10 @@ mix test.e2e
 - List leases returns active leases
 
 ### Engine Modes (`tests/engine_modes_test.exs`)
-- Explicit cluster API writes replicate through Raft
+- Explicit cluster API writes replicate through VSR
 - Local API writes stay on the target node only
 - Local and cluster APIs keep the same key isolated
-- Turso API persists node-local data without entering Raft
+- Turso API persists node-local data without entering VSR
 
 ## Directory Structure
 
@@ -85,13 +90,14 @@ e2e_test/
 │   ├── start_cluster.sh     # Start 3 release nodes as daemons
 │   └── stop_cluster.sh      # Kill nodes and clean data
 ├── support/
-│   └── e2e_cluster.ex       # RPC helpers (find_leader, wait_replicated, etc.)
+│   └── e2e_cluster.ex       # RPC helpers (find_primary, wait_replicated, etc.)
 ├── tests/
 │   ├── cluster_basics_test.exs
 │   ├── v2_kv_test.exs
 │   ├── v2_txn_test.exs
 │   ├── v2_lease_test.exs
-│   └── engine_modes_test.exs
+│   ├── engine_modes_test.exs
+│   └── vsr_cluster_test.exs
 └── README.md
 ```
 

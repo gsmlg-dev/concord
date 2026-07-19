@@ -1,14 +1,12 @@
 defmodule Concord.StateMachine do
   @moduledoc """
-  Ra adapter for the protocol-independent Concord state-machine core.
+  Compatibility materializer for the protocol-independent Concord state-machine
+  core.
 
   The authoritative service state is the immutable value returned by
-  `Concord.StateMachine.Core`. This module only translates Ra metadata and
-  effects, records adapter telemetry, and maintains legacy ETS materialized
+  `Concord.StateMachine.Core`. This module maintains legacy ETS materialized
   views for callers that have not yet migrated to core queries.
   """
-
-  @behaviour :ra_machine
 
   alias Concord.Index
   alias Concord.StateMachine.Core
@@ -16,16 +14,12 @@ defmodule Concord.StateMachine do
   alias Concord.StateMachine.Observer
   alias Concord.StorageScope
 
-  @snapshot_interval 1000
-
-  @impl :ra_machine
   def init(_config) do
     state = Core.init()
     materialize(state)
     external(state)
   end
 
-  @impl :ra_machine
   def apply(meta, command, state) do
     previous_state =
       state
@@ -44,17 +38,7 @@ defmodule Concord.StateMachine do
       telemetry_metadata(command, result, context)
     )
 
-    external_state = external(state)
-
-    effects =
-      if rem(state.command_count, @snapshot_interval) == 0 do
-        {:ok, snapshot} = Core.snapshot(state)
-        [{:release_cursor, context.op_number, snapshot}]
-      else
-        []
-      end
-
-    {external_state, result, effects}
+    {external(state), result, []}
   end
 
   @doc false
@@ -85,7 +69,6 @@ defmodule Concord.StateMachine do
     {returned_state, result, []}
   end
 
-  @impl :ra_machine
   def state_enter(status, _state) do
     :telemetry.execute(
       [:concord, :state, :change],
@@ -95,9 +78,6 @@ defmodule Concord.StateMachine do
 
     []
   end
-
-  @doc false
-  def ra_query(query_term, state), do: query(query_term, state)
 
   @doc """
   Runs a read using adapter-owned wall-clock metadata.
@@ -112,7 +92,6 @@ defmodule Concord.StateMachine do
     Core.query(query_term, state, %{timestamp_ms: System.system_time(:millisecond)})
   end
 
-  @impl :ra_machine
   def snapshot_installed(snapshot, _metadata, _old_state, _aux) do
     state = restore!(snapshot)
     materialize(state)
@@ -126,9 +105,6 @@ defmodule Concord.StateMachine do
     []
   end
 
-  @impl :ra_machine
-  def version, do: 4
-
   defp context(meta) do
     Context.new!(
       op_number: Map.get(meta, :index, 0),
@@ -137,7 +113,7 @@ defmodule Concord.StateMachine do
   end
 
   defp observer_source do
-    {:ra, Application.get_env(:concord, :cluster_name, :concord_cluster)}
+    :compatibility
   end
 
   defp restore!(state) do
@@ -180,8 +156,8 @@ defmodule Concord.StateMachine do
 
   defp legacy_external_batch?(_command), do: false
 
-  # Legacy materialized views are adapter-owned and are never consulted by
-  # Core.apply/3. They preserve existing observability and transitional APIs.
+  # Legacy materialized views are never consulted by Core.apply/3. They
+  # preserve existing observability and transitional APIs.
   @doc false
   def materialize(%State{} = state) do
     ensure_table(table(:store), [:ordered_set, :named_table])

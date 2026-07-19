@@ -8,7 +8,6 @@ Complete reference for all Concord configuration options.
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: true,
-  replication_engine: :raft,  # :raft or :vsr
   data_dir: "./data",
   auth_enabled: false,
   max_batch_size: 500,
@@ -68,10 +67,10 @@ Storage/concurrency selection is API-based, not global configuration-based.
 
 | API | Behavior |
 |-----|----------|
-| `Concord` | Replicated cluster API. Uses Raft by default or VSR when `replication_engine: :vsr` is configured. |
-| `Concord.Cluster` | Explicit Raft-backed cluster API. |
-| `Concord.Local` | Node-local KV API. Data stays on the current BEAM node and is not written to the Raft cluster. |
-| `Concord.Turso` | Durable node-local KV API backed by `ex_turso`. Data is written to a local Turso database file and is not written to the Raft cluster. |
+| `Concord` | Replicated VSR cluster API. |
+| `Concord.Cluster` | Explicit VSR-backed cluster API. |
+| `Concord.Local` | Node-local KV API. Data stays on the current BEAM node and is not written to the VSR cluster. |
+| `Concord.Turso` | Durable node-local KV API backed by `ex_turso`. Data is written to a local Turso database file and is not written to the VSR cluster. |
 
 Canonical sub-APIs follow the same split: `Concord.KV` and
 `Concord.Cluster.KV` use the cluster engine, while `Concord.Local.KV` uses the
@@ -80,14 +79,13 @@ calls such as `Concord.KV.history/2` or `Concord.Txn.commit/2`.
 
 ### Viewstamped Replication
 
-Raft remains the default replication engine. VSR uses an explicit, ordered
-membership list; it never derives protocol membership from connected Erlang
-nodes. Membership order determines the primary for each view and must be
-identical on every replica.
+VSR is Concord's replication protocol. It uses an explicit, ordered membership
+list and never derives protocol membership from connected Erlang nodes.
+Membership order determines the primary for each view and must be identical on
+every replica.
 
 ```elixir
 config :concord,
-  replication_engine: :vsr,
   vsr: [
     group_id: :concord_cluster,
     replica_id: :"concord1@example.net",
@@ -114,7 +112,6 @@ For releases, `CONCORD_VSR_MEMBERS` is a comma-separated ordered list. A member
 can be a node name or an explicit `id=endpoint` pair:
 
 ```bash
-CONCORD_REPLICATION_ENGINE=vsr
 CONCORD_VSR_REPLICA_ID=concord1@example.net
 CONCORD_VSR_MEMBERS=concord1@example.net,concord2@example.net,concord3@example.net
 CONCORD_VSR_BOOTSTRAP=true
@@ -134,7 +131,7 @@ config :concord,
 ```
 
 Applications that only need the durable Turso KV engine can disable Concord's
-Raft cluster runtime:
+VSR cluster runtime:
 
 ```elixir
 config :concord,
@@ -158,7 +155,7 @@ CONCORD_TURSO_AUTH_TOKEN=...
 ```
 
 `Concord.Turso.sync/1` is available only when both remote URL and auth token are
-configured. Turso does not provide Concord Raft semantics, leases, watches, or
+configured. Turso does not provide Concord VSR semantics, leases, watches, or
 secondary indexes; those operations return explicit unsupported-operation
 errors.
 
@@ -171,7 +168,7 @@ should configure an Ecto repo with the optional adapter provided by `ex_turso`:
 ```elixir
 def deps do
   [
-    {:concord, "~> 2.3"},
+    {:concord, "~> 3.0.0-alpha"},
     {:ex_turso, "~> 0.4"},
     {:ecto_sql, "~> 3.14"}
   ]
@@ -256,10 +253,9 @@ data_dir =
 |----------|---------|-------------|
 | `CONCORD_DATA_DIR` | `/var/apps/concord/lib/concord/data` | Persistent data directory (prod) |
 | `CONCORD_CLUSTER_ENABLED` | `true` | Start Concord's configured replication runtime |
-| `CONCORD_REPLICATION_ENGINE` | `raft` | Replication engine: `raft` or `vsr` |
 | `CONCORD_VSR_GROUP_ID` | `concord_cluster` | VSR configuration group identifier |
 | `CONCORD_VSR_REPLICA_ID` | current Erlang node | Local VSR member identifier |
-| `CONCORD_VSR_MEMBERS` | empty | Ordered comma-separated VSR members (`id` or `id=endpoint`) |
+| `CONCORD_VSR_MEMBERS` | current replica only | Ordered comma-separated VSR members (`id` or `id=endpoint`) |
 | `CONCORD_VSR_TRANSPORT` | `distribution` | VSR transport: `distribution` or `local` |
 | `CONCORD_VSR_STORAGE` | `file` | VSR storage: `file` or `memory` |
 | `CONCORD_VSR_STORAGE_PATH` | `<data_dir>/vsr/<replica_id>` | Durable VSR WAL/checkpoint directory |
@@ -280,11 +276,6 @@ config :concord,
   data_dir: "./data/e2e_test",
   auth_enabled: false
 
-config :libcluster,
-  topologies: [
-    concord: [strategy: Cluster.Strategy.Gossip]
-  ]
-
 config :concord, :http, enabled: true, port: 4000
 ```
 
@@ -292,9 +283,9 @@ config :concord, :http, enabled: true, port: 4000
 
 ### Read Consistency
 
-- `:eventual` — Fastest, reads from any node, may be stale
-- `:leader` — Default, reads from leader, minimal staleness
-- `:strong` — Slowest, linearizable, zero staleness
+VSR currently implements `:eventual`, `:leader`, and `:strong` as the same
+replicated query barrier. All three names are accepted for API compatibility
+and currently provide linearizable reads.
 
 ### Authentication
 

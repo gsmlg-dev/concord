@@ -5,9 +5,8 @@ defmodule Concord.Application do
   and node discovery.
   """
   use Application
-  require Logger
 
-  alias Concord.{Engine, StateMachine, Telemetry, TTL, Turso}
+  alias Concord.{Engine, Telemetry, TTL, Turso}
   alias Concord.Sync.{Dispatcher, WatchHub}
 
   @impl true
@@ -31,274 +30,24 @@ defmodule Concord.Application do
   end
 
   @doc false
-  def replication_engine do
-    Application.get_env(:concord, :replication_engine, :raft)
-  end
-
-  @doc false
   def prometheus_enabled? do
     Application.get_env(:concord, :prometheus_enabled, false)
   end
 
-  @doc false
-  def topologies do
-    Application.get_env(:concord, :topologies) ||
-      Application.get_env(:libcluster, :topologies) ||
-      default_topologies()
-  end
-
-  defp cluster_supervisor_child do
-    if Application.get_env(:concord, :clustering, true) do
-      {Cluster.Supervisor, [topologies(), [name: Concord.ClusterSupervisor]]}
-    else
-      nil
-    end
-  end
-
   defp cluster_children do
     if cluster_enabled?() do
-      replication_engine_children(replication_engine())
+      [
+        {TTL, []},
+        {Dispatcher, []},
+        {WatchHub, []},
+        {Engine.VSR.Supervisor, []}
+      ]
     else
       []
     end
   end
 
-  defp default_topologies do
-    [
-      concord: [
-        strategy: Cluster.Strategy.Gossip
-      ]
-    ]
-  end
-
   defp turso_children do
     if Turso.enabled?(), do: [{Turso, []}], else: []
-  end
-
-  defp replication_engine_children(:raft) do
-    [
-      cluster_supervisor_child(),
-      {TTL, []},
-      {Dispatcher, []},
-      {WatchHub, []},
-      {Task, fn -> init_cluster() end}
-    ]
-  end
-
-  defp replication_engine_children(:vsr) do
-    [
-      {TTL, []},
-      {Dispatcher, []},
-      {WatchHub, []},
-      {Concord.Engine.VSR.Supervisor, []}
-    ]
-  end
-
-  defp replication_engine_children(engine) do
-    raise ArgumentError,
-          "unsupported Concord replication engine: #{inspect(engine)}; expected :raft or :vsr"
-  end
-
-  defp init_cluster do
-    case wait_for_ra_system() do
-      :ok ->
-        start_cluster()
-
-      {:error, reason} ->
-        Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  defp start_cluster(attempts \\ 3) do
-    wait_for_peers()
-
-    node_id = node_id()
-    cluster_name = Application.get_env(:concord, :cluster_name, :concord_cluster)
-    machine = {:module, StateMachine, %{}}
-
-    nodes = [Node.self() | Node.list()]
-    server_ids = Enum.map(nodes, &{cluster_name, &1})
-
-    data_dir = Application.get_env(:concord, :data_dir, "./data/#{node()}")
-    File.mkdir_p!(data_dir)
-
-    uid = "#{cluster_name}_#{node()}" |> String.replace("@", "_") |> String.replace(".", "_")
-
-    server_config = %{
-      id: node_id,
-      uid: uid,
-      cluster_name: cluster_name,
-      machine: machine,
-      log_init_args: %{
-        uid: uid,
-        data_dir: data_dir
-      },
-      initial_members: server_ids
-    }
-
-    Logger.info(
-      "Starting Raft with #{length(nodes)} members: #{inspect(Enum.map(nodes, &to_string/1))}"
-    )
-
-    case :ra.start_server(:default, server_config) do
-      :ok ->
-        Logger.info("Concord cluster started on #{node()}")
-        :ra.trigger_election(node_id)
-        :ok
-
-      {:ok, _} ->
-        Logger.info("Concord cluster started on #{node()}")
-        :ra.trigger_election(node_id)
-        :ok
-
-      {:error, {:already_started, _}} ->
-        Logger.info("Concord cluster already running on #{node()}")
-        :ok
-
-      {:error, :not_new} ->
-        Logger.info("Restarting existing Concord cluster on #{node()}")
-
-        case :ra.restart_server(:default, node_id) do
-          :ok ->
-            Logger.info("Concord cluster started on #{node()}")
-            :ra.trigger_election(node_id)
-            :ok
-
-          {:error, reason} ->
-            Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
-            {:error, reason}
-        end
-
-      {:error, :system_not_started} ->
-        if attempts > 1 do
-          Logger.warning("Ra system not ready while starting Concord cluster, retrying...")
-          Process.sleep(500)
-
-          with :ok <- wait_for_ra_system() do
-            start_cluster(attempts - 1)
-          end
-        else
-          Logger.error("Failed to start Concord cluster: :system_not_started")
-          {:error, :system_not_started}
-        end
-
-      {:error, reason} ->
-        Logger.error("Failed to start Concord cluster: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  # Wait for libcluster to discover peer nodes. If CONCORD_CLUSTER_NODES is set,
-  # we know how many peers to expect. Otherwise, proceed after a short delay.
-  defp wait_for_peers do
-    if Application.get_env(:concord, :clustering, true) do
-      wait_for_configured_peers()
-    else
-      :ok
-    end
-  end
-
-  defp wait_for_configured_peers do
-    case System.get_env("CONCORD_CLUSTER_NODES") do
-      nil ->
-        # Gossip mode: give discovery a chance
-        Process.sleep(2000)
-
-      nodes_str ->
-        expected =
-          nodes_str
-          |> String.split(",", trim: true)
-          |> Enum.map(&String.to_atom(String.trim(&1)))
-          |> Enum.reject(&(&1 == node()))
-          |> length()
-
-        wait_for_peer_count(expected, 30)
-    end
-  end
-
-  defp wait_for_peer_count(0, _attempts), do: :ok
-
-  defp wait_for_peer_count(_expected, 0) do
-    Logger.warning("Peer discovery timed out, starting with #{length(Node.list())} peers")
-  end
-
-  defp wait_for_peer_count(expected, attempts) do
-    if length(Node.list()) >= expected do
-      Logger.info("All #{expected} peers discovered")
-      :ok
-    else
-      Process.sleep(1000)
-      wait_for_peer_count(expected, attempts - 1)
-    end
-  end
-
-  defp node_id do
-    {Application.get_env(:concord, :cluster_name, :concord_cluster), node()}
-  end
-
-  defp wait_for_ra_system(attempts \\ 10)
-  defp wait_for_ra_system(0), do: {:error, :ra_system_not_started}
-
-  defp wait_for_ra_system(attempts) do
-    case ensure_ra_system_ready() do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("Ra default system not ready: #{inspect(reason)}, retrying...")
-        Process.sleep(500)
-        wait_for_ra_system(attempts - 1)
-    end
-  end
-
-  defp ensure_ra_system_ready do
-    with {:ok, _started} <- Application.ensure_all_started(:ra),
-         :ok <- ensure_default_ra_system_started(),
-         true <- ra_system_ready?() do
-      :ok
-    else
-      false -> {:error, :ra_system_not_ready}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp ensure_default_ra_system_started do
-    if ra_system_ready?() do
-      :ok
-    else
-      clear_stale_ra_system()
-
-      case :ra_system.start_default() do
-        {:ok, _} ->
-          Logger.info("Ra default system started explicitly")
-          :ok
-
-        {:error, {:already_started, _}} ->
-          :ok
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end
-  end
-
-  defp clear_stale_ra_system do
-    case :ra_system.lookup_name(:default, :server_sup) do
-      {:ok, server_sup} ->
-        if Process.whereis(server_sup) == nil do
-          :persistent_term.erase({:"$ra_system", :default})
-        end
-
-      {:error, :system_not_started} ->
-        :ok
-    end
-  end
-
-  defp ra_system_ready? do
-    case :ra_system.lookup_name(:default, :server_sup) do
-      {:ok, server_sup} -> Process.whereis(server_sup) != nil
-      {:error, :system_not_started} -> false
-    end
   end
 end

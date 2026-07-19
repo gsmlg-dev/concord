@@ -6,17 +6,17 @@ defmodule Concord.E2E.V2KVTest do
 
   describe "MVCC revision tracking" do
     test "revisions are consistent across nodes" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       for i <- 1..5 do
-        :rpc.call(leader, Concord, :put, ["e2e:rev:#{i}", "v#{i}"])
+        :rpc.call(primary, Concord, :put, ["e2e:rev:#{i}", "v#{i}"])
       end
 
       Process.sleep(500)
 
       revisions =
         Enum.map(Cluster.nodes(), fn node ->
-          Cluster.ra_query(node, :get_revision)
+          Cluster.replicated_query(node, :get_revision)
         end)
 
       rev_values = Enum.map(revisions, fn {:ok, r} -> r end)
@@ -29,15 +29,15 @@ defmodule Concord.E2E.V2KVTest do
     end
 
     test "MVCC records have correct version on update" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
-      :rpc.call(leader, Concord, :put, ["e2e:mvcc:ver", "v1"])
-      :rpc.call(leader, Concord, :put, ["e2e:mvcc:ver", "v2"])
-      :rpc.call(leader, Concord, :put, ["e2e:mvcc:ver", "v3"])
+      :rpc.call(primary, Concord, :put, ["e2e:mvcc:ver", "v1"])
+      :rpc.call(primary, Concord, :put, ["e2e:mvcc:ver", "v2"])
+      :rpc.call(primary, Concord, :put, ["e2e:mvcc:ver", "v3"])
       Process.sleep(500)
 
       for node <- Cluster.nodes() do
-        {:ok, rec} = Cluster.ra_query(node, {:get_record, "e2e:mvcc:ver"})
+        {:ok, rec} = Cluster.replicated_query(node, {:get_record, "e2e:mvcc:ver"})
         assert rec.version == 3, "Version should be 3 on #{node}"
         assert rec.mod_revision > rec.create_revision
       end
@@ -46,15 +46,15 @@ defmodule Concord.E2E.V2KVTest do
     end
 
     test "tombstone deletes are consistent" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
-      :rpc.call(leader, Concord, :put, ["e2e:tomb:1", "alive"])
+      :rpc.call(primary, Concord, :put, ["e2e:tomb:1", "alive"])
       Process.sleep(300)
-      :rpc.call(leader, Concord, :delete, ["e2e:tomb:1"])
+      :rpc.call(primary, Concord, :delete, ["e2e:tomb:1"])
       Process.sleep(500)
 
       for node <- Cluster.nodes() do
-        result = Cluster.ra_query(node, {:get_record, "e2e:tomb:1"})
+        result = Cluster.replicated_query(node, {:get_record, "e2e:tomb:1"})
         assert result == {:error, :not_found},
                "Deleted key should return :not_found on #{node}"
       end
@@ -65,18 +65,18 @@ defmodule Concord.E2E.V2KVTest do
 
   describe "list/prefix queries" do
     test "prefix list returns matching records on all nodes" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       for i <- 1..5 do
-        :rpc.call(leader, Concord, :put, ["/e2e/users/#{i}", %{name: "User #{i}"}])
+        :rpc.call(primary, Concord, :put, ["/e2e/users/#{i}", %{name: "User #{i}"}])
       end
 
-      :rpc.call(leader, Concord, :put, ["/e2e/posts/1", %{title: "Post 1"}])
+      :rpc.call(primary, Concord, :put, ["/e2e/posts/1", %{title: "Post 1"}])
       Process.sleep(500)
 
       for node <- Cluster.nodes() do
         {:ok, records, meta} =
-          Cluster.ra_query(node, {:list, {:prefix, "/e2e/users/"}, %{limit: 100}})
+          Cluster.replicated_query(node, {:list, {:prefix, "/e2e/users/"}, %{limit: 100}})
 
         assert length(records) == 5, "Should find 5 users on #{node}"
         assert meta.has_more == false
@@ -86,16 +86,16 @@ defmodule Concord.E2E.V2KVTest do
     end
 
     test "list with limit returns has_more" do
-      leader = Cluster.find_leader()
+      primary = Cluster.find_primary()
 
       for i <- 1..10 do
-        :rpc.call(leader, Concord, :put, ["/e2e/paginate/#{String.pad_leading("#{i}", 2, "0")}", i])
+        :rpc.call(primary, Concord, :put, ["/e2e/paginate/#{String.pad_leading("#{i}", 2, "0")}", i])
       end
 
       Process.sleep(500)
 
       {:ok, records, meta} =
-        Cluster.ra_query(Cluster.find_leader(), {:list, {:prefix, "/e2e/paginate/"}, %{limit: 3}})
+        Cluster.replicated_query(Cluster.find_primary(), {:list, {:prefix, "/e2e/paginate/"}, %{limit: 3}})
 
       assert length(records) == 3
       assert meta.has_more == true

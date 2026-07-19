@@ -3,7 +3,7 @@ defmodule Concord.Engine.Turso do
   Turso-backed Concord KV engine.
 
   This engine persists Concord records into a local Turso database through
-  `ex_turso`. It is intentionally node-local and does not provide Raft
+  `ex_turso`. It is intentionally node-local and does not provide VSR
   consensus, cluster membership, leases, watches, or secondary indexes.
   """
 

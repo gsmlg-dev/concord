@@ -13,6 +13,7 @@ defmodule ViewstampedReplication.Replica do
     Configuration,
     Log,
     LogEntry,
+    Member,
     Protocol,
     Telemetry
   }
@@ -65,6 +66,42 @@ defmodule ViewstampedReplication.Replica do
   end
 
   @spec submit(pid() | term(), term(), ViewstampedReplication.Request.t()) :: :ok
+  def submit(
+        {group_id, %Member{id: replica_id, endpoint: endpoint}},
+        route,
+        %ViewstampedReplication.Request{} = request
+      ) do
+    case endpoint do
+      pid when is_pid(pid) ->
+        submit(pid, route, request)
+
+      endpoint when endpoint == node() ->
+        submit({group_id, replica_id}, route, request)
+
+      endpoint when is_atom(endpoint) ->
+        if distributed_endpoint?(endpoint) do
+          remote_submit(endpoint, group_id, replica_id, route, request)
+        else
+          submit({group_id, replica_id}, route, request)
+        end
+
+      {_name, endpoint_node} when is_atom(endpoint_node) ->
+        remote_submit(endpoint_node, group_id, replica_id, route, request)
+
+      %{node: endpoint_node} = remote when is_atom(endpoint_node) ->
+        remote_submit(
+          endpoint_node,
+          group_id,
+          Map.get(remote, :replica_id, replica_id),
+          route,
+          request
+        )
+
+      _local_endpoint ->
+        submit({group_id, replica_id}, route, request)
+    end
+  end
+
   def submit(replica, route, %ViewstampedReplication.Request{} = request) do
     GenServer.cast(server(replica), {:client_request, route, request})
   end
@@ -567,6 +604,16 @@ defmodule ViewstampedReplication.Replica do
 
   defp server(pid) when is_pid(pid), do: pid
   defp server({group_id, replica_id}), do: via_tuple(group_id, replica_id)
+
+  defp remote_submit(node, group_id, replica_id, route, request) do
+    :erpc.cast(node, __MODULE__, :submit, [{group_id, replica_id}, route, request])
+  end
+
+  defp distributed_endpoint?(endpoint) do
+    endpoint
+    |> Atom.to_string()
+    |> String.contains?("@")
+  end
 
   defp call_if_running(group_id, replica_id, request) do
     case whereis(group_id, replica_id) do

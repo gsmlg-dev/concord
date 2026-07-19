@@ -9,7 +9,11 @@ defmodule Concord.Engine.VSR.StateMachine do
   alias ViewstampedReplication.ApplyMetadata
 
   @impl true
-  def init(opts), do: Core.init(opts)
+  def init(opts) do
+    state = Core.init(opts)
+    Concord.StateMachine.materialize(state)
+    state
+  end
 
   @impl true
   def apply(
@@ -19,6 +23,7 @@ defmodule Concord.Engine.VSR.StateMachine do
       ) do
     context = %Context{op_number: op_number, timestamp_ms: timestamp_ms}
     {result, next_state} = Core.apply(context, command, state)
+    Concord.StateMachine.materialize(next_state)
     Observer.committed(context, command, state, next_state, {:vsr, group_id})
     {result, next_state}
   end
@@ -36,5 +41,10 @@ defmodule Concord.Engine.VSR.StateMachine do
   def snapshot(state), do: Core.snapshot(state)
 
   @impl true
-  def restore(snapshot), do: Core.restore(snapshot)
+  def restore(snapshot) do
+    with {:ok, state} <- Core.restore(snapshot) do
+      Concord.StateMachine.materialize(state)
+      {:ok, state}
+    end
+  end
 end

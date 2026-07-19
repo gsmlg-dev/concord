@@ -2,12 +2,13 @@
 
 - Status: Accepted
 - Date: 2026-07-18
+- Amended: 2026-07-19 for the Concord 3.0 cutover
 
 ## Context
 
-Concord currently uses `:ra` for replicated operation. Replacing that engine
-before an alternative has independent safety, recovery, and fault-simulation
-evidence would put Concord's existing behavior at risk.
+Concord used `:ra` for replicated operation. Replacing that engine before an
+alternative had independent safety, recovery, and fault-simulation evidence
+would have put Concord's existing behavior at risk.
 
 The planned Viewstamped Replication (VSR) implementation must be reusable for
 arbitrary deterministic state machines. Its safety logic must also be testable
@@ -20,8 +21,8 @@ quorum of `f + 1`. It handles crash failures, not Byzantine failures.
 
 Create an independent umbrella application named
 `:viewstamped_replication`, with the Elixir namespace
-`ViewstampedReplication`. It does not depend on `:concord`; Concord may depend
-on it later.
+`ViewstampedReplication`. It does not depend on `:concord`; Concord depends on
+it through an umbrella dependency.
 
 Separate the implementation into two boundaries:
 
@@ -44,8 +45,9 @@ Concord production target is three replicas, tolerating one crash failure.
 The application supervisor owns a registry and dynamic replica supervisors.
 The public API starts and stops replicas, reports their status and primary,
 creates client sessions, submits commands, and writes explicit snapshots.
-`:ra` remains Concord's replication engine until the VSR implementation passes
-its own safety, recovery, durability, and integration gates.
+The VSR implementation passed its safety, recovery, durability, and integration
+gates. Concord 3.0 therefore uses VSR as its only replicated engine and no
+longer depends on `:ra`.
 
 ## Consequences
 
@@ -57,11 +59,11 @@ The effect interpreter must preserve effect order. In particular, a runtime
 using durable storage must persist protocol state before sending any
 acknowledgement whose safety relies on that state.
 
-The application now has a replica runtime, local and explicit distributed
+The application has a replica runtime, local and explicit distributed
 transports, volatile and file-backed storage, recovery, state transfer,
-snapshots, and explicit log compaction. It remains non-production-ready and
-fixed-membership; the remaining limitations must stay visible in the
-application README.
+snapshots, and explicit log compaction. Its supported Concord production
+profile is a fixed, explicitly configured three-replica group. Operational
+constraints remain visible in the application README.
 
 Keeping VSR independent adds an application boundary and explicit integration
 work, but avoids coupling protocol correctness to Concord's domain model or
@@ -75,4 +77,8 @@ configuration.
 - operational policy for recovery and state-transfer thresholds;
 - a commit-observer interface for external notifications;
 - membership reconfiguration;
-- the criteria and migration plan for replacing `:ra` in Concord.
+- migration between incompatible VSR storage formats.
+
+Concord 3.0 intentionally does not read or migrate Ra storage. Upgrades from
+Concord 2.x start with a new VSR data directory; no Ra backup compatibility or
+automated migration path is provided.

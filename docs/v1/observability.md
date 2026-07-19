@@ -14,7 +14,7 @@ Concord emits structured telemetry events for all operations.
 [:concord, :api, :get]         # Metadata: %{result: :ok | :error}
 [:concord, :api, :delete]
 
-# Raft Operations
+# VSR Operations
 [:concord, :operation, :apply] # Metadata: %{operation: atom, key: any, index: integer}
 
 # State Changes

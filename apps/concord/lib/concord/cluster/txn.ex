@@ -1,5 +1,5 @@
 defmodule Concord.Cluster.Txn do
-  @moduledoc "Explicit Raft-cluster `Concord.Txn` API."
+  @moduledoc "Explicit VSR-cluster `Concord.Txn` API."
 
   alias Concord.{APIOptions, Txn}
 

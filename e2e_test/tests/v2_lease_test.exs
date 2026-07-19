@@ -6,7 +6,7 @@ defmodule Concord.E2E.V2LeaseTest do
 
   describe "lease lifecycle across cluster" do
     test "grant lease replicates" do
-      {:ok, result} = Cluster.ra_command({:grant_lease, 60, %{}})
+      {:ok, result} = Cluster.replicated_command({:grant_lease, 60, %{}})
       assert {:ok, %{lease_id: id, ttl: 60}} = result
       assert is_integer(id) and id > 0
 
@@ -14,13 +14,13 @@ defmodule Concord.E2E.V2LeaseTest do
 
       # Query lease from all nodes
       for node <- Cluster.nodes() do
-        case Cluster.ra_query(node, {:lease_info, id}) do
+        case Cluster.replicated_query(node, {:lease_info, id}) do
           {:ok, lease} ->
             assert lease.id == id
             assert lease.ttl == 60
 
           other ->
-            # Follower nodes may redirect to leader — that's OK
+            # Follower nodes may redirect to primary — that's OK
             IO.puts("    Node #{node}: #{inspect(other)}")
         end
       end
@@ -30,15 +30,12 @@ defmodule Concord.E2E.V2LeaseTest do
 
     test "revoke lease cascades key deletion" do
       # Grant
-      {:ok, {:ok, %{lease_id: id}}} = Cluster.ra_command({:grant_lease, 300, %{}})
-      leader = Cluster.find_leader()
+      {:ok, {:ok, %{lease_id: id}}} = Cluster.replicated_command({:grant_lease, 300, %{}})
 
       # Attach keys
       for i <- 1..3 do
-        :rpc.call(leader, :ra, :process_command, [
-          {:concord_cluster, leader},
-          {:put, "e2e:leased:#{i}", "v#{i}", %{lease: id}}
-        ])
+        {:ok, _result} =
+          Cluster.replicated_command({:put, "e2e:leased:#{i}", "v#{i}", %{lease: id}})
       end
 
       Process.sleep(300)
@@ -49,7 +46,7 @@ defmodule Concord.E2E.V2LeaseTest do
       end
 
       # Revoke
-      {:ok, result} = Cluster.ra_command({:revoke_lease, id, %{}})
+      {:ok, result} = Cluster.replicated_command({:revoke_lease, id, %{}})
       assert {:ok, %{deleted_keys: 3}} = result
 
       Process.sleep(500)
@@ -65,28 +62,28 @@ defmodule Concord.E2E.V2LeaseTest do
     end
 
     test "keep_alive refreshes lease" do
-      {:ok, {:ok, %{lease_id: id}}} = Cluster.ra_command({:grant_lease, 10, %{}})
+      {:ok, {:ok, %{lease_id: id}}} = Cluster.replicated_command({:grant_lease, 10, %{}})
 
       Process.sleep(2000)
 
-      {:ok, result} = Cluster.ra_command({:keep_alive_lease, id, %{}})
+      {:ok, result} = Cluster.replicated_command({:keep_alive_lease, id, %{}})
       assert result == :ok
 
       # Check remaining TTL is still > 0
-      leader = Cluster.find_leader()
-      {:ok, lease} = Cluster.ra_query(leader, {:lease_info, id})
+      primary = Cluster.find_primary()
+      {:ok, lease} = Cluster.replicated_query(primary, {:lease_info, id})
       assert lease.remaining > 0
       IO.puts("  ✓ Keep-alive refreshed (remaining: #{lease.remaining}s)")
     end
 
     test "list_leases returns all active leases" do
-      Cluster.ra_command({:grant_lease, 120, %{}})
-      Cluster.ra_command({:grant_lease, 240, %{}})
+      Cluster.replicated_command({:grant_lease, 120, %{}})
+      Cluster.replicated_command({:grant_lease, 240, %{}})
 
       Process.sleep(300)
 
-      leader = Cluster.find_leader()
-      {:ok, leases} = Cluster.ra_query(leader, :list_leases)
+      primary = Cluster.find_primary()
+      {:ok, leases} = Cluster.replicated_query(primary, :list_leases)
       assert length(leases) >= 2
 
       IO.puts("  ✓ list_leases returned #{length(leases)} leases")

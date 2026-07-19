@@ -1,10 +1,7 @@
 defmodule Concord.Sync.Dispatcher do
   @moduledoc """
-  Receives change events from the Raft state machine via Ra `:send_msg` effects
-  and forwards them to the Watch Hub and Change Log.
-
-  Only the leader node emits `:send_msg` effects, so the Dispatcher only
-  processes events on the current leader. On follower nodes, it idles.
+  Receives committed change events and forwards them to the Watch Hub and
+  Change Log.
   """
 
   use GenServer
@@ -48,7 +45,6 @@ defmodule Concord.Sync.Dispatcher do
     {:noreply, %{state | events_dispatched: state.events_dispatched + length(events)}}
   end
 
-  # Handle Ra :send_msg effects
   @impl true
   def handle_info({:changes, events}, state) when is_list(events) do
     handle_cast({:dispatch, events}, state)

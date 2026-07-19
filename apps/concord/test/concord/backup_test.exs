@@ -4,42 +4,6 @@ defmodule Concord.BackupTest do
   alias Concord.Engine
   alias Concord.StateMachine
 
-  describe "create/1" do
-    @tag :tmp_dir
-    test "returns actionable error when Ra server is unavailable", %{tmp_dir: tmp_dir} do
-      Concord.TestHelper.stop_test_cluster()
-      on_exit(fn -> Concord.TestHelper.stop_test_cluster() end)
-
-      assert {:error, :cluster_not_ready} = Concord.Backup.create(path: tmp_dir)
-    end
-  end
-
-  describe "engine-routed Ra backup" do
-    setup do
-      previous_engine = Application.fetch_env(:concord, :replication_engine)
-      Application.put_env(:concord, :replication_engine, :raft)
-      :ok = Concord.TestHelper.start_test_cluster()
-
-      on_exit(fn ->
-        Concord.TestHelper.stop_test_cluster()
-        restore_env(:replication_engine, previous_engine)
-      end)
-
-      :ok
-    end
-
-    @tag :tmp_dir
-    test "preserves the default Ra create and restore behavior", %{tmp_dir: tmp_dir} do
-      assert :ok = Concord.put("backup:raft", "saved")
-      assert {:ok, backup_path} = Concord.Backup.create(path: tmp_dir)
-
-      assert :ok = Concord.delete("backup:raft")
-      assert :ok = Concord.Backup.restore(backup_path)
-
-      assert {:ok, "saved"} = Concord.get("backup:raft")
-    end
-  end
-
   describe "Backup V2 format — state machine restore" do
     setup do
       state = StateMachine.init(%{})
@@ -149,7 +113,6 @@ defmodule Concord.BackupTest do
     setup do
       {:ok, _started} = Application.ensure_all_started(:viewstamped_replication)
 
-      previous_engine = Application.fetch_env(:concord, :replication_engine)
       previous_vsr = Application.fetch_env(:concord, :vsr)
       group_id = {:concord_backup_vsr_test, System.unique_integer([:positive, :monotonic])}
 
@@ -164,7 +127,6 @@ defmodule Concord.BackupTest do
         client_id: {:concord_backup_vsr_client, group_id}
       ]
 
-      Application.put_env(:concord, :replication_engine, :vsr)
       Application.put_env(:concord, :vsr, vsr_opts)
 
       {:ok, supervisor} = Engine.VSR.Supervisor.start_link(vsr_opts)
@@ -172,7 +134,6 @@ defmodule Concord.BackupTest do
 
       on_exit(fn ->
         if Process.alive?(supervisor), do: Supervisor.stop(supervisor)
-        restore_env(:replication_engine, previous_engine)
         restore_env(:vsr, previous_vsr)
       end)
 

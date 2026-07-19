@@ -90,15 +90,16 @@ All read operations emit telemetry events with the consistency level:
 
 ## Query Consistency Levels
 
-Each read consistency level maps to a different Ra query primitive, which determines the guarantees and latency characteristics of the read.
+VSR executes reads as replicated query barriers. The accepted consistency names
+currently share the same linearizable path.
 
-### Ra Query Mapping
+### VSR Query Mapping
 
-| Consistency | Ra Primitive | Guarantee |
-|------------|-------------|-----------|
-| `:strong` | `:ra.consistent_query/3` | Linearizable. The leader confirms it still holds leadership via a quorum heartbeat before responding. Highest latency, but the result is guaranteed to reflect all previously acknowledged writes. |
-| `:leader` | `:ra.leader_query/3` | Leader-consistent. Reads from the current leader without a quorum check. The leader may have been deposed but not yet realized it, so a brief window of staleness is possible during leadership transitions. This is the default. |
-| `:eventual` | `:ra.local_query/3` | Eventual consistency. Reads from any cluster member (selected via `select_read_replica/0`). May return stale data but provides the lowest latency and distributes read load across the cluster. |
+| Consistency | VSR path | Guarantee |
+|------------|----------|-----------|
+| `:strong` | Replicated query barrier | Linearizable |
+| `:leader` | Replicated query barrier | Linearizable |
+| `:eventual` | Replicated query barrier | Linearizable |
 
 ### Per-Operation Override
 
@@ -125,7 +126,8 @@ config :concord,
 
 ### Index Lookups
 
-`Concord.Index.lookup/3` always uses `:ra.consistent_query/3` (equivalent to `:strong` consistency) regardless of the global default. This ensures index lookups return results consistent with the latest writes.
+`Concord.Index.lookup/3` uses the replicated VSR query barrier. This ensures
+index lookups return results consistent with the latest writes.
 
 ## Secondary Indexes
 
@@ -224,7 +226,7 @@ When the extractor returns a list, each element is indexed separately. This is u
 Concord.Index.create("by_tag", {:map_get, :tags})
 
 Concord.put("post:1", %{title: "Elixir Tips", tags: ["elixir", "programming"]})
-Concord.put("post:2", %{title: "Raft Consensus", tags: ["distributed", "elixir"]})
+Concord.put("post:2", %{title: "VSR Consensus", tags: ["distributed", "elixir"]})
 
 {:ok, ["post:1", "post:2"]} = Concord.Index.lookup("by_tag", "elixir")
 {:ok, ["post:2"]} = Concord.Index.lookup("by_tag", "distributed")
@@ -238,11 +240,14 @@ Do not use anonymous functions as extractors. They cause `:badfun` errors on des
 # BAD -- will break after code upgrades or on other cluster nodes
 Concord.Index.create("by_email", fn user -> user.email end)
 
-# GOOD -- safe for Raft replication and snapshots
+# GOOD -- safe for replication and snapshots
 Concord.Index.create("by_email", {:map_get, :email})
 ```
 
-Anonymous functions are serialized into the Raft log and snapshots. When a node loads a snapshot produced by a different code version, the function reference is invalid and Ra raises a `:badfun` error. Declarative specs are plain data (tuples of atoms, binaries, and integers) and are always safe to deserialize.
+Anonymous functions are serialized into the replicated log and snapshots. When
+a node loads a snapshot produced by a different code version, the function
+reference can be invalid and raise `:badfun`. Declarative specs are plain data
+(tuples of atoms, binaries, and integers) and are safe to deserialize.
 
 ## Conditional Updates (Compare-and-Swap)
 
@@ -584,6 +589,6 @@ Concord.delete_if(key, condition: fn current -> ... end)
 :cluster_not_ready    # Cluster not initialized
 :invalid_key          # Key validation failed
 :not_found            # Key doesn't exist
-:noproc               # Ra process not running
+:cluster_not_ready    # VSR cluster is not ready
 :condition_failed     # Conditional update failed
 ```

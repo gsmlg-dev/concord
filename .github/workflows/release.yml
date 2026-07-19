@@ -150,7 +150,7 @@ jobs:
           ### Features
 
           - Embedded distributed key-value store for Elixir
-          - Raft consensus via Ra for strong consistency
+          - Viewstamped Replication for strong consistency
           - Secondary indexes with declarative extractors
           - TTL support, compression, and bulk operations
           - Backup/restore and snapshot support

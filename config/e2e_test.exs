@@ -5,14 +5,6 @@ config :concord,
   cluster_name: :concord_cluster,
   data_dir: "./data/e2e_test"
 
-# Libcluster configuration - gossip strategy for multi-node testing
-config :libcluster,
-  topologies: [
-    concord: [
-      strategy: Cluster.Strategy.Gossip
-    ]
-  ]
-
 config :logger, level: :warning
 
 # HTTP API configuration for e2e tests
