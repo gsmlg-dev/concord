@@ -80,10 +80,46 @@ jobs:
           mix hex.publish --yes
         fi
 
+  publish-ex-turso:
+    name: Publish ExTurso to Hex.pm
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Erlang/OTP
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '27'
+        elixir-version: '1.18'
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install native build dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Publish ExTurso to Hex.pm
+      env:
+        HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        EX_TURSO_BUILD: "1"
+      working-directory: apps/ex_turso
+      run: |
+        if mix hex.info ex_turso 0.5.0 >/dev/null 2>&1; then
+          echo "ex_turso 0.5.0 is already published"
+        else
+          mix hex.publish --yes
+        fi
+
   publish:
     name: Publish to Hex.pm
     runs-on: ubuntu-latest
-    needs: publish-vsr
+    needs: [publish-vsr, publish-ex-turso]
     permissions:
       contents: write
 

@@ -14,8 +14,11 @@ working connection pool. Ecto support is optional via `Ecto.Adapters.Turso`.
 
 ## Native binaries
 
-Release builds use precompiled NIFs when available, so most users do not need a
-Rust toolchain. Precompiled binaries are published for:
+Version 0.5 builds the NIF from source while its renamed `Turso.*` API is
+prepared for a new set of precompiled artifacts. A working Rust toolchain
+(`cargo`) matching the BEAM architecture is therefore required.
+
+Future releases may provide precompiled binaries for:
 
 | OS | Architectures |
 | --- | --- |
@@ -54,23 +57,12 @@ nm -g --defined-only "native/ex_turso/target/$TARGET/release/libex_turso.a" \
 Use `cross build` instead of `cargo build` when building the arm64 musl archive
 from a non-arm64 host.
 
-Set `EX_TURSO_BUILD=1` to force a source build. Network-restricted builders can
-also use compile-time Mix config:
-
-```elixir
-config :rustler_precompiled, :force_build, ex_turso: true
-```
-
-A working Rust toolchain (`cargo`) matching your BEAM's architecture is required
-for source builds. Applications that force source builds should also add
-`{:rustler, "~> 0.38", runtime: false}` to their dependencies.
-
 ## Installation
 
 ```elixir
 def deps do
   [
-    {:ex_turso, "~> 0.4"}
+    {:ex_turso, "~> 0.5"}
   ]
 end
 ```
@@ -118,7 +110,7 @@ application that uses Ecto:
 ```elixir
 def deps do
   [
-    {:ex_turso, "~> 0.2.0"},
+    {:ex_turso, "~> 0.5"},
     {:ecto_sql, "~> 3.14"}
   ]
 end

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Concord's replicated runtime.
 - Publish `viewstamped_replication` 0.1.0 as Concord's protocol runtime
   dependency.
+- Publish the migrated `Turso.*` API as `ex_turso` 0.5.0 and use it for
+  Concord's Turso engine.
 - Add three-node VSR release tests for KV, MVCC, transactions, leases, engine
   isolation, primary failover, and strong reads.
 

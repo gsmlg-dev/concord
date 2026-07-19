@@ -13,15 +13,11 @@ defmodule Turso.Native do
 
   version = Mix.Project.config()[:version]
 
-  force_build =
-    System.get_env("EX_TURSO_BUILD") in ["1", "true"] ||
-      Application.compile_env(:rustler_precompiled, [:force_build, :ex_turso], false)
-
   use RustlerPrecompiled,
     otp_app: :ex_turso,
     crate: "ex_turso",
     base_url: "https://github.com/gsmlg-dev/ex_turso/releases/download/v#{version}",
-    force_build: force_build,
+    force_build: true,
     targets: ~w(
       aarch64-apple-darwin
       aarch64-unknown-linux-gnu

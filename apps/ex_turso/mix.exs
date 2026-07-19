@@ -6,7 +6,7 @@ defmodule Turso.MixProject do
   def project do
     [
       app: :ex_turso,
-      version: "0.4.1",
+      version: "0.5.0",
       elixir: "~> 1.18",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
@@ -32,10 +32,11 @@ defmodule Turso.MixProject do
   defp deps do
     [
       {:rustler_precompiled, "~> 0.9", runtime: false},
-      {:rustler, "~> 0.38", optional: true, runtime: false},
+      {:rustler, "~> 0.38", runtime: false},
       {:db_connection, "~> 2.7"},
       {:ecto_sql, "~> 3.14", optional: true},
-      {:jason, "~> 1.4", optional: true}
+      {:jason, "~> 1.4", optional: true},
+      {:ex_doc, "~> 0.29", only: :dev, runtime: false}
     ]
   end
 
@@ -47,7 +48,6 @@ defmodule Turso.MixProject do
         ".formatter.exs",
         "lib",
         "mix.exs",
-        "checksum-*.exs",
         "native/ex_turso/Cargo.lock",
         "native/ex_turso/Cargo.toml",
         "native/ex_turso/src",
