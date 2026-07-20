@@ -10,6 +10,24 @@ defmodule Concord.Validation do
   alias Concord.KV.Selector
 
   @max_depth 100
+  @default_max_key_bytes 4_096
+
+  @doc """
+  Validates a Concord key against the configured byte-size limit.
+
+  The default maximum is 4096 bytes and can be changed with
+  `config :concord, kv: [max_key_bytes: bytes]`.
+  """
+  @spec validate_key(term()) :: :ok | {:error, :empty_key | :key_too_large | :invalid_key}
+  def validate_key(key) when is_binary(key) do
+    cond do
+      byte_size(key) == 0 -> {:error, :empty_key}
+      byte_size(key) > max_key_bytes() -> {:error, :key_too_large}
+      true -> :ok
+    end
+  end
+
+  def validate_key(_), do: {:error, :invalid_key}
 
   @doc """
   Walks a term recursively, rejecting non-serializable values.
@@ -113,6 +131,12 @@ defmodule Concord.Validation do
     Application.get_env(:concord, :txn, [])
   end
 
+  defp max_key_bytes do
+    :concord
+    |> Application.get_env(:kv, [])
+    |> Keyword.get(:max_key_bytes, @default_max_key_bytes)
+  end
+
   defp check_compare_count(spec, config) do
     max = Keyword.get(config, :max_compare_ops, 64)
 
@@ -213,11 +237,10 @@ defmodule Concord.Validation do
     ttl = Map.get(opts, :ttl)
     lease = Map.get(opts, :lease)
 
-    cond do
-      ttl != nil and lease != nil -> {:error, {:invalid_txn, :ttl_and_lease_conflict}}
-      byte_size(key) == 0 -> {:error, {:invalid_txn, :empty_key}}
-      byte_size(key) > 1024 -> {:error, {:invalid_txn, :key_too_large}}
-      true -> :ok
+    with :ok <- validate_txn_key(key) do
+      if ttl != nil and lease != nil,
+        do: {:error, {:invalid_txn, :ttl_and_lease_conflict}},
+        else: :ok
     end
   end
 
@@ -233,4 +256,11 @@ defmodule Concord.Validation do
        do: :ok
 
   defp validate_operation(_, _), do: {:error, {:invalid_txn, :unsupported_op}}
+
+  defp validate_txn_key(key) do
+    case validate_key(key) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:invalid_txn, reason}}
+    end
+  end
 end

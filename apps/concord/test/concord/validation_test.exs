@@ -146,8 +146,14 @@ defmodule Concord.ValidationTest do
       assert {:error, {:invalid_txn, :empty_key}} = Validation.validate_txn_spec(spec)
     end
 
-    test "rejects key too large in put op" do
-      big_key = String.duplicate("x", 1025)
+    test "accepts a 4096-byte key in put op" do
+      key = String.duplicate("x", 4096)
+      spec = %{compare: [], success: [{:put, key, "v", %{}}], failure: []}
+      assert :ok = Validation.validate_txn_spec(spec)
+    end
+
+    test "rejects a key larger than 4096 bytes in put op" do
+      big_key = String.duplicate("x", 4097)
       spec = %{compare: [], success: [{:put, big_key, "v", %{}}], failure: []}
       assert {:error, {:invalid_txn, :key_too_large}} = Validation.validate_txn_spec(spec)
     end

@@ -292,6 +292,19 @@ defmodule Concord.TxnIntegrationTest do
   end
 
   describe "txn: validation" do
+    test "commits a put with a 4096-byte key" do
+      key = String.duplicate("k", 4096)
+
+      assert {:ok, %Concord.Txn.Result{succeeded: true}} =
+               Txn.commit(%{
+                 compare: [],
+                 success: [{:put, key, "value", %{}}],
+                 failure: []
+               })
+
+      assert {:ok, "value"} = Concord.get(key)
+    end
+
     test "rejects spec with functions" do
       result =
         Txn.commit(%{

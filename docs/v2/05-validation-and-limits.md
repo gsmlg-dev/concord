@@ -32,7 +32,7 @@ config :concord,
 
   # KV limits
   kv: [
-    max_key_bytes:     1024,
+    max_key_bytes:     4096,
     max_value_bytes:   1_000_000,    # 1 MiB
     max_metadata_bytes: 8192,
     max_content_type_bytes: 256,
@@ -111,7 +111,7 @@ Walking is depth-bounded (default depth 100). Specs nested beyond this are rejec
 
 | Check | Limit | Rejection |
 |---|---|---|
-| Key size | `kv.max_key_bytes` (1024) | `:key_too_large` |
+| Key size | `kv.max_key_bytes` (4096) | `:key_too_large` |
 | Empty key | not allowed | `:empty_key` |
 | Value serialized size | `kv.max_value_bytes` (1 MiB) | `:value_too_large` |
 | Metadata size | `kv.max_metadata_bytes` (8 KiB) | `:metadata_too_large` |

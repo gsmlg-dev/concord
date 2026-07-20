@@ -101,6 +101,10 @@ config :concord,
     max_txn_bytes: 1_000_000,
     max_range_limit: 1_000
   ],
+  # KV limits
+  kv: [
+    max_key_bytes: 4_096
+  ],
   # v2: Sync / change log
   change_log_max_entries: 100_000,
   # v2: Lease defaults

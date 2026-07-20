@@ -63,8 +63,15 @@ defmodule ConcordTest do
       assert {:error, :invalid_key} = Concord.put(123, "value")
     end
 
-    test "rejects keys that are too long" do
-      long_key = String.duplicate("a", 1025)
+    test "accepts keys up to 4096 bytes" do
+      key = String.duplicate("a", 4096)
+
+      assert :ok = Concord.put(key, "value")
+      assert {:ok, "value"} = Concord.get(key)
+    end
+
+    test "rejects keys larger than 4096 bytes" do
+      long_key = String.duplicate("a", 4097)
       assert {:error, :invalid_key} = Concord.put(long_key, "value")
     end
   end

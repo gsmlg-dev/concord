@@ -17,7 +17,7 @@ defmodule Concord do
       :ok
   """
 
-  alias Concord.{Compression, Engine, TTL, Txn}
+  alias Concord.{Compression, Engine, TTL, Txn, Validation}
 
   @timeout 5_000
 
@@ -806,11 +806,12 @@ defmodule Concord do
     Enum.map(pairs, fn {key, value} -> {key, Compression.decompress(value)} end)
   end
 
-  defp validate_key(key) when is_binary(key) and byte_size(key) > 0 and byte_size(key) <= 1024 do
-    :ok
+  defp validate_key(key) do
+    case Validation.validate_key(key) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :invalid_key}
+    end
   end
-
-  defp validate_key(_), do: {:error, :invalid_key}
 
   defp validate_ttl_option(opts) do
     case Keyword.get(opts, :ttl) do
