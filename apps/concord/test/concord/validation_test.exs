@@ -157,5 +157,40 @@ defmodule Concord.ValidationTest do
       spec = %{compare: [], success: [{:put, big_key, "v", %{}}], failure: []}
       assert {:error, {:invalid_txn, :key_too_large}} = Validation.validate_txn_spec(spec)
     end
+
+    test "rejects keys larger than 4096 bytes in compares" do
+      big_key = String.duplicate("x", 4097)
+
+      for compare <- [
+            {:exists, big_key, :==, true},
+            {:field, big_key, [:status], :==, "active"}
+          ] do
+        spec = %{compare: [compare], success: [], failure: []}
+        assert {:error, {:invalid_txn, :key_too_large}} = Validation.validate_txn_spec(spec)
+      end
+    end
+
+    test "rejects keys larger than 4096 bytes in operation selectors" do
+      big_key = String.duplicate("x", 4097)
+
+      selectors = [
+        {:key, big_key},
+        {:prefix, big_key},
+        {:range, big_key, big_key <> <<0>>},
+        {:range, "a", big_key}
+      ]
+
+      for selector <- selectors,
+          operation <- [{:get, selector, %{limit: 1}}, {:delete, selector, %{}}] do
+        spec = %{compare: [], success: [operation], failure: []}
+        assert {:error, {:invalid_txn, :key_too_large}} = Validation.validate_txn_spec(spec)
+      end
+    end
+
+    test "rejects keys larger than 4096 bytes in touch ops" do
+      big_key = String.duplicate("x", 4097)
+      spec = %{compare: [], success: [{:touch, big_key, 60, %{}}], failure: []}
+      assert {:error, {:invalid_txn, :key_too_large}} = Validation.validate_txn_spec(spec)
+    end
   end
 end
