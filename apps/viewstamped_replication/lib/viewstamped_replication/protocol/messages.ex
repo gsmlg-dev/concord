@@ -35,6 +35,18 @@ defmodule ViewstampedReplication.Protocol.Commit do
   defstruct [:view_number, :commit_number]
 end
 
+defmodule ViewstampedReplication.Protocol.ReadBarrier do
+  @moduledoc false
+  @enforce_keys [:view_number, :nonce, :commit_number]
+  defstruct [:view_number, :nonce, :commit_number]
+end
+
+defmodule ViewstampedReplication.Protocol.ReadBarrierOk do
+  @moduledoc false
+  @enforce_keys [:view_number, :nonce]
+  defstruct [:view_number, :nonce]
+end
+
 defmodule ViewstampedReplication.Protocol.StartViewChange do
   @moduledoc false
   @enforce_keys [:view_number]

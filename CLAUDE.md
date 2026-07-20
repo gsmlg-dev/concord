@@ -38,15 +38,15 @@ isolated singleton VSR cluster with `Concord.TestHelper.start_test_cluster/0`.
 
 1. a VSR replica with `Concord.Engine.VSR.StateMachine`;
 2. a VSR client session;
-3. `Concord.Engine.VSR`, the serialized Concord engine boundary.
+3. `Concord.Engine.VSR`, the command serialization and configuration boundary.
 
 Writes and queries are submitted through `Concord.Engine`. The default engine
 is always `Concord.Engine.VSR`; there is no replication-engine configuration
 switch. `Concord.Cluster.*` explicitly pins the same VSR engine.
 
-All Concord reads currently use replicated query barriers. The public
-`:eventual`, `:leader`, and `:strong` names are accepted for compatibility but
-have the same linearizable behavior.
+Concord reads use quorum-confirmed VSR read barriers that do not append to the
+replicated log. The public `:eventual`, `:leader`, and `:strong` names are
+accepted for compatibility but have the same linearizable behavior.
 
 ## Correctness invariants
 

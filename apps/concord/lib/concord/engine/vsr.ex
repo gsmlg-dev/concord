@@ -2,9 +2,9 @@ defmodule Concord.Engine.VSR do
   @moduledoc """
   Viewstamped Replication-backed Concord engine.
 
-  The engine process serializes requests because a VSR client session permits
-  one outstanding request. Queries are replicated barriers so every supported
-  consistency option observes committed state.
+  Commands use a stable VSR client session. Queries use quorum-confirmed read
+  barriers, so they remain linearizable without appending to the replicated
+  log or sharing the client's one-outstanding-command limit.
   """
 
   use GenServer
@@ -27,7 +27,11 @@ defmodule Concord.Engine.VSR do
 
   @impl Concord.Engine
   def query(query, opts \\ []) do
-    call({:query, query, timeout(opts)}, timeout(opts))
+    timeout = timeout(opts)
+
+    with {:ok, configuration} <- call(:configuration, timeout) do
+      issue_read(configuration, {:concord_query, timestamp_ms(), query}, timeout)
+    end
   end
 
   @impl Concord.Engine
@@ -52,8 +56,12 @@ defmodule Concord.Engine.VSR do
   end
 
   def handle_call({:query, query, timeout}, _from, configuration) do
-    result = issue(configuration, {:concord_query, timestamp_ms(), query}, timeout)
+    result = issue_read(configuration, {:concord_query, timestamp_ms(), query}, timeout)
     {:reply, result, configuration}
+  end
+
+  def handle_call(:configuration, _from, configuration) do
+    {:reply, {:ok, configuration}, configuration}
   end
 
   def handle_call({:status, timeout}, _from, configuration) do
@@ -64,7 +72,7 @@ defmodule Concord.Engine.VSR do
                configuration.replica_id
              ),
            {:ok, storage} <-
-             issue(configuration, {:concord_query, timestamp_ms(), :stats}, timeout) do
+             issue_read(configuration, {:concord_query, timestamp_ms(), :stats}, timeout) do
         {:ok,
          %{
            cluster: cluster,
@@ -93,6 +101,16 @@ defmodule Concord.Engine.VSR do
     |> normalize_error()
   end
 
+  defp issue_read(%Configuration{} = configuration, operation, timeout) do
+    configuration.group_id
+    |> ViewstampedReplication.read(operation,
+      replica_id: configuration.replica_id,
+      replicas: configuration.members,
+      timeout: timeout
+    )
+    |> normalize_error()
+  end
+
   defp call(request, timeout) do
     GenServer.call(__MODULE__, request, timeout + @call_overhead)
   catch
@@ -106,6 +124,7 @@ defmodule Concord.Engine.VSR do
   defp timestamp_ms, do: System.system_time(:millisecond)
 
   defp normalize_error({:error, :quorum_unavailable}), do: {:error, :timeout}
+  defp normalize_error({:error, :not_ready}), do: {:error, :timeout}
   defp normalize_error({:error, :not_found}), do: {:error, :cluster_not_ready}
   defp normalize_error(result), do: result
 

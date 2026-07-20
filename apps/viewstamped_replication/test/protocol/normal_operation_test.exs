@@ -10,6 +10,8 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
     GetState,
     Prepare,
     PrepareOk,
+    ReadBarrier,
+    ReadBarrierOk,
     State
   }
 
@@ -83,6 +85,66 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
                %Reply{client_id: :client, request_number: 7, result: :cached}}
             ]} =
              Protocol.step(applied, {:client_request, :lost_reply_retry, request})
+  end
+
+  test "primary completes a read after confirming its view with a quorum" do
+    state = normal_state(1)
+
+    assert {pending,
+            [
+              {:broadcast,
+               %Envelope{
+                 payload:
+                   %ReadBarrier{
+                     view_number: 0,
+                     nonce: nonce,
+                     commit_number: 0
+                   }
+               }},
+              {:schedule_timer, :read, _, read_timer}
+            ]} = Protocol.step(state, {:read_request, :route, {:get, :key}})
+
+    assert pending.op_number == 0
+    assert pending.timer_tokens.read == read_timer
+
+    assert {completed,
+            [
+              {:read, :route, {:get, :key}},
+              {:cancel_timer, :read}
+            ]} =
+             peer_step(
+               pending,
+               2,
+               %ReadBarrierOk{view_number: 0, nonce: nonce}
+             )
+
+    assert completed.op_number == 0
+    assert completed.pending_reads == %{}
+  end
+
+  test "backup acknowledges a current-view read barrier without appending" do
+    state = normal_state(2)
+
+    assert {acknowledged,
+            [
+              {:send, 1,
+               %Envelope{
+                 payload: %ReadBarrierOk{view_number: 0, nonce: :read_nonce}
+               }},
+              {:schedule_timer, :primary, _, _}
+            ]} =
+             peer_step(
+               state,
+               1,
+               %ReadBarrier{
+                 view_number: 0,
+                 nonce: :read_nonce,
+                 commit_number: 0
+               }
+             )
+
+    assert acknowledged.op_number == 0
+    assert acknowledged.commit_number == 0
   end
 
   test "stale requests are rejected and one outstanding request per client is enforced" do

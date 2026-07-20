@@ -20,6 +20,8 @@ defmodule ViewstampedReplication.Protocol.State do
           log: Log.t(),
           client_table: map(),
           prepare_acks: map(),
+          pending_reads: map(),
+          read_sequence: non_neg_integer(),
           start_view_change_votes: map(),
           do_view_change_messages: map(),
           pending_clients: map(),
@@ -35,6 +37,7 @@ defmodule ViewstampedReplication.Protocol.State do
           timeouts: %{
             primary: non_neg_integer(),
             heartbeat: non_neg_integer(),
+            read: non_neg_integer(),
             view_change: non_neg_integer(),
             recovery: non_neg_integer()
           }
@@ -54,6 +57,8 @@ defmodule ViewstampedReplication.Protocol.State do
     log: nil,
     client_table: %{},
     prepare_acks: %{},
+    pending_reads: %{},
+    read_sequence: 0,
     start_view_change_votes: %{},
     do_view_change_messages: %{},
     pending_clients: %{},
@@ -66,7 +71,7 @@ defmodule ViewstampedReplication.Protocol.State do
     do_view_change_sent: MapSet.new(),
     timer_tokens: %{},
     timer_sequence: 0,
-    timeouts: %{primary: 1_000, heartbeat: 500, view_change: 1_000, recovery: 1_000}
+    timeouts: %{primary: 1_000, heartbeat: 500, read: 1_000, view_change: 1_000, recovery: 1_000}
   ]
 
   @spec new(Configuration.t()) :: t()

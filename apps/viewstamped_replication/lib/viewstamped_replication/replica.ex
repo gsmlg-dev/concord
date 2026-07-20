@@ -42,6 +42,7 @@ defmodule ViewstampedReplication.Replica do
     :transport,
     :transport_state,
     :bootstrap,
+    durable_applied_number: 0,
     timers: %{}
   ]
 
@@ -104,6 +105,54 @@ defmodule ViewstampedReplication.Replica do
 
   def submit(replica, route, %ViewstampedReplication.Request{} = request) do
     GenServer.cast(server(replica), {:client_request, route, request})
+  end
+
+  @spec read(pid() | term(), term(), keyword()) :: {:ok, term()} | {:error, term()}
+  def read(replica, operation, opts \\ [])
+
+  def read(
+        {group_id, %Member{id: replica_id, endpoint: endpoint}},
+        operation,
+        opts
+      ) do
+    case endpoint do
+      pid when is_pid(pid) ->
+        read(pid, operation, opts)
+
+      endpoint when endpoint == node() ->
+        read({group_id, replica_id}, operation, opts)
+
+      endpoint when is_atom(endpoint) ->
+        if distributed_endpoint?(endpoint) do
+          remote_read(endpoint, group_id, replica_id, operation, opts)
+        else
+          read({group_id, replica_id}, operation, opts)
+        end
+
+      {_name, endpoint_node} when is_atom(endpoint_node) ->
+        remote_read(endpoint_node, group_id, replica_id, operation, opts)
+
+      %{node: endpoint_node} = remote when is_atom(endpoint_node) ->
+        remote_read(
+          endpoint_node,
+          group_id,
+          Map.get(remote, :replica_id, replica_id),
+          operation,
+          opts
+        )
+
+      _local_endpoint ->
+        read({group_id, replica_id}, operation, opts)
+    end
+  end
+
+  def read(replica, operation, opts) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    GenServer.call(server(replica), {:linearizable_read, operation}, timeout)
+  catch
+    :exit, {:timeout, _details} -> {:error, :quorum_unavailable}
+    :exit, {:noproc, _details} -> {:error, :not_found}
+    :exit, _reason -> {:error, :not_found}
   end
 
   @spec deliver(term(), term(), Envelope.t()) :: :ok | {:error, :not_found}
@@ -231,6 +280,13 @@ defmodule ViewstampedReplication.Replica do
     end
   end
 
+  def handle_call({:linearizable_read, operation}, from, state) do
+    case run_transition(state, {:read_request, from, operation}) do
+      {:ok, state} -> {:noreply, state}
+      {:stop, reason, state} -> {:stop, reason, {:error, reason}, state}
+    end
+  end
+
   @impl true
   def handle_cast({:client_request, route, request}, state) do
     transition(state, {:client_request, route, request})
@@ -268,6 +324,11 @@ defmodule ViewstampedReplication.Replica do
   end
 
   defp recover_runtime(state, recovered) do
+    state = %{
+      state
+      | durable_applied_number: Map.get(recovered, :applied_number, 0)
+    }
+
     with {:ok, state} <- restore_state_machine(state, recovered.snapshot) do
       event =
         cond do
@@ -329,11 +390,81 @@ defmodule ViewstampedReplication.Replica do
     {:ok, state}
   end
 
+  defp execute_effect(state, {:read_reply, route, result}) do
+    GenServer.reply(route, result)
+    {:ok, state}
+  end
+
+  defp execute_effect(state, {:read, route, operation}) do
+    protocol = state.protocol_state
+
+    metadata = %ApplyMetadata{
+      group_id: state.configuration.group_id,
+      view_number: protocol.view_number,
+      op_number: protocol.applied_number,
+      client_id: :linearizable_read,
+      request_number: 0
+    }
+
+    result =
+      if function_exported?(state.state_machine, :read, 3) do
+        {:ok, state.state_machine.read(metadata, operation, state.state_machine_state)}
+      else
+        {:error, :read_not_supported}
+      end
+
+    GenServer.reply(route, result)
+    {:ok, state}
+  end
+
   defp execute_effect(
          state,
          {:persist, {:client_result, _client_id, _request_number, _result}}
        ) do
     persist_applied_state(state)
+  end
+
+  defp execute_effect(
+         %{durable_applied_number: durable_applied_number} = state,
+         {:persist, {:applied, applied_number, _client_table}}
+       )
+       when applied_number < durable_applied_number do
+    {:ok, state}
+  end
+
+  defp execute_effect(state, {:persist, {:applied, applied_number, client_table}}) do
+    case state.storage.set_applied(state.storage_state, applied_number, client_table) do
+      {:ok, storage_state} ->
+        Telemetry.execute([:storage, :operation], %{count: 1}, telemetry_metadata(state))
+
+        {:ok,
+         %{
+           state
+           | storage_state: storage_state,
+             durable_applied_number: applied_number
+         }}
+
+      {:error, reason} ->
+        {:stop, {:storage_failed, reason}, state}
+    end
+  end
+
+  defp execute_effect(state, {:persist, {:install_state, durable_state}}) do
+    case state.storage.install_state(state.storage_state, durable_state) do
+      {:ok, storage_state} ->
+        Telemetry.execute([:storage, :operation], %{count: 1}, telemetry_metadata(state))
+
+        {:ok,
+         %{
+           state
+           | storage_state: storage_state,
+             durable_applied_number:
+               Map.get(durable_state, :applied_number, state.durable_applied_number)
+         }}
+
+      {:error, reason} ->
+        {:stop, {:storage_failed, reason}, state}
+    end
   end
 
   defp execute_effect(state, {:persist, {:install_snapshot, snapshot}}) do
@@ -607,6 +738,13 @@ defmodule ViewstampedReplication.Replica do
 
   defp remote_submit(node, group_id, replica_id, route, request) do
     :erpc.cast(node, __MODULE__, :submit, [{group_id, replica_id}, route, request])
+  end
+
+  defp remote_read(node, group_id, replica_id, operation, opts) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    :erpc.call(node, __MODULE__, :read, [{group_id, replica_id}, operation, opts], timeout + 100)
+  catch
+    :exit, _reason -> {:error, :not_found}
   end
 
   defp distributed_endpoint?(endpoint) do

@@ -76,24 +76,24 @@ defmodule Concord.VSRIntegrationTest do
     assert member_endpoint == configured_endpoint
   end
 
-  test "all advertised read consistencies execute as replicated query barriers", %{
+  test "all advertised read consistencies use non-log-growing linearizable reads", %{
     group_id: group_id,
     replica_id: replica_id
   } do
     assert :ok = Concord.put("vsr:consistent", "committed")
 
-    Enum.reduce([:eventual, :leader, :strong], nil, fn consistency, _previous ->
+    Enum.each([:eventual, :leader, :strong], fn consistency ->
       assert {:ok, before_status} = ViewstampedReplication.status(group_id, replica_id)
       assert {:ok, "committed"} = Concord.get("vsr:consistent", consistency: consistency)
       assert {:ok, after_status} = ViewstampedReplication.status(group_id, replica_id)
 
-      assert after_status.op_number == before_status.op_number + 1
-      assert after_status.commit_number == before_status.commit_number + 1
-      assert after_status.applied_number == before_status.applied_number + 1
+      assert after_status.op_number == before_status.op_number
+      assert after_status.commit_number == before_status.commit_number
+      assert after_status.applied_number == before_status.applied_number
     end)
   end
 
-  test "VSR supplies replicated timestamps to TTL commands and query barriers" do
+  test "VSR supplies command timestamps and read-barrier timestamps to TTL operations" do
     before_put = System.system_time(:second)
     assert {:ok, %{revision: revision}} = Concord.KV.put("vsr:ttl", "value", ttl: 30)
     after_put = System.system_time(:second)
@@ -251,6 +251,40 @@ defmodule Concord.VSRIntegrationTest do
     on_exit(fn -> stop_supervisor(restarted) end)
 
     assert {:ok, %{restored: true}} = Concord.get("vsr:durable", consistency: :strong)
+  end
+
+  @tag :tmp_dir
+  test "an uncheckpointed singleton restores multiple committed operations", %{
+    group_id: group_id,
+    replica_id: replica_id,
+    supervisor: supervisor,
+    vsr_opts: opts
+  } do
+    for value <- 1..3 do
+      assert :ok = Concord.put("vsr:restart:#{value}", %{value: value})
+    end
+
+    assert {:ok, %{commit_number: 3, applied_number: 3}} =
+             ViewstampedReplication.status(group_id, replica_id)
+
+    stop_supervisor(supervisor)
+
+    restart_opts =
+      opts
+      |> Keyword.put(:bootstrap, false)
+      |> Keyword.put(:client_id, {:concord_vsr_test_client, group_id, 2})
+
+    {:ok, restarted} = Engine.VSR.Supervisor.start_link(restart_opts)
+    Process.unlink(restarted)
+    on_exit(fn -> stop_supervisor(restarted) end)
+
+    for value <- 1..3 do
+      assert {:ok, %{value: ^value}} =
+               Concord.get("vsr:restart:#{value}", consistency: :strong)
+    end
+
+    assert {:ok, %{commit_number: 3, applied_number: 3}} =
+             ViewstampedReplication.status(group_id, replica_id)
   end
 
   defp stop_supervisor(supervisor) do

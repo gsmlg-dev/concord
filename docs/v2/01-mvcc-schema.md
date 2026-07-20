@@ -4,6 +4,11 @@
 **Depends on**: nothing (foundation)
 **Required by**: Transactions, Sync/Watch, Leases
 
+> Concord 3 note: this document records the 2.x ETS design. Concord 3 keeps its
+> authoritative state in the VSR state-machine value; `prefix_scan/2` therefore
+> filters the full key map in O(N) time. ETS tables are compatibility
+> materialized views only.
+
 ## 1. Concept
 
 Concord adopts an MVCC model centered on a single monotonic **cluster revision counter**. Every committed mutation increments this counter once; the resulting integer is the *revision* of that mutation.

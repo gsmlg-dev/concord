@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Document that VSR prefix scans filter the authoritative state in `O(N)` time.
+- Route VSR queries through quorum-confirmed linearizable read barriers without
+  appending reads to the replicated log.
+
+### Fixed
+- Replay file-backed state machines from their snapshot without decreasing the
+  durable applied-operation watermark during restart.
+
 ## [3.0.0-beta.0] - 2026-07-19
 
 ### Added

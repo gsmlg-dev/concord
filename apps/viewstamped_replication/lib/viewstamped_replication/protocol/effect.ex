@@ -8,6 +8,8 @@ defmodule ViewstampedReplication.Protocol.Effect do
           {:send, replica_id :: term(), Envelope.t()}
           | {:broadcast, Envelope.t()}
           | {:reply, client_route :: term(), Reply.t()}
+          | {:read, client_route :: term(), operation :: term()}
+          | {:read_reply, client_route :: term(), result :: term()}
           | {:persist, storage_operation :: term()}
           | {:apply, LogEntry.t()}
           | {:schedule_timer, timer_kind :: atom(), timeout(), timer_token :: term()}

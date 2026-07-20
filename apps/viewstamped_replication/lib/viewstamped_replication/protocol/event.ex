@@ -14,6 +14,7 @@ defmodule ViewstampedReplication.Protocol.Event do
 
   @type t ::
           {:client_request, client_route(), Request.t()}
+          | {:read_request, client_route(), operation :: term()}
           | {:peer_message, replica_id(), Envelope.t()}
           | {:timeout, timer_kind(), timer_token()}
           | {:state_machine_applied, op_number(), result()}

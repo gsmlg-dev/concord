@@ -52,10 +52,11 @@ duplicate suppression across retries and primary changes.
 
 ## Read path
 
-Concord queries are submitted as replicated query barriers. This places each
-read in the committed operation order and provides linearizable results. The
-public `:eventual`, `:leader`, and `:strong` option names are retained for API
-compatibility, but currently use the same VSR barrier.
+Concord queries use quorum-confirmed read barriers. The current primary
+confirms its view with a quorum, then evaluates the query against its applied
+state without appending the read to the replicated log. The public
+`:eventual`, `:leader`, and `:strong` option names are retained for API
+compatibility, but currently use the same linearizable VSR read path.
 
 ## Persistence and recovery
 

@@ -90,16 +90,17 @@ All read operations emit telemetry events with the consistency level:
 
 ## Query Consistency Levels
 
-VSR executes reads as replicated query barriers. The accepted consistency names
-currently share the same linearizable path.
+VSR executes reads through quorum-confirmed barriers without appending them to
+the replicated log. The accepted consistency names currently share the same
+linearizable path.
 
 ### VSR Query Mapping
 
 | Consistency | VSR path | Guarantee |
 |------------|----------|-----------|
-| `:strong` | Replicated query barrier | Linearizable |
-| `:leader` | Replicated query barrier | Linearizable |
-| `:eventual` | Replicated query barrier | Linearizable |
+| `:strong` | Quorum-confirmed read barrier | Linearizable |
+| `:leader` | Quorum-confirmed read barrier | Linearizable |
+| `:eventual` | Quorum-confirmed read barrier | Linearizable |
 
 ### Per-Operation Override
 

@@ -60,6 +60,48 @@ defmodule ViewstampedReplication do
     end
   end
 
+  @doc """
+  Executes a linearizable state-machine read without appending to the VSR log.
+
+  The current primary confirms its view with a quorum before evaluating the
+  read. Singleton groups satisfy that quorum locally.
+  """
+  @spec read(term(), term(), keyword()) :: {:ok, term()} | {:error, term()}
+  def read(group_id, operation, opts) do
+    with {:ok, replica_id} <- Keyword.fetch(opts, :replica_id),
+         {:ok, replicas} <- Keyword.fetch(opts, :replicas),
+         {:ok, primary_id} <- primary(group_id, replica_id),
+         {:ok, primary} <- find_replica(replicas, primary_id) do
+      primary
+      |> then(&Replica.read({group_id, &1}, operation, timeout: Keyword.get(opts, :timeout, 5_000)))
+      |> maybe_retry_read(group_id, replicas, operation, opts)
+    else
+      :error -> {:error, :replica_identity_and_members_required}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp maybe_retry_read(
+         {:error, {:not_primary, primary_id}},
+         group_id,
+         replicas,
+         operation,
+         opts
+       ) do
+    with {:ok, primary} <- find_replica(replicas, primary_id) do
+      Replica.read({group_id, primary}, operation, timeout: Keyword.get(opts, :timeout, 5_000))
+    end
+  end
+
+  defp maybe_retry_read(result, _group_id, _replicas, _operation, _opts), do: result
+
+  defp find_replica(replicas, replica_id) when is_list(replicas) do
+    case Enum.find(replicas, &(&1.id == replica_id)) do
+      nil -> {:error, :primary_not_configured}
+      replica -> {:ok, replica}
+    end
+  end
+
   defp configuration(opts) do
     case Keyword.fetch(opts, :configuration) do
       {:ok, %Configuration{} = configuration} -> Configuration.validate(configuration)
