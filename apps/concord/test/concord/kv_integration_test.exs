@@ -21,6 +21,20 @@ defmodule Concord.KV.IntegrationTest do
   end
 
   describe "v2 put with map opts" do
+    test "accepts keys up to 4096 bytes" do
+      key = String.duplicate("k", 4096)
+
+      assert {:ok, %{revision: revision}} = Concord.KV.put(key, "value")
+      assert revision > 0
+      assert {:ok, "value"} = Concord.KV.get(key)
+    end
+
+    test "rejects keys larger than 4096 bytes" do
+      key = String.duplicate("k", 4097)
+
+      assert {:error, :invalid_key} = Concord.KV.put(key, "value")
+    end
+
     test "put returns revision info" do
       result = Concord.put("v2_key", "value1")
       assert result == :ok

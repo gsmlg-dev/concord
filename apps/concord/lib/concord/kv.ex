@@ -30,7 +30,7 @@ defmodule Concord.KV do
 
   require Logger
 
-  alias Concord.{Compression, Engine}
+  alias Concord.{Compression, Engine, Validation}
   alias Concord.KV.Record
 
   @timeout 5_000
@@ -392,10 +392,12 @@ defmodule Concord.KV do
     end
   end
 
-  defp validate_key(key) when is_binary(key) and byte_size(key) > 0 and byte_size(key) <= 1024,
-    do: :ok
-
-  defp validate_key(_), do: {:error, :invalid_key}
+  defp validate_key(key) do
+    case Validation.validate_key(key) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :invalid_key}
+    end
+  end
 
   defp validate_ttl_option(opts) do
     case Keyword.get(opts, :ttl) do
