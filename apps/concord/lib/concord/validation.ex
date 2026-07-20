@@ -192,11 +192,11 @@ defmodule Concord.Validation do
 
   defp validate_compare({field, key, op, _value})
        when field in @valid_compare_fields and is_binary(key) and op in @valid_compare_ops,
-       do: :ok
+       do: validate_txn_key(key)
 
   defp validate_compare({:field, key, path, op, _value})
        when is_binary(key) and is_list(path) and op in @valid_compare_ops,
-       do: :ok
+       do: validate_txn_key(key)
 
   defp validate_compare({field, _, _, _}) when field not in @valid_compare_fields,
     do: {:error, {:invalid_txn, :unsupported_compare_field}}
@@ -217,15 +217,16 @@ defmodule Concord.Validation do
     end)
   end
 
-  defp validate_operation({:get, {:key, k}, _opts}, _max_range) when is_binary(k), do: :ok
+  defp validate_operation({:get, {:key, key}, _opts}, _max_range) when is_binary(key),
+    do: validate_txn_key(key)
 
-  defp validate_operation({:get, {:prefix, _p}, %{limit: limit}}, max_range)
+  defp validate_operation({:get, {:prefix, _} = selector, %{limit: limit}}, max_range)
        when is_integer(limit) and limit <= max_range,
-       do: :ok
+       do: validate_txn_selector(selector)
 
-  defp validate_operation({:get, {:range, _, _}, %{limit: limit}}, max_range)
+  defp validate_operation({:get, {:range, _, _} = selector, %{limit: limit}}, max_range)
        when is_integer(limit) and limit <= max_range,
-       do: :ok
+       do: validate_txn_selector(selector)
 
   defp validate_operation({:get, {:prefix, _}, _}, _),
     do: {:error, {:invalid_txn, :missing_range_limit}}
@@ -245,15 +246,12 @@ defmodule Concord.Validation do
   end
 
   defp validate_operation({:delete, selector, _opts}, _max_range) do
-    case Selector.validate(selector) do
-      :ok -> :ok
-      {:error, _} -> {:error, {:invalid_txn, :invalid_selector}}
-    end
+    validate_txn_selector(selector)
   end
 
   defp validate_operation({:touch, key, ttl, _opts}, _max_range)
        when is_binary(key) and is_integer(ttl) and ttl > 0,
-       do: :ok
+       do: validate_txn_key(key)
 
   defp validate_operation(_, _), do: {:error, {:invalid_txn, :unsupported_op}}
 
@@ -262,5 +260,29 @@ defmodule Concord.Validation do
       :ok -> :ok
       {:error, reason} -> {:error, {:invalid_txn, reason}}
     end
+  end
+
+  defp validate_txn_selector(selector) do
+    case Selector.validate(selector) do
+      :ok -> validate_txn_selector_boundaries(selector)
+      {:error, _} -> {:error, {:invalid_txn, :invalid_selector}}
+    end
+  end
+
+  defp validate_txn_selector_boundaries({:key, key}), do: validate_txn_key(key)
+
+  defp validate_txn_selector_boundaries({:prefix, prefix}),
+    do: validate_txn_boundary(prefix)
+
+  defp validate_txn_selector_boundaries({:range, start_key, end_key}) do
+    with :ok <- validate_txn_boundary(start_key) do
+      validate_txn_boundary(end_key)
+    end
+  end
+
+  defp validate_txn_boundary(boundary) do
+    if byte_size(boundary) > max_key_bytes(),
+      do: {:error, {:invalid_txn, :key_too_large}},
+      else: :ok
   end
 end
