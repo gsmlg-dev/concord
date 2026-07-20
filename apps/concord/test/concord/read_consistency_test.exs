@@ -192,7 +192,7 @@ defmodule Concord.ReadConsistencyTest do
   end
 
   describe "telemetry integration" do
-    test "consistency level is included in telemetry events" do
+    test "requested consistency name is included in telemetry events" do
       key = "telemetry_test_#{:rand.uniform(10000)}"
       value = "test_value"
 
@@ -209,11 +209,11 @@ defmodule Concord.ReadConsistencyTest do
         nil
       )
 
-      # Put and get with strong consistency
+      # Put and get with the :strong compatibility name
       assert :ok = Concord.put(key, value)
       assert {:ok, ^value} = Concord.get(key, consistency: :strong)
 
-      # Verify telemetry event includes consistency level
+      # Verify telemetry reports the requested name
       assert_receive {:telemetry_event, %{duration: _}, %{consistency: :strong, result: _}}, 1000
 
       # Clean up

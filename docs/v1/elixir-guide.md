@@ -2,48 +2,32 @@
 
 Complete guide to using Concord's Elixir API for read consistency, conditional updates, query language, and value compression.
 
-## Read Consistency Levels
+## Read Consistency Aliases
 
-Concord supports configurable read consistency levels per operation, allowing you to balance performance and data freshness.
+Concord accepts `:eventual`, `:leader`, and `:strong` as consistency names for
+API compatibility. The VSR engine currently routes every name through the same
+quorum-confirmed read barrier. All three are linearizable; they do not select
+different replicas, freshness guarantees, or performance profiles.
 
-### Available Levels
-
-**`:eventual` — Fastest, eventually consistent**
-
-```elixir
-Concord.get("user:123", consistency: :eventual)
-```
-
-Reads from any available node. May return slightly stale data. Best for high-throughput reads, dashboards, analytics, and cached data.
-
-**`:leader` — Balanced (default)**
-
-```elixir
-Concord.get("user:123", consistency: :leader)
-# Or simply:
-Concord.get("user:123")
-```
-
-Reads from the leader node. Good balance between performance and freshness. Suitable for most application needs.
-
-**`:strong` — Linearizable**
-
-```elixir
-Concord.get("user:123", consistency: :strong)
-```
-
-Reads from leader with heartbeat verification. Most up-to-date. Use for critical financial data, security-sensitive operations, and strict consistency requirements.
+| Consistency name | VSR path | Guarantee |
+|------------------|----------|-----------|
+| `:eventual` | Quorum-confirmed read barrier | Linearizable |
+| `:leader` (default) | Quorum-confirmed read barrier | Linearizable |
+| `:strong` | Quorum-confirmed read barrier | Linearizable |
 
 ### Configuration
 
-Set the default in `config/config.exs`:
+Set the default accepted name in `config/config.exs`:
 
 ```elixir
 config :concord,
   default_read_consistency: :leader  # :eventual, :leader, or :strong
 ```
 
-### All Read Operations Support Consistency
+The setting preserves caller compatibility but does not change the current VSR
+read path.
+
+### Per-Operation Alias
 
 ```elixir
 Concord.get("key", consistency: :eventual)
@@ -55,75 +39,37 @@ Concord.get_all_with_ttl(consistency: :eventual)
 Concord.status(consistency: :leader)
 ```
 
-### Performance Characteristics
-
-| Consistency | Latency | Staleness | Use Case |
-|------------|---------|-----------|----------|
-| `:eventual` | ~1-5ms | May be stale | High-throughput reads, analytics |
-| `:leader` | ~5-10ms | Minimal | General application data |
-| `:strong` | ~10-20ms | Zero | Critical operations |
-
-### Read Load Balancing
-
-With `:eventual` consistency, reads are automatically distributed across cluster members:
-
-```elixir
-1..1000 |> Enum.each(fn i ->
-  Concord.get("metric:#{i}", consistency: :eventual)
-end)
-```
-
 ### Telemetry Integration
 
-All read operations emit telemetry events with the consistency level:
+Read telemetry includes the requested compatibility name:
 
 ```elixir
 :telemetry.attach(
   "my-handler",
   [:concord, :api, :get],
   fn _event, %{duration: duration}, %{consistency: consistency}, _config ->
-    Logger.info("Read with #{consistency} consistency took #{duration}ns")
+    Logger.info("Read requested #{consistency}; duration=#{duration}ns")
   end,
   nil
 )
 ```
 
-## Query Consistency Levels
-
-VSR executes reads through quorum-confirmed barriers without appending them to
-the replicated log. The accepted consistency names currently share the same
-linearizable path.
-
-### VSR Query Mapping
-
-| Consistency | VSR path | Guarantee |
-|------------|----------|-----------|
-| `:strong` | Quorum-confirmed read barrier | Linearizable |
-| `:leader` | Quorum-confirmed read barrier | Linearizable |
-| `:eventual` | Quorum-confirmed read barrier | Linearizable |
-
-### Per-Operation Override
-
-Every read function in the `Concord` module accepts the `:consistency` option:
-
-```elixir
-Concord.get("key", consistency: :strong)
-Concord.get_many(["k1", "k2"], consistency: :eventual)
-Concord.get_with_ttl("key", consistency: :leader)
-Concord.ttl("key", consistency: :eventual)
-Concord.get_all(consistency: :strong)
-Concord.get_all_with_ttl(consistency: :eventual)
-Concord.status(consistency: :leader)
-```
+The `:consistency` metadata value reports what the caller requested. It does
+not identify a distinct VSR execution path or guarantee.
 
 ### Query Module Consistency
 
-`Concord.Query` functions (`keys/1`, `where/1`, `count/1`, `delete_where/1`) do **not** currently accept a `:consistency` option. They delegate to `Concord.get_all/1` and `Concord.get_many/2` using whatever default consistency is configured globally. To control consistency for query operations, set the default in your config:
+`Concord.Query` functions (`keys/1`, `where/1`, `count/1`, `delete_where/1`)
+do **not** currently accept a `:consistency` option. They delegate to
+`Concord.get_all/1` and `Concord.get_many/2` using the globally configured
+compatibility name:
 
 ```elixir
 config :concord,
   default_read_consistency: :leader  # :eventual, :leader, or :strong
 ```
+
+Changing this name does not change the VSR read path or guarantee.
 
 ### Index Lookups
 

@@ -26,6 +26,12 @@ defmodule Concord.KV do
   ## Cluster Revision
 
       {:ok, 1843} = Concord.KV.revision()
+
+  ## Read consistency
+
+  The `:eventual`, `:leader`, and `:strong` consistency names are retained for
+  API compatibility. The VSR engine currently routes all three through the
+  same quorum-confirmed, linearizable read barrier.
   """
 
   require Logger
@@ -48,7 +54,8 @@ defmodule Concord.KV do
 
   - `:metadata` — if `true`, returns `{:ok, %Record{}}` instead of `{:ok, value}`
   - `:revision` — read the value as of a specific cluster revision (time-travel)
-  - `:consistency` — `:eventual`, `:leader` (default), or `:strong`
+  - `:consistency` — compatibility name for the shared linearizable read path:
+    `:eventual`, `:leader` (default), or `:strong`
   - `:timeout` — operation timeout in ms (default: 5000)
   """
   @spec get(binary(), keyword()) :: {:ok, term()} | {:ok, Record.t()} | {:error, term()}
@@ -123,7 +130,8 @@ defmodule Concord.KV do
   - `:keys_only` — omit values (default: false)
   - `:revision` — snapshot read at a specific revision
   - `:timeout` — operation timeout in ms (default: 5000)
-  - `:consistency` — read consistency level (default: :leader)
+  - `:consistency` — compatibility name for the shared linearizable read path
+    (default: `:leader`)
 
   ## Returns
 

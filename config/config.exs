@@ -19,7 +19,7 @@ config :concord,
   ],
   data_dir: "./data",
   max_batch_size: 500,
-  # Default read consistency level: :eventual, :leader, or :strong
+  # Default read consistency name. VSR treats all accepted names as linearizable aliases.
   default_read_consistency: :leader,
   ttl: [
     # 24 hours
