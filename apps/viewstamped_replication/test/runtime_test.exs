@@ -23,6 +23,9 @@ defmodule ViewstampedReplication.RuntimeTest do
     def apply(_metadata, {:get, key}, state), do: {Map.fetch(state, key), state}
 
     @impl true
+    def read(_metadata, {:get, key}, state), do: Map.fetch(state, key)
+
+    @impl true
     def snapshot(state), do: {:ok, state}
 
     @impl true
@@ -85,6 +88,96 @@ defmodule ViewstampedReplication.RuntimeTest do
 
     assert %{request_number: 1, command_in_progress?: false, believed_primary: {^group_id, 1}} =
              Client.status(client)
+  end
+
+  test "linearizable singleton reads do not append to the log" do
+    group_id = unique_group()
+    configuration = configuration(group_id)
+
+    start_supervised!(
+      {ViewstampedReplication.ReplicaSupervisor,
+       configuration: configuration, state_machine: MapStateMachine, bootstrap: true}
+    )
+
+    writer = start_client(group_id, {:writer, group_id})
+
+    assert {:ok, :ok} =
+             ViewstampedReplication.command(group_id, {:put, :key, :value},
+               client: writer,
+               timeout: 1_000
+             )
+
+    assert {:ok, before_read} = ViewstampedReplication.status(group_id, 1)
+
+    assert {:ok, {:ok, :value}} =
+             ViewstampedReplication.read(group_id, {:get, :key},
+               replica_id: 1,
+               replicas: configuration.members,
+               timeout: 1_000
+             )
+
+    assert {:ok, after_read} = ViewstampedReplication.status(group_id, 1)
+    assert after_read.op_number == before_read.op_number
+    assert after_read.commit_number == before_read.commit_number
+    assert after_read.applied_number == before_read.applied_number
+  end
+
+  test "quorum-confirmed reads allow concurrent callers without log growth" do
+    group_id = unique_group()
+    members = members(group_id, 3)
+
+    configurations =
+      Map.new(1..3, fn replica_id ->
+        {replica_id,
+         Configuration.new!(
+           group_id: group_id,
+           replica_id: replica_id,
+           members: members
+         )}
+      end)
+
+    for replica_id <- 1..3 do
+      assert {:ok, _pid} =
+               ViewstampedReplication.start_replica(
+                 configuration: Map.fetch!(configurations, replica_id),
+                 state_machine: MapStateMachine,
+                 bootstrap: true
+               )
+
+      on_exit(fn -> ViewstampedReplication.stop_replica(group_id, replica_id) end)
+    end
+
+    writer = start_client(group_id, {:writer, group_id}, [1, 2, 3])
+
+    assert {:ok, :ok} =
+             ViewstampedReplication.command(group_id, {:put, :key, :value},
+               client: writer,
+               timeout: 1_000
+             )
+
+    assert {:ok, before_reads} = ViewstampedReplication.status(group_id, 1)
+
+    results =
+      1..20
+      |> Task.async_stream(
+        fn _read ->
+          ViewstampedReplication.read(group_id, {:get, :key},
+            replica_id: 1,
+            replicas: members,
+            timeout: 2_000
+          )
+        end,
+        max_concurrency: 20,
+        timeout: 3_000
+      )
+      |> Enum.to_list()
+
+    assert Enum.all?(results, &(&1 == {:ok, {:ok, {:ok, :value}}}))
+
+    assert {:ok, after_reads} = ViewstampedReplication.status(group_id, 1)
+    assert after_reads.op_number == before_reads.op_number
+    assert after_reads.commit_number == before_reads.commit_number
+    assert after_reads.applied_number == before_reads.applied_number
   end
 
   test "multiple independent groups run in one VM without sharing state" do
@@ -254,6 +347,45 @@ defmodule ViewstampedReplication.RuntimeTest do
              )
 
     assert {:ok, %{status: :normal, applied_number: 2}} =
+             ViewstampedReplication.status(group_id, 1)
+
+    assert :ok = ViewstampedReplication.stop_replica(group_id, 1)
+  end
+
+  @tag :tmp_dir
+  test "file-backed singleton replays multiple applied operations without decreasing durability",
+       %{tmp_dir: tmp_dir} do
+    group_id = unique_group()
+    configuration = configuration(group_id)
+    storage = {ViewstampedReplication.Storage.File, path: tmp_dir}
+
+    assert {:ok, _pid} = start_file_replica(configuration, storage, true)
+    writer = start_client(group_id, {:writer, group_id})
+
+    for {key, value} <- [one: 1, two: 2, three: 3] do
+      assert {:ok, :ok} =
+               ViewstampedReplication.command(group_id, {:put, key, value},
+                 client: writer,
+                 timeout: 1_000
+               )
+    end
+
+    assert {:ok, %{commit_number: 3, applied_number: 3}} =
+             ViewstampedReplication.status(group_id, 1)
+
+    assert :ok = ViewstampedReplication.stop_replica(group_id, 1)
+    assert {:ok, _pid} = start_file_replica(configuration, storage, false)
+
+    for {key, value} <- [one: 1, two: 2, three: 3] do
+      assert {:ok, {:ok, ^value}} =
+               ViewstampedReplication.read(group_id, {:get, key},
+                 replica_id: 1,
+                 replicas: configuration.members,
+                 timeout: 1_000
+               )
+    end
+
+    assert {:ok, %{status: :normal, commit_number: 3, applied_number: 3}} =
              ViewstampedReplication.status(group_id, 1)
 
     assert :ok = ViewstampedReplication.stop_replica(group_id, 1)

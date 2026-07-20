@@ -496,9 +496,9 @@ defmodule Concord do
   @doc """
   Returns key-value pairs for all keys starting with the given prefix.
 
-  Uses an efficient server-side scan on the ordered ETS table, avoiding
-  loading all keys into memory. O(log N + K) where K is the number of
-  matching keys.
+  Scans the authoritative replicated state and filters matching keys on the
+  server. The operation is O(N), where N is the total number of stored keys,
+  and returns only the matching key-value pairs.
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)

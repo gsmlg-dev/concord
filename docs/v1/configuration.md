@@ -284,8 +284,9 @@ config :concord, :http, enabled: true, port: 4000
 ### Read Consistency
 
 VSR currently implements `:eventual`, `:leader`, and `:strong` as the same
-replicated query barrier. All three names are accepted for API compatibility
-and currently provide linearizable reads.
+quorum-confirmed read barrier. The barrier does not append to the replicated
+log. All three names are accepted for API compatibility and currently provide
+linearizable reads.
 
 ### Authentication
 

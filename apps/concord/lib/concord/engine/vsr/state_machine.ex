@@ -38,6 +38,16 @@ defmodule Concord.Engine.VSR.StateMachine do
   end
 
   @impl true
+  def read(
+        %ApplyMetadata{op_number: op_number},
+        {:concord_query, timestamp_ms, query},
+        state
+      ) do
+    context = %Context{op_number: op_number, timestamp_ms: timestamp_ms}
+    Core.query(query, state, context)
+  end
+
+  @impl true
   def snapshot(state), do: Core.snapshot(state)
 
   @impl true

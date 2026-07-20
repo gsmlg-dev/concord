@@ -23,7 +23,11 @@ defmodule ViewstampedReplication.StateMachine do
   @callback apply(ApplyMetadata.t(), operation(), state()) ::
               {result(), state()}
 
+  @callback read(ApplyMetadata.t(), operation(), state()) :: result()
+
   @callback snapshot(state()) :: {:ok, snapshot()}
 
   @callback restore(snapshot()) :: {:ok, state()} | {:error, term()}
+
+  @optional_callbacks read: 3
 end

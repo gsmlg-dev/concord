@@ -19,6 +19,8 @@ defmodule ViewstampedReplication.Protocol do
     NewState,
     Prepare,
     PrepareOk,
+    ReadBarrier,
+    ReadBarrierOk,
     Recovery,
     RecoveryResponse,
     StartView,
@@ -72,6 +74,9 @@ defmodule ViewstampedReplication.Protocol do
 
   defp transition(state, {:client_request, route, %Request{} = request}),
     do: handle_client_request(state, route, request)
+
+  defp transition(state, {:read_request, route, operation}),
+    do: handle_read_request(state, route, operation)
 
   defp transition(state, {:peer_message, sender, %Envelope{} = envelope}),
     do: handle_envelope(state, sender, envelope)
@@ -203,6 +208,70 @@ defmodule ViewstampedReplication.Protocol do
     maybe_commit_prepared(state, effects)
   end
 
+  # Linearizable read handling
+
+  defp handle_read_request(%State{status: status} = state, route, _operation)
+       when status != :normal do
+    {state, [{:read_reply, route, {:error, status}}]}
+  end
+
+  defp handle_read_request(state, route, operation) do
+    cond do
+      not primary?(state) ->
+        {state,
+         [
+           {:read_reply, route,
+            {:error, {:not_primary, primary_id(state, state.view_number)}}}
+         ]}
+
+      state.applied_number != state.commit_number or not is_nil(state.applying_number) ->
+        {state, [{:read_reply, route, {:error, :not_ready}}]}
+
+      Configuration.member_count(state.configuration) == 1 ->
+        {state, [{:read, route, operation}]}
+
+      true ->
+        begin_read_barrier(state, route, operation)
+    end
+  end
+
+  defp begin_read_barrier(state, route, operation) do
+    sequence = state.read_sequence + 1
+    nonce = {state.replica_id, state.view_number, sequence}
+
+    pending_read = %{
+      route: route,
+      operation: operation,
+      view_number: state.view_number,
+      acknowledgements: MapSet.new([state.replica_id])
+    }
+
+    state = %{
+      state
+      | read_sequence: sequence,
+        pending_reads: Map.put(state.pending_reads, nonce, pending_read)
+    }
+
+    effects = [
+      {:broadcast,
+       envelope(
+         state,
+         %ReadBarrier{
+           view_number: state.view_number,
+           nonce: nonce,
+           commit_number: state.commit_number
+         }
+       )}
+    ]
+
+    if map_size(state.pending_reads) == 1 do
+      {state, timer_effects} = schedule_timer(state, :read)
+      {state, effects ++ timer_effects}
+    else
+      {state, effects}
+    end
+  end
+
   # Peer message validation and dispatch
 
   defp handle_envelope(
@@ -232,6 +301,12 @@ defmodule ViewstampedReplication.Protocol do
 
   defp handle_message(state, sender, %Commit{} = message),
     do: handle_commit(state, sender, message)
+
+  defp handle_message(state, sender, %ReadBarrier{} = message),
+    do: handle_read_barrier(state, sender, message)
+
+  defp handle_message(state, sender, %ReadBarrierOk{} = message),
+    do: handle_read_barrier_ok(state, sender, message)
 
   defp handle_message(state, sender, %StartViewChange{} = message),
     do: handle_start_view_change(state, sender, message)
@@ -446,6 +521,82 @@ defmodule ViewstampedReplication.Protocol do
     end
   end
 
+  # Linearizable read barriers
+
+  defp handle_read_barrier(
+         %State{status: :normal} = state,
+         sender,
+         %ReadBarrier{
+           view_number: view,
+           nonce: nonce,
+           commit_number: commit_number
+         }
+       )
+       when view == state.view_number do
+    cond do
+      sender != primary_id(state, view) ->
+        {state, []}
+
+      commit_number > state.op_number ->
+        request_missing_state(state, sender, view, state.op_number + 1, commit_number)
+
+      true ->
+        {state, commit_effects} = advance_commit(state, commit_number)
+        {state, commit_effects} = maybe_start_apply(state, commit_effects)
+        {state, timer_effects} = schedule_timer(state, :primary)
+
+        {state,
+         commit_effects ++
+           [
+             {:send, sender,
+              envelope(
+                state,
+                %ReadBarrierOk{view_number: view, nonce: nonce}
+              )}
+           ] ++ timer_effects}
+    end
+  end
+
+  defp handle_read_barrier(state, _sender, _message), do: {state, []}
+
+  defp handle_read_barrier_ok(
+         %State{status: :normal} = state,
+         sender,
+         %ReadBarrierOk{view_number: view, nonce: nonce}
+       )
+       when view == state.view_number do
+    case Map.get(state.pending_reads, nonce) do
+      %{view_number: ^view} = pending_read ->
+        acknowledgements = MapSet.put(pending_read.acknowledgements, sender)
+
+        if member?(state, sender) and
+             MapSet.size(acknowledgements) >= Configuration.quorum_size(state.configuration) do
+          state = %{state | pending_reads: Map.delete(state.pending_reads, nonce)}
+
+          effects = [{:read, pending_read.route, pending_read.operation}]
+          finish_read_barrier(state, effects)
+        else
+          pending_read = %{pending_read | acknowledgements: acknowledgements}
+
+          {%{state | pending_reads: Map.put(state.pending_reads, nonce, pending_read)}, []}
+        end
+
+      _missing_or_stale ->
+        {state, []}
+    end
+  end
+
+  defp handle_read_barrier_ok(state, _sender, _message), do: {state, []}
+
+  defp finish_read_barrier(state, effects) do
+    if map_size(state.pending_reads) == 0 do
+      state = %{state | timer_tokens: Map.delete(state.timer_tokens, :read)}
+      {state, effects ++ [{:cancel_timer, :read}]}
+    else
+      {state, effects}
+    end
+  end
+
   # Application acknowledgements and client replies
 
   defp handle_applied(%State{applying_number: op_number} = state, op_number, result) do
@@ -617,6 +768,15 @@ defmodule ViewstampedReplication.Protocol do
     last_normal_view =
       if state.status == :normal, do: state.view_number, else: state.last_normal_view
 
+    read_effects =
+      state.pending_reads
+      |> Enum.map(fn {_nonce, pending_read} ->
+        {:read_reply, pending_read.route, {:error, :view_change}}
+      end)
+      |> then(fn effects ->
+        if effects == [], do: [], else: effects ++ [{:cancel_timer, :read}]
+      end)
+
     state = %{
       state
       | status: :view_change,
@@ -625,23 +785,27 @@ defmodule ViewstampedReplication.Protocol do
         start_view_change_votes: %{view => MapSet.new([state.replica_id])},
         do_view_change_messages: %{view => %{}},
         prepare_acks: %{},
-        recovery_responses: %{}
+        pending_reads: %{},
+        recovery_responses: %{},
+        timer_tokens: Map.delete(state.timer_tokens, :read)
     }
 
     {state, timer_effects} = schedule_timer(state, :view_change)
 
-    effects = [
-      telemetry(state, [:view_change, :start], %{}, %{message_type: :start_view_change}),
-      {:persist,
-       {:hard_state,
-        %{
-          view_number: view,
-          status: :view_change,
-          last_normal_view: last_normal_view
-        }}},
-      {:broadcast, envelope(state, %StartViewChange{view_number: view})}
-      | timer_effects
-    ]
+    effects =
+      read_effects ++
+        [
+          telemetry(state, [:view_change, :start], %{}, %{message_type: :start_view_change}),
+          {:persist,
+           {:hard_state,
+            %{
+              view_number: view,
+              status: :view_change,
+              last_normal_view: last_normal_view
+            }}},
+          {:broadcast, envelope(state, %StartViewChange{view_number: view})}
+          | timer_effects
+        ]
 
     maybe_send_do_view_change(state, effects)
   end
@@ -1299,6 +1463,25 @@ defmodule ViewstampedReplication.Protocol do
     end
   end
 
+  defp handle_timeout(%State{status: :normal} = state, :read, token) do
+    if timer_current?(state, :read, token) do
+      effects =
+        Enum.map(state.pending_reads, fn {_nonce, pending_read} ->
+          {:read_reply, pending_read.route, {:error, :quorum_unavailable}}
+        end)
+
+      state = %{
+        state
+        | pending_reads: %{},
+          timer_tokens: Map.delete(state.timer_tokens, :read)
+      }
+
+      {state, effects}
+    else
+      {state, []}
+    end
+  end
+
   defp handle_timeout(%State{status: :view_change} = state, :view_change, token) do
     if timer_current?(state, :view_change, token),
       do: begin_view_change(state, state.view_number + 1),
@@ -1704,6 +1887,7 @@ defmodule ViewstampedReplication.Protocol do
   end
 
   defp validate_event!({:client_request, _route, %Request{}}), do: :ok
+  defp validate_event!({:read_request, _route, _operation}), do: :ok
   defp validate_event!({:peer_message, _replica_id, %Envelope{}}), do: :ok
   defp validate_event!({:timeout, timer_kind, _token}) when is_atom(timer_kind), do: :ok
 

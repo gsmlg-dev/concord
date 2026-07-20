@@ -67,7 +67,7 @@ defmodule Concord.E2E.Cluster do
     end)
   end
 
-  @doc "Runs a replicated query through the VSR engine on a node."
+  @doc "Runs a quorum-confirmed query through the VSR engine on a node."
   def replicated_query(node, query_term) do
     case :rpc.call(node, Concord.Engine, :query, [query_term]) do
       {:ok, result} -> result
