@@ -46,6 +46,10 @@ ViewstampedReplication.status(group_id, replica_id)
 ViewstampedReplication.primary(group_id, replica_id)
 ViewstampedReplication.snapshot(group_id, replica_id)
 ViewstampedReplication.command(group_id, operation, client: client)
+ViewstampedReplication.read(group_id, operation,
+  replica_id: replica_id,
+  replicas: members
+)
 ```
 
 `ViewstampedReplication.Storage.Memory` is volatile and intended for tests.
