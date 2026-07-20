@@ -197,3 +197,26 @@ jobs:
 
       - name: Build native crate
         run: cargo build --manifest-path apps/ex_turso/native/ex_turso/Cargo.toml --locked
+
+  hex-packages:
+    name: Hex Packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.18'
+          otp-version: '28'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Validate standalone Hex packages
+        run: bash scripts/check_hex_packages.sh

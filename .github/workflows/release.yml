@@ -74,8 +74,11 @@ jobs:
         HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
       working-directory: apps/viewstamped_replication
       run: |
-        if mix hex.info viewstamped_replication 0.1.0 >/dev/null 2>&1; then
-          echo "viewstamped_replication 0.1.0 is already published"
+        VSR_VERSION=$(sed -n 's/^[[:space:]]*version: "\([^"]*\)",/\1/p' mix.exs | head -1)
+        test -n "$VSR_VERSION"
+
+        if mix hex.info viewstamped_replication "$VSR_VERSION" >/dev/null 2>&1; then
+          echo "viewstamped_replication $VSR_VERSION is already published"
         else
           mix hex.publish --yes
         fi

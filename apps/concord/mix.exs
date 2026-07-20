@@ -123,7 +123,7 @@ defmodule Concord.MixProject do
 
   defp viewstamped_replication_dep do
     if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
-      {:viewstamped_replication, "~> 0.1"}
+      {:viewstamped_replication, "~> 0.2.0"}
     else
       {:viewstamped_replication, in_umbrella: true}
     end

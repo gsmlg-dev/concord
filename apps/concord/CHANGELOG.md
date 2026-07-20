@@ -11,10 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Document that VSR prefix scans filter the authoritative state in `O(N)` time.
 - Route VSR queries through quorum-confirmed linearizable read barriers without
   appending reads to the replicated log.
+- Require `viewstamped_replication` 0.2.0 in Hex builds so packaged Concord
+  includes the read-barrier and durable-recovery runtime used by Concord 3.
 
 ### Fixed
 - Replay file-backed state machines from their snapshot without decreasing the
   durable applied-operation watermark during restart.
+- Derive the VSR package version in the release workflow instead of repeatedly
+  checking and skipping the already-published 0.1.0 release.
 
 ## [3.0.0-beta.0] - 2026-07-19
 
