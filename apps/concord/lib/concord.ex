@@ -15,6 +15,13 @@ defmodule Concord do
 
       iex> Concord.delete("user:123")
       :ok
+
+  ## Read consistency
+
+  The `:eventual`, `:leader`, and `:strong` consistency names are retained for
+  API compatibility. The VSR engine currently routes all three through the
+  same quorum-confirmed read barrier, so every name provides linearizable
+  semantics with the same read path.
   """
 
   alias Concord.{Compression, Engine, TTL, Txn}
@@ -71,10 +78,9 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
-    - `:eventual` - Fastest, may return stale data (reads from any node)
-    - `:leader` - Balanced, reads from leader node
-    - `:strong` - Linearizable reads with heartbeat verification (slowest)
+  - `:consistency` - Compatibility name (`:eventual`, `:leader`, or `:strong`;
+    default: `:leader`). All names currently use the same linearizable VSR
+    read barrier.
   """
   def get(key, opts \\ []) do
     with :ok <- validate_key(key) do
@@ -292,7 +298,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
   """
   def get_all(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
@@ -311,7 +318,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
   """
   def status(opts \\ []) do
     Engine.status(opts)
@@ -386,7 +394,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
 
   ## Examples
       iex> Concord.ttl("cache:user:123")
@@ -430,7 +439,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
 
   ## Examples
       iex> Concord.get_with_ttl("cache:user:123")
@@ -475,7 +485,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
 
   ## Examples
       iex> Concord.get_all_with_ttl(token: "token")
@@ -502,7 +513,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
 
   ## Examples
       iex> Concord.prefix_scan("user:")
@@ -590,7 +602,8 @@ defmodule Concord do
 
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
-  - `:consistency` - Read consistency level (default: :leader)
+  - `:consistency` - Compatibility name for the shared linearizable read path
+    (default: `:leader`)
 
   ## Examples
       iex> Concord.get_many(["key1", "key2"])

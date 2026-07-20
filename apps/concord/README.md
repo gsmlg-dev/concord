@@ -14,7 +14,7 @@
 - **Strong Consistency** — Viewstamped Replication ensures all nodes agree on data
 - **High Performance** — ETS-backed reads with microsecond-level latency
 - **Embedded Design** — Starts with your app, no external infrastructure
-- **Configurable Consistency** — Choose eventual, leader, or strong per operation
+- **Linearizable Reads** — Eventual, leader, and strong names use the same quorum-confirmed VSR barrier
 - **TTL Support** — Automatic key expiration with time-to-live
 - **Bulk Operations** — Efficient batch processing (up to 500 items)
 - **Value Compression** — Automatic compression for large values
@@ -151,7 +151,7 @@ CONCORD_VSR_REPLICA_ID=n3@127.0.0.1 iex --name n3@127.0.0.1 --cookie concord -S 
 
 ## Performance
 
-Performance varies significantly depending on hardware, cluster size, network topology, and consistency level. ETS-backed reads are inherently fast, but actual throughput and latency depend on your deployment. Run `mix run benchmarks/run_benchmarks.exs` on your own hardware to get representative numbers.
+Performance varies significantly depending on hardware, cluster size, and network topology. All accepted consistency names use the same VSR read path. Run `mix run benchmarks/run_benchmarks.exs` on your own hardware to get representative numbers.
 
 ## When to Use Concord
 
@@ -180,7 +180,7 @@ Performance varies significantly depending on hardware, cluster size, network to
 ## Documentation
 
 - **[Getting Started](../../docs/v1/getting-started.md)** — Installation, quick start, common use cases
-- **[Elixir API Guide](../../docs/v1/elixir-guide.md)** — Consistency levels, CAS, queries, compression
+- **[Elixir API Guide](../../docs/v1/elixir-guide.md)** — Read consistency aliases, CAS, queries, compression
 - **[Backup & Restore](../../docs/v1/backup-restore.md)** — Data safety and disaster recovery
 - **[Configuration](../../docs/v1/configuration.md)** — All configuration options
 - **[Architecture](../../docs/v1/DESIGN.md)** — Design blueprint
