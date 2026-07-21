@@ -140,7 +140,7 @@ jobs:
       - name: Publish every dependency package to Hex.pm
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
-          MIX_ENV: prod
+          MIX_ENV: dev
         run: |
           for app_dir in apps/*; do
             if [[ ! -f "$app_dir/mix.exs" || "$(basename "$app_dir")" == "concord" ]]; then
