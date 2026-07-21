@@ -319,7 +319,13 @@ Distributed clients will sometimes time out after a transaction actually committ
 
 ```elixir
 Concord.Txn.commit(spec, idempotency_key: "client-1:req-42")
+
+# Resolve an ambiguous outcome after a timeout
+Concord.Txn.resolve("client-1:req-42")
 ```
+
+`resolve/2` returns the original `Concord.Txn.Result` while the idempotency
+entry is retained, or `{:error, :not_found}` for an unknown or evicted key.
 
 ### State machine cache
 

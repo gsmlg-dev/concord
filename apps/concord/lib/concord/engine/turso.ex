@@ -18,6 +18,8 @@ defmodule Concord.Engine.Turso do
   @db Concord.Turso.DB
   @default_timeout 5_000
   @prefix_upper_bound <<0xF4, 0x8F, 0xBF, 0xBF>>
+  @idempotency_cache_size 100_000
+  @idempotency_retention_revisions 10_000
 
   @impl true
   def command(command, opts \\ [])
@@ -340,6 +342,16 @@ defmodule Concord.Engine.Turso do
     end)
   end
 
+  def query({:txn_result, idempotency_key}, opts) when is_binary(idempotency_key) do
+    with_db(opts, fn conn ->
+      case fetch_txn_request(conn, idempotency_key) do
+        {:ok, %{result: result}} -> {:ok, {:ok, result}}
+        {:ok, nil} -> {:ok, {:error, :not_found}}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+  end
+
   def query({:history, key, history_opts}, opts) do
     with_db(opts, fn conn ->
       from_revision = Keyword.get(history_opts, :from_revision, 0)
@@ -496,6 +508,35 @@ defmodule Concord.Engine.Turso do
   end
 
   defp commit_txn(conn, spec) do
+    case Map.get(spec, :idempotency_key) do
+      nil -> execute_txn(conn, spec)
+      key when is_binary(key) and byte_size(key) > 0 -> commit_idempotent_txn(conn, spec, key)
+      _invalid -> {:ok, {:error, :invalid_idempotency_key}}
+    end
+  end
+
+  defp commit_idempotent_txn(conn, spec, key) do
+    request_hash = txn_request_hash(spec)
+
+    case fetch_txn_request(conn, key) do
+      {:ok, %{request_hash: ^request_hash, result: result}} ->
+        {:ok, {:ok, result}}
+
+      {:ok, nil} ->
+        with {:ok, {:ok, %TxnResult{} = result} = response} <- execute_txn(conn, spec),
+             :ok <- cache_txn_request(conn, key, request_hash, result) do
+          {:ok, response}
+        end
+
+      {:ok, _cached} ->
+        {:ok, {:error, :idempotency_conflict}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp execute_txn(conn, spec) do
     compares = Map.get(spec, :compare, [])
     success_ops = Map.get(spec, :success, [])
     failure_ops = Map.get(spec, :failure, [])
@@ -524,6 +565,80 @@ defmodule Concord.Engine.Turso do
         {:error, reason} ->
           {:error, reason}
       end
+    end
+  end
+
+  defp txn_request_hash(spec) do
+    spec
+    |> Map.delete(:idempotency_key)
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+  end
+
+  defp fetch_txn_request(conn, key) do
+    case query_rows(
+           conn,
+           "SELECT request_hash, result FROM concord_turso_txn_requests
+            WHERE idempotency_key = ?",
+           [key]
+         ) do
+      {:ok, [%{"request_hash" => request_hash, "result" => result}]} ->
+        {:ok,
+         %{
+           request_hash: request_hash,
+           result: :erlang.binary_to_term(result, [:safe])
+         }}
+
+      {:ok, []} ->
+        {:ok, nil}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp cache_txn_request(conn, key, request_hash, result) do
+    with :ok <-
+           execute(
+             conn,
+             "INSERT INTO concord_turso_txn_requests
+              (idempotency_key, request_hash, result, revision, cached_at)
+              VALUES (?, ?, ?, ?, ?)",
+             [
+               key,
+               request_hash,
+               :erlang.term_to_binary(result),
+               result.revision,
+               System.system_time(:second)
+             ]
+           ),
+         :ok <- prune_txn_requests(conn, result.revision) do
+      :ok
+    end
+  end
+
+  defp prune_txn_requests(conn, revision) do
+    minimum_revision = max(0, revision - @idempotency_retention_revisions)
+
+    with :ok <-
+           execute(
+             conn,
+             "DELETE FROM concord_turso_txn_requests WHERE revision < ?",
+             [minimum_revision]
+           ) do
+      execute(
+        conn,
+        "DELETE FROM concord_turso_txn_requests
+         WHERE idempotency_key IN (
+           SELECT idempotency_key FROM concord_turso_txn_requests
+           ORDER BY revision ASC, cached_at ASC, idempotency_key ASC
+           LIMIT (
+             SELECT CASE WHEN COUNT(*) > ? THEN COUNT(*) - ? ELSE 0 END
+             FROM concord_turso_txn_requests
+           )
+         )",
+        [@idempotency_cache_size, @idempotency_cache_size]
+      )
     end
   end
 
