@@ -141,13 +141,21 @@ jobs:
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
           MIX_ENV: dev
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: |
           for app_dir in apps/*; do
             if [[ ! -f "$app_dir/mix.exs" || "$(basename "$app_dir")" == "concord" ]]; then
               continue
             fi
 
-            echo "Publishing $(basename "$app_dir") ${{ needs.version.outputs.version }}"
+            package="$(basename "$app_dir")"
+
+            if curl --silent --fail "https://hex.pm/api/packages/${package}/releases/${RELEASE_VERSION}" >/dev/null; then
+              echo "${package} ${RELEASE_VERSION} is already published"
+              continue
+            fi
+
+            echo "Publishing ${package} ${RELEASE_VERSION}"
             (cd "$app_dir" && mix hex.publish --yes)
           done
 
@@ -158,8 +166,6 @@ jobs:
         working-directory: apps/concord
         run: |
           for attempt in $(seq 1 12); do
-            mix hex.repo update
-
             if mix deps.get; then
               exit 0
             fi
@@ -184,8 +190,15 @@ jobs:
           CONCORD_HEX_BUILD: '1'
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
           MIX_ENV: prod
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         working-directory: apps/concord
-        run: mix hex.publish --yes
+        run: |
+          if curl --silent --fail "https://hex.pm/api/packages/concord/releases/${RELEASE_VERSION}" >/dev/null; then
+            echo "concord ${RELEASE_VERSION} is already published"
+            exit 0
+          fi
+
+          mix hex.publish --yes
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
