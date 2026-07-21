@@ -58,7 +58,7 @@ accepted for compatibility but have the same linearizable behavior.
 4. `Concord.StateMachine.Core.State` is authoritative. ETS tables are
    compatibility materialized views only.
 5. VSR configuration membership is explicit, ordered, and identical on every
-   replica. Supported sizes are one, three, and five.
+   replica. Supported sizes are one through six, using strict majority quorums.
 6. `bootstrap: true` is only for fresh, empty multi-node storage. Durable
    restarts use `bootstrap: false`.
 7. VSR client IDs and request numbers provide duplicate suppression. Do not

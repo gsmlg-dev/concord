@@ -3,13 +3,24 @@ defmodule ViewstampedReplication.ConfigurationTest do
 
   alias ViewstampedReplication.{Configuration, Member}
 
-  test "validates membership and derives quorum values" do
-    configuration = configuration(2)
+  test "supports one through six members with strict majority quorums" do
+    expected = [
+      {1, 0, 1},
+      {2, 0, 2},
+      {3, 1, 2},
+      {4, 1, 3},
+      {5, 2, 3},
+      {6, 2, 4}
+    ]
 
-    assert {:ok, ^configuration} = Configuration.validate(configuration)
-    assert Configuration.member_count(configuration) == 3
-    assert Configuration.failure_threshold(configuration) == 1
-    assert Configuration.quorum_size(configuration) == 2
+    for {member_count, failure_threshold, quorum_size} <- expected do
+      configuration = configuration(1, member_count)
+
+      assert {:ok, ^configuration} = Configuration.validate(configuration)
+      assert Configuration.member_count(configuration) == member_count
+      assert Configuration.failure_threshold(configuration) == failure_threshold
+      assert Configuration.quorum_size(configuration) == quorum_size
+    end
   end
 
   test "rotates the primary through the ordered configuration" do
@@ -57,23 +68,22 @@ defmodule ViewstampedReplication.ConfigurationTest do
              })
   end
 
-  test "supports only one, three, or five members" do
-    assert {:error, {:unsupported_member_count, 2}} =
-             Configuration.validate(%{
-               configuration(1)
-               | members: Enum.take(configuration(1).members, 2)
-             })
+  test "rejects empty configurations and configurations larger than six members" do
+    assert {:error, {:unsupported_member_count, 0}} =
+             Configuration.validate(configuration(1, 0))
+
+    assert {:error, {:unsupported_member_count, 7}} =
+             Configuration.validate(configuration(1, 7))
   end
 
-  defp configuration(replica_id) do
+  defp configuration(replica_id, member_count \\ 3) do
     %Configuration{
       group_id: :group,
       replica_id: replica_id,
-      members: [
-        %Member{id: 1, endpoint: :one},
-        %Member{id: 2, endpoint: :two},
-        %Member{id: 3, endpoint: :three}
-      ]
+      members:
+        for(member_id <- 1..member_count//1,
+          do: %Member{id: member_id, endpoint: {:replica, member_id}}
+        )
     }
   end
 end

@@ -72,6 +72,41 @@ defmodule ViewstampedReplication.Protocol.ViewChangeTest do
     assert Enum.any?(completion_effects, &match?({:schedule_timer, :heartbeat, _, _}, &1))
   end
 
+  test "four-member view change requires three votes and three state messages" do
+    {normal, [{:persist, _}, {:schedule_timer, :primary, _, token}]} =
+      Protocol.step(State.new(configuration(2, 4)), {:storage_recovered, :bootstrap})
+
+    {changing, _effects} = Protocol.step(normal, {:timeout, :primary, token})
+    {two_votes, _effects} = peer_step(changing, 1, %StartViewChange{view_number: 1})
+
+    assert two_votes.status == :view_change
+    assert MapSet.equal?(two_votes.start_view_change_votes[1], MapSet.new([1, 2]))
+    assert two_votes.do_view_change_messages[1] == %{}
+
+    {quorum_state, _effects} =
+      peer_step(two_votes, 3, %StartViewChange{view_number: 1})
+
+    assert MapSet.equal?(quorum_state.start_view_change_votes[1], MapSet.new([1, 2, 3]))
+    assert map_size(quorum_state.do_view_change_messages[1]) == 1
+
+    remote = %DoViewChange{
+      view_number: 1,
+      last_normal_view: 0,
+      op_number: 0,
+      commit_number: 0,
+      log: Log.new(),
+      client_table: %{}
+    }
+
+    {two_messages, _effects} = peer_step(quorum_state, 1, remote)
+    assert two_messages.status == :view_change
+    assert map_size(two_messages.do_view_change_messages[1]) == 2
+
+    {new_primary, _effects} = peer_step(two_messages, 3, remote)
+    assert new_primary.status == :normal
+    assert new_primary.view_number == 1
+  end
+
   test "receiving a higher StartViewChange immediately joins that view" do
     state = normal_state(3)
 
@@ -193,15 +228,14 @@ defmodule ViewstampedReplication.Protocol.ViewChangeTest do
 
   defp normal_state(replica_id), do: %{State.new(configuration(replica_id)) | status: :normal}
 
-  defp configuration(replica_id) do
+  defp configuration(replica_id, member_count \\ 3) do
     Configuration.new!(
       group_id: :group,
       replica_id: replica_id,
-      members: [
-        %Member{id: 1, endpoint: :one},
-        %Member{id: 2, endpoint: :two},
-        %Member{id: 3, endpoint: :three}
-      ]
+      members:
+        for(member_id <- 1..member_count,
+          do: %Member{id: member_id, endpoint: {:replica, member_id}}
+        )
     )
   end
 

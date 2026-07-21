@@ -286,6 +286,113 @@ defmodule ViewstampedReplication.RuntimeTest do
              ViewstampedReplication.status(group_id, 2)
   end
 
+  test "groups with one through six replicas commit with their configured majority" do
+    for replica_count <- 1..6 do
+      group_id = unique_group()
+      group_members = members(group_id, replica_count)
+
+      for replica_id <- 1..replica_count do
+        configuration =
+          Configuration.new!(
+            group_id: group_id,
+            replica_id: replica_id,
+            members: group_members
+          )
+
+        assert {:ok, _pid} =
+                 ViewstampedReplication.start_replica(
+                   configuration: configuration,
+                   state_machine: MapStateMachine,
+                   bootstrap: true
+                 )
+      end
+
+      on_exit(fn ->
+        for replica_id <- 1..replica_count do
+          ViewstampedReplication.stop_replica(group_id, replica_id)
+        end
+      end)
+
+      client =
+        start_client(
+          group_id,
+          {:supported_size_client, group_id},
+          Enum.to_list(1..replica_count)
+        )
+
+      assert {:ok, :ok} =
+               ViewstampedReplication.command(
+                 group_id,
+                 {:put, :replica_count, replica_count},
+                 client: client,
+                 timeout: 1_000
+               )
+
+      assert {:ok, %{commit_number: 1, applied_number: 1}} =
+               ViewstampedReplication.status(group_id, 1)
+    end
+  end
+
+  test "even-sized groups stop committing when they lose strict majority" do
+    for replica_count <- [2, 4, 6] do
+      group_id = unique_group()
+      group_members = members(group_id, replica_count)
+
+      configurations =
+        Map.new(1..replica_count, fn replica_id ->
+          {replica_id,
+           Configuration.new!(
+             group_id: group_id,
+             replica_id: replica_id,
+             members: group_members
+           )}
+        end)
+
+      for replica_id <- 1..replica_count do
+        assert {:ok, _pid} =
+                 ViewstampedReplication.start_replica(
+                   configuration: Map.fetch!(configurations, replica_id),
+                   state_machine: MapStateMachine,
+                   bootstrap: true
+                 )
+      end
+
+      on_exit(fn ->
+        for replica_id <- 1..replica_count do
+          ViewstampedReplication.stop_replica(group_id, replica_id)
+        end
+      end)
+
+      client =
+        start_client(
+          group_id,
+          {:even_size_client, group_id},
+          Enum.to_list(1..replica_count)
+        )
+
+      failure_threshold = Configuration.failure_threshold(Map.fetch!(configurations, 1))
+
+      for replica_id <- Enum.take(Enum.reverse(2..replica_count//1), failure_threshold) do
+        assert :ok = ViewstampedReplication.stop_replica(group_id, replica_id)
+      end
+
+      assert {:ok, :ok} =
+               ViewstampedReplication.command(group_id, {:put, :within_tolerance, true},
+                 client: client,
+                 timeout: 1_000
+               )
+
+      next_replica = replica_count - failure_threshold
+      assert :ok = ViewstampedReplication.stop_replica(group_id, next_replica)
+
+      assert {:error, :quorum_unavailable} =
+               ViewstampedReplication.command(group_id, {:put, :without_majority, true},
+                 client: client,
+                 timeout: 100
+               )
+    end
+  end
+
   test "a primary does not report success without a quorum" do
     group_id = unique_group()
 

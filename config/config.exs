@@ -6,7 +6,7 @@ config :rustler_precompiled, :force_build, ex_turso: true
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: true,
-  # VSR membership is explicit and ordered; supported sizes are 1, 3, and 5.
+  # VSR membership is explicit and ordered; supported sizes are 1 through 6.
   vsr: [
     group_id: :concord_cluster,
     replica_id: nil,

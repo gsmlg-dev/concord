@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Support fixed VSR configurations of one through six replicas with strict
+  majority quorums.
+- Add an explicit VSR benchmark for throughput and latency across every
+  supported cluster size.
 - Document that VSR prefix scans filter the authoritative state in `O(N)` time.
 - Route VSR queries through quorum-confirmed linearizable read barriers without
   appending reads to the replicated log.

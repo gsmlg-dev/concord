@@ -102,11 +102,12 @@ config :concord,
   ]
 ```
 
-VSR supports configurations of one, three, or five replicas. Set `bootstrap:
-true` only when creating a new configuration, and set it back to `false` for
-subsequent starts using the same durable storage. VSR reads are replicated
-barriers and therefore linearizable; `:eventual`, `:leader`, and `:strong`
-query options all use the same barrier path.
+VSR supports configurations of one through six replicas and uses a strict
+majority quorum. Set `bootstrap: true` only when creating a new configuration,
+and set it back to `false` for subsequent starts using the same durable
+storage. VSR reads are replicated barriers and therefore linearizable;
+`:eventual`, `:leader`, and `:strong` query options all use the same barrier
+path.
 
 For releases, `CONCORD_VSR_MEMBERS` is a comma-separated ordered list. A member
 can be a node name or an explicit `id=endpoint` pair:

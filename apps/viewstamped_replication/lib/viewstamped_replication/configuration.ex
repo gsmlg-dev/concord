@@ -8,7 +8,7 @@ defmodule ViewstampedReplication.Configuration do
 
   alias ViewstampedReplication.Member
 
-  @supported_member_counts [1, 3, 5]
+  @supported_member_counts 1..6
   @enforce_keys [:group_id, :replica_id, :members]
   defstruct [:group_id, :replica_id, :members]
 
@@ -67,7 +67,9 @@ defmodule ViewstampedReplication.Configuration do
   end
 
   @spec quorum_size(t()) :: pos_integer()
-  def quorum_size(%__MODULE__{} = configuration), do: failure_threshold(configuration) + 1
+  def quorum_size(%__MODULE__{} = configuration) do
+    div(member_count(configuration), 2) + 1
+  end
 
   @spec primary_id(t(), non_neg_integer()) :: Member.id()
   def primary_id(%__MODULE__{members: members}, view_number)

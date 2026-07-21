@@ -12,9 +12,8 @@ runtime, client sessions, normal operation, view changes, recovery, state
 transfer, storage adapters, transport adapters, and telemetry emission. It is
 the replication runtime for Concord 3.0.
 
-The supported production profile is a fixed, explicitly configured
-three-replica group that tolerates one crash failure. Current operational
-constraints are:
+The supported production profiles are fixed, explicitly configured groups of
+one through six replicas. Current operational constraints are:
 
 - fixed membership with no reconfiguration protocol;
 - no automatic log-compaction or storage-retention policy;
@@ -25,10 +24,10 @@ constraints are:
 ## Fault and quorum model
 
 VSR assumes crash failures, not Byzantine failures. A fixed, ordered
-configuration contains `2f + 1` replicas and requires a quorum of `f + 1`.
-Supported configuration sizes are currently one, three, and five replicas.
-The first Concord production target is three replicas, which tolerates one
-crashed replica.
+configuration contains one through six replicas and requires a strict majority
+quorum of `floor(n / 2) + 1`. It tolerates `floor((n - 1) / 2)` crashed
+replicas. Even-sized groups therefore have the same failure tolerance as the
+preceding odd-sized group while requiring one additional quorum vote.
 
 Membership is explicit and fixed. It is never inferred from connected
 distributed Erlang nodes. The primary for a view is selected deterministically
@@ -83,6 +82,27 @@ supervised replica runtime interprets its ordered effects.
 
 Replicated services implement `ViewstampedReplication.StateMachine`. Operations
 must be deterministic and free of arbitrary external side effects.
+
+## Performance benchmark
+
+Run the explicit local-memory benchmark to compare command throughput and
+p50/p95/p99 latency across all supported cluster sizes:
+
+```bash
+mix do --app viewstamped_replication cmd mix test \
+  test/performance/cluster_size_benchmark.exs --trace
+```
+
+The benchmark defaults to four concurrent clients with 100 commands per client
+for each cluster size. Override the workload with
+`VSR_BENCHMARK_CLIENTS` and `VSR_BENCHMARK_OPERATIONS_PER_CLIENT`. Optional
+regression gates are available through `VSR_BENCHMARK_MIN_OPS_PER_SECOND` and
+`VSR_BENCHMARK_MAX_P99_US`.
+
+This benchmark uses in-memory storage and local transport so it measures the
+protocol and OTP runtime rather than disk or network performance. Production
+results must also be measured with the deployment's actual storage, network,
+and hardware.
 
 ## Terminology
 

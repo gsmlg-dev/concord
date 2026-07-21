@@ -56,7 +56,7 @@ defmodule Concord.Engine.VSR.Supervisor do
 
     if members == [] do
       raise ArgumentError,
-            "VSR requires an explicit ordered :members configuration with 1, 3, or 5 members"
+            "VSR requires an explicit ordered :members configuration with 1 to 6 members"
     end
 
     Configuration.new!(

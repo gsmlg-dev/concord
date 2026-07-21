@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
-- Amended: 2026-07-19 for the Concord 3.0 cutover
+- Amended: 2026-07-21 for flexible cluster sizes
 
 ## Context
 
@@ -14,8 +14,11 @@ The planned Viewstamped Replication (VSR) implementation must be reusable for
 arbitrary deterministic state machines. Its safety logic must also be testable
 without process scheduling, real clocks, distributed Erlang, or storage I/O.
 
-VSR assumes a fixed configuration of `2f + 1` replicas and commits with a
-quorum of `f + 1`. It handles crash failures, not Byzantine failures.
+VSR assumes a fixed configuration and commits with intersecting majority
+quorums. It handles crash failures, not Byzantine failures. The classic
+`2f + 1` configuration remains the most replica-efficient way to tolerate `f`
+failures, while even-sized configurations support operational deployments that
+cannot use an odd replica count.
 
 ## Decision
 
@@ -39,8 +42,9 @@ Replica membership is explicit, ordered, and fixed. It is not derived from
 `Node.list/0`. The primary is selected deterministically from the view number
 and that ordered configuration.
 
-The initial configuration sizes are one, three, and five replicas. The first
-Concord production target is three replicas, tolerating one crash failure.
+Supported configuration sizes are one through six replicas. Every size uses a
+strict majority quorum of `floor(n / 2) + 1`, tolerating
+`floor((n - 1) / 2)` crash failures.
 
 The application supervisor owns a registry and dynamic replica supervisors.
 The public API starts and stops replicas, reports their status and primary,
@@ -62,8 +66,8 @@ acknowledgement whose safety relies on that state.
 The application has a replica runtime, local and explicit distributed
 transports, volatile and file-backed storage, recovery, state transfer,
 snapshots, and explicit log compaction. Its supported Concord production
-profile is a fixed, explicitly configured three-replica group. Operational
-constraints remain visible in the application README.
+profiles are fixed, explicitly configured groups of one through six replicas.
+Operational constraints remain visible in the application README.
 
 Keeping VSR independent adds an application boundary and explicit integration
 work, but avoids coupling protocol correctness to Concord's domain model or

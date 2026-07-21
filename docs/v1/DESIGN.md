@@ -3,9 +3,9 @@
 ## Overview
 
 Concord is an embedded, strongly consistent key-value store for Elixir. Its
-replicated runtime uses Viewstamped Replication (VSR) with one, three, or five
-ordered members. A majority quorum commits each operation, so a minority
-partition cannot acknowledge writes.
+replicated runtime uses Viewstamped Replication (VSR) with one through six
+ordered members. A strict majority quorum commits each operation, so a
+minority partition cannot acknowledge writes.
 
 ## Components
 
@@ -71,8 +71,11 @@ the logical Concord state.
 VSR configurations tolerate failures while a majority remains available:
 
 - one member tolerates no failure;
+- two members tolerate no failure;
 - three members tolerate one failure;
+- four members tolerate one failure;
 - five members tolerate two failures.
+- six members tolerate two failures.
 
 During a partition, only a quorum can continue committing operations. Nodes
 that fall behind recover through state transfer or snapshot installation before
