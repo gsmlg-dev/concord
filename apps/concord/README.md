@@ -113,7 +113,7 @@ Turso/libSQL, use the optional Ecto adapter shipped by `ex_turso`:
 def deps do
   [
     {:concord, "~> 3.0.0-beta"},
-    {:ex_turso, "~> 0.4"},
+    {:ex_turso, "~> 3.0.0-beta"},
     {:ecto_sql, "~> 3.14"}
   ]
 end

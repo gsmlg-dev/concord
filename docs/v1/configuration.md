@@ -170,7 +170,7 @@ should configure an Ecto repo with the optional adapter provided by `ex_turso`:
 def deps do
   [
     {:concord, "~> 3.0.0-beta"},
-    {:ex_turso, "~> 0.4"},
+    {:ex_turso, "~> 3.0.0-beta"},
     {:ecto_sql, "~> 3.14"}
   ]
 end

@@ -1,10 +1,12 @@
 defmodule Concord.MixProject do
   use Mix.Project
 
+  @version "3.0.0-beta.0"
+
   def project do
     [
       app: :concord,
-      version: "3.0.0-beta.0",
+      version: @version,
       elixir: "~> 1.17",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
@@ -115,15 +117,15 @@ defmodule Concord.MixProject do
 
   defp ex_turso_dep do
     if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
-      {:ex_turso, "~> 0.5.0"}
+      {:ex_turso, @version}
     else
-      {:ex_turso, "~> 0.4", in_umbrella: true}
+      {:ex_turso, in_umbrella: true}
     end
   end
 
   defp viewstamped_replication_dep do
     if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
-      {:viewstamped_replication, "~> 0.2.0"}
+      {:viewstamped_replication, @version}
     else
       {:viewstamped_replication, in_umbrella: true}
     end

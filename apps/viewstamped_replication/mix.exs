@@ -2,11 +2,12 @@ defmodule ViewstampedReplication.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/gsmlg-dev/concord/tree/main/apps/viewstamped_replication"
+  @version "3.0.0-beta.0"
 
   def project do
     [
       app: :viewstamped_replication,
-      version: "0.2.0",
+      version: @version,
       elixir: "~> 1.17",
       build_path: "../../_build",
       config_path: "../../config/config.exs",

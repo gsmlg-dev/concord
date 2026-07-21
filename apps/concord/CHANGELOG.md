@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Publish every umbrella package to Hex.pm at the Concord release version.
 - Support fixed VSR configurations of one through six replicas with strict
   majority quorums.
 - Add an explicit VSR benchmark for throughput and latency across every
