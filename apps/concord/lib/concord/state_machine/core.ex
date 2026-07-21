@@ -49,6 +49,7 @@ defmodule Concord.StateMachine.Core.State do
             leases: %{},
             indexes: %{},
             index_entries: %{},
+            requests: %{},
             command_count: 0,
             revision: 0,
             compact_revision: 0,
@@ -61,6 +62,7 @@ defmodule Concord.StateMachine.Core.State do
           leases: map(),
           indexes: map(),
           index_entries: map(),
+          requests: map(),
           command_count: non_neg_integer(),
           revision: non_neg_integer(),
           compact_revision: non_neg_integer(),
@@ -83,6 +85,8 @@ defmodule Concord.StateMachine.Core do
   alias Concord.Txn.Result
 
   @snapshot_version 4
+  @idempotency_cache_size 100_000
+  @idempotency_retention_revisions 10_000
 
   @type query_context :: %{required(:timestamp_ms) => non_neg_integer()} | Context.t()
 
@@ -408,20 +412,24 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp do_apply(context, {:txn, spec}, state) do
-    now = now_seconds(context)
-    success? = Enum.all?(Map.get(spec, :compare, []), &eval_compare(&1, state, now))
-    operations = if success?, do: Map.get(spec, :success, []), else: Map.get(spec, :failure, [])
-    mutating? = Enum.any?(operations, &mutating_op?/1)
-    revision = if mutating?, do: state.revision + 1, else: state.revision
+    case txn_request_status(spec, state) do
+      :disabled ->
+        apply_txn(context, spec, state)
 
-    {responses, state} =
-      Enum.map_reduce(operations, state, fn operation, acc ->
-        execute_txn(operation, acc, revision, context)
-      end)
+      {:hit, result} ->
+        {{:ok, result}, state}
 
-    state = if mutating?, do: %{state | revision: revision}, else: state
-    result = %Result{succeeded: success?, revision: revision, responses: responses}
-    {{:ok, result}, state}
+      :conflict ->
+        {{:error, :idempotency_conflict}, state}
+
+      {:miss, key, request_hash} ->
+        {{:ok, %Result{} = result} = response, state} = apply_txn(context, spec, state)
+        state = cache_txn_request(state, key, request_hash, result, context)
+        {response, state}
+
+      {:error, reason} ->
+        {{:error, reason}, state}
+    end
   end
 
   defp do_apply(context, {:grant_lease, ttl, _opts}, state) do
@@ -499,6 +507,23 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp do_apply(_context, _command, state), do: {:ok, state}
+
+  defp apply_txn(context, spec, state) do
+    now = now_seconds(context)
+    success? = Enum.all?(Map.get(spec, :compare, []), &eval_compare(&1, state, now))
+    operations = if success?, do: Map.get(spec, :success, []), else: Map.get(spec, :failure, [])
+    mutating? = Enum.any?(operations, &mutating_op?/1)
+    revision = if mutating?, do: state.revision + 1, else: state.revision
+
+    {responses, state} =
+      Enum.map_reduce(operations, state, fn operation, acc ->
+        execute_txn(operation, acc, revision, context)
+      end)
+
+    state = if mutating?, do: %{state | revision: revision}, else: state
+    result = %Result{succeeded: success?, revision: revision, responses: responses}
+    {{:ok, result}, state}
+  end
 
   @spec query(term(), State.t(), query_context()) :: term()
   def query(query, %State{} = state, context) do
@@ -647,6 +672,13 @@ defmodule Concord.StateMachine.Core do
 
   defp do_query(:get_revision, state, _now), do: {:ok, state.revision}
 
+  defp do_query({:txn_result, idempotency_key}, state, _now) do
+    case Map.fetch(state.requests, idempotency_key) do
+      {:ok, %{result: result}} -> {:ok, result}
+      :error -> {:error, :not_found}
+    end
+  end
+
   defp do_query({:history, key, opts}, state, _now) do
     from_revision = Keyword.get(opts, :from_revision, 0)
     to_revision = Keyword.get(opts, :to_revision, state.revision)
@@ -764,11 +796,13 @@ defmodule Concord.StateMachine.Core do
     {:ok, %{init() | store: entries_to_map(entries)}}
   end
 
-  def restore(%State{} = state), do: {:ok, state}
+  def restore(%State{} = state), do: normalize_state(state)
   def restore(data) when is_map(data), do: normalize_state(data)
   def restore(_snapshot), do: {:error, :invalid_snapshot}
 
-  defp normalize_state(%State{} = state), do: {:ok, state}
+  defp normalize_state(%State{} = state) do
+    {:ok, struct(State, Map.from_struct(state))}
+  end
 
   defp normalize_state(data) when is_map(data) do
     {:ok, struct(State, normalize_state_map(data))}
@@ -1204,5 +1238,67 @@ defmodule Concord.StateMachine.Core do
 
   defp execute_txn(_operation, state, _revision, _context) do
     {{:error, :unsupported_op}, state}
+  end
+
+  defp txn_request_status(spec, state) do
+    case Map.get(spec, :idempotency_key) do
+      nil ->
+        :disabled
+
+      key when is_binary(key) and byte_size(key) > 0 ->
+        request_hash = txn_request_hash(spec)
+
+        case Map.fetch(state.requests, key) do
+          {:ok, %{request_hash: ^request_hash, result: result}} -> {:hit, result}
+          {:ok, _entry} -> :conflict
+          :error -> {:miss, key, request_hash}
+        end
+
+      _invalid ->
+        {:error, :invalid_idempotency_key}
+    end
+  end
+
+  defp txn_request_hash(spec) do
+    spec
+    |> Map.delete(:idempotency_key)
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+  end
+
+  defp cache_txn_request(state, key, request_hash, result, context) do
+    entry = %{
+      request_hash: request_hash,
+      revision: result.revision,
+      result: result,
+      cached_at: context.op_number
+    }
+
+    minimum_revision = max(0, state.revision - @idempotency_retention_revisions)
+
+    requests =
+      state.requests
+      |> Enum.reject(fn {_key, cached} -> cached.revision < minimum_revision end)
+      |> Map.new()
+      |> Map.put(key, entry)
+      |> enforce_idempotency_cache_size()
+
+    %{state | requests: requests}
+  end
+
+  defp enforce_idempotency_cache_size(requests)
+       when map_size(requests) <= @idempotency_cache_size,
+       do: requests
+
+  defp enforce_idempotency_cache_size(requests) do
+    overflow = map_size(requests) - @idempotency_cache_size
+
+    oldest_keys =
+      requests
+      |> Enum.sort_by(fn {key, entry} -> {entry.revision, entry.cached_at, key} end)
+      |> Enum.take(overflow)
+      |> Enum.map(&elem(&1, 0))
+
+    Map.drop(requests, oldest_keys)
   end
 end

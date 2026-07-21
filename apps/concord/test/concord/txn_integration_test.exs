@@ -291,6 +291,46 @@ defmodule Concord.TxnIntegrationTest do
     end
   end
 
+  describe "txn: idempotency" do
+    test "replays and resolves the original result without executing twice" do
+      spec = %{
+        compare: [],
+        success: [{:put, "idempotent-key", "value", %{}}],
+        failure: []
+      }
+
+      assert {:ok, %Result{} = first} =
+               Txn.commit(spec, idempotency_key: "request-1")
+
+      first_revision = first.revision
+
+      assert {:ok, ^first} = Txn.commit(spec, idempotency_key: "request-1")
+      assert {:ok, ^first} = Txn.resolve("request-1")
+      assert {:ok, ^first_revision} = Concord.KV.revision()
+    end
+
+    test "rejects reuse with a different transaction" do
+      first = %{
+        compare: [],
+        success: [{:put, "idempotency-conflict", "first", %{}}],
+        failure: []
+      }
+
+      conflicting = put_in(first, [:success], [{:put, "idempotency-conflict", "second", %{}}])
+
+      assert {:ok, %Result{}} = Txn.commit(first, idempotency_key: "request-conflict")
+
+      assert {:error, :idempotency_conflict} =
+               Txn.commit(conflicting, idempotency_key: "request-conflict")
+
+      assert {:ok, "first"} = Concord.get("idempotency-conflict")
+    end
+
+    test "returns not found for an unknown result" do
+      assert {:error, :not_found} = Txn.resolve("unknown-request")
+    end
+  end
+
   describe "txn: validation" do
     test "commits a put with a 4096-byte key" do
       key = String.duplicate("k", 4096)

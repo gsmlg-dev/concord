@@ -88,6 +88,40 @@ defmodule Concord.StateMachineCoreTest do
     assert {:ok, %{succeeded: false}} = expired_result
   end
 
+  test "transaction idempotency replays results and rejects conflicting requests" do
+    transaction = %{
+      idempotency_key: "request-1",
+      compare: [],
+      success: [{:put, "idempotent", "first", %{}}],
+      failure: []
+    }
+
+    {first_result, first_state} =
+      Core.apply(context(1), {:txn, transaction}, Core.init())
+
+    {replayed_result, replayed_state} =
+      Core.apply(context(2), {:txn, transaction}, first_state)
+
+    assert {:ok, %Concord.Txn.Result{revision: 1} = result} = first_result
+    assert replayed_result == first_result
+    assert replayed_state.revision == first_state.revision
+    assert %{"request-1" => %{result: ^result}} = replayed_state.requests
+    assert Core.query({:txn_result, "request-1"}, replayed_state, context(3)) == {:ok, result}
+
+    assert {:ok, snapshot} = Core.snapshot(replayed_state)
+    assert {:ok, restored_state} = Core.restore(snapshot)
+    assert Core.query({:txn_result, "request-1"}, restored_state, context(3)) == {:ok, result}
+
+    conflicting = put_in(transaction, [:success], [{:put, "idempotent", "second", %{}}])
+
+    {conflict_result, conflict_state} =
+      Core.apply(context(3), {:txn, conflicting}, replayed_state)
+
+    assert conflict_result == {:error, :idempotency_conflict}
+    assert conflict_state.revision == replayed_state.revision
+    assert Core.query({:get, "idempotent"}, conflict_state, context(4)) == {:ok, "first"}
+  end
+
   test "snapshot round-trip owns all state categories" do
     {_, state} = Core.apply(context(1), {:create_index, "by_value", {:identity}}, Core.init())
     {_, state} = Core.apply(context(2), {:grant_lease, 60, %{}}, state)

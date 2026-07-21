@@ -26,6 +26,13 @@ defmodule Concord.Turso.Migrations do
               )"),
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_history_key_revision
                 ON concord_turso_history (key, revision)"),
+         :ok <- execute(db, "CREATE TABLE IF NOT EXISTS concord_turso_txn_requests (
+                idempotency_key TEXT PRIMARY KEY,
+                request_hash BLOB NOT NULL,
+                result BLOB NOT NULL,
+                revision INTEGER NOT NULL,
+                cached_at INTEGER NOT NULL
+              )"),
          :ok <- execute(db, "INSERT OR IGNORE INTO concord_turso_meta (name, value)
                 VALUES ('revision', 0)") do
       :ok

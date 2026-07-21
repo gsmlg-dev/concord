@@ -104,6 +104,30 @@ defmodule Concord.TursoEngineTest do
              Concord.Turso.txn(spec)
   end
 
+  test "persists and resolves idempotent transaction results" do
+    key = unique_key("idempotent-txn")
+    request_key = unique_key("request")
+
+    spec = %{
+      compare: [],
+      success: [{:put, key, "first", %{}}],
+      failure: []
+    }
+
+    assert {:ok, %Concord.Txn.Result{} = first} =
+             Concord.Turso.txn(spec, idempotency_key: request_key)
+
+    assert {:ok, ^first} = Concord.Turso.txn(spec, idempotency_key: request_key)
+    assert {:ok, ^first} = Concord.Txn.resolve(request_key, engine: :turso)
+
+    conflicting = put_in(spec, [:success], [{:put, key, "second", %{}}])
+
+    assert {:error, :idempotency_conflict} =
+             Concord.Turso.txn(conflicting, idempotency_key: request_key)
+
+    assert {:ok, "first"} = Concord.Turso.get(key)
+  end
+
   test "returns explicit errors for unsupported Turso operations" do
     assert {:error, {:unsupported_operation, :turso, :create_index}} =
              Concord.Index.create("turso-idx", {:identity}, engine: :turso)
