@@ -186,5 +186,22 @@ defmodule Concord.KV.IntegrationTest do
       assert length(records) == 2
       assert meta.has_more == true
     end
+
+    test "list at a revision returns the matching snapshot" do
+      assert {:ok, %{revision: _}} = Concord.KV.put("/snapshot/1", "first")
+      assert {:ok, %{revision: revision}} = Concord.KV.put("/snapshot/2", "second")
+
+      assert {:ok, %{revision: _}} = Concord.KV.put("/snapshot/1", "updated")
+      assert {:ok, %{revision: _}} = Concord.KV.delete("/snapshot/2")
+      assert {:ok, %{revision: _}} = Concord.KV.put("/snapshot/3", "new")
+
+      assert {:ok, records, %{has_more: false}} =
+               Concord.KV.list(prefix: "/snapshot/", revision: revision)
+
+      assert Enum.map(records, &{&1.key, &1.value}) == [
+               {"/snapshot/1", "first"},
+               {"/snapshot/2", "second"}
+             ]
+    end
   end
 end
