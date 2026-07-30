@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   includes the read-barrier and durable-recovery runtime used by Concord 3.
 
 ### Fixed
+- Decode valid checksummed WAL records containing atoms that have not yet been
+  loaded in a restarted VM, preserving committed application values.
 - Retransmit uncommitted VSR prepares so dropped `Prepare` or `PrepareOk`
   messages cannot indefinitely stall a healthy quorum.
 - Checksum version-two WAL/checkpoint lengths and fail closed on malformed,

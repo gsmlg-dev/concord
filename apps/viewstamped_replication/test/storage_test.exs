@@ -538,7 +538,7 @@ defmodule ViewstampedReplication.StorageTest do
   end
 
   @tag :tmp_dir
-  test "file recovery deterministically decodes locally written atoms after a VM restart", %{
+  test "file recovery preserves committed values containing atoms unloaded after a VM restart", %{
     tmp_dir: tmp_dir
   } do
     opts = @identity |> Keyword.put(:path, tmp_dir) |> Keyword.put(:write_version, 2)
@@ -547,7 +547,17 @@ defmodule ViewstampedReplication.StorageTest do
 
     script = """
     name = System.fetch_env!("VSR_TEST_ATOM")
-    term = {1, {:hard_state, %{String.to_atom(name) => true}}}
+    entry = %{
+      __struct__: ViewstampedReplication.LogEntry,
+      view_number: 0,
+      op_number: 1,
+      client_id: :client,
+      request_number: 1,
+      operation: {:write, %{String.to_atom(name) => "value"}},
+      metadata: %{}
+    }
+
+    term = {1, {:append, [entry]}}
     IO.write(Base.encode64(:erlang.term_to_binary(term, [:deterministic])))
     """
 
@@ -564,11 +574,20 @@ defmodule ViewstampedReplication.StorageTest do
     end
 
     assert {:ok, _storage} = File.open(opts)
-    Elixir.File.write!(wal_path, frame_payload(payload, 2))
-    assert {:ok, reopened} = File.open(opts)
-    assert {:ok, %{hard_state: hard_state}, _reopened} = File.recover(reopened)
 
-    assert Enum.any?(Map.keys(hard_state), fn key ->
+    Elixir.File.write!(
+      wal_path,
+      frame_payload(payload, 2) <> frame_term({2, {:commit_number, 1}}, 2)
+    )
+
+    assert {:ok, reopened} = File.open(opts)
+
+    assert {:ok, %{commit_number: 1, log: %Log{entries: [recovered]}}, _reopened} =
+             File.recover(reopened)
+
+    assert {:write, value} = recovered.operation
+
+    assert Enum.any?(Map.keys(value), fn key ->
              is_atom(key) and Atom.to_string(key) == atom_name
            end)
   end
