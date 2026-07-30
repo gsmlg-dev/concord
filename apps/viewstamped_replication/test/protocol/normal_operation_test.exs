@@ -63,6 +63,47 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
     assert applied.applying_number == nil
   end
 
+  test "primary heartbeat retransmits uncommitted prepares before advertising commit" do
+    state = normal_state(1)
+    request = request(:client, 1, {:put, :key, :value})
+    {prepared, _effects} = Protocol.step(state, {:client_request, :route, request})
+    entry = Log.fetch!(prepared.log, 1)
+    heartbeat_token = {:heartbeat, prepared.view_number, :lost_prepare_retry}
+
+    prepared = %{
+      prepared
+      | timer_tokens: Map.put(prepared.timer_tokens, :heartbeat, heartbeat_token)
+    }
+
+    assert {retried,
+            [
+              {:send, 2,
+               %Envelope{
+                 payload: %Prepare{
+                   view_number: 0,
+                   op_number: 1,
+                   commit_number: 0,
+                   entry: ^entry
+                 }
+               }},
+              {:send, 3,
+               %Envelope{
+                 payload: %Prepare{
+                   view_number: 0,
+                   op_number: 1,
+                   commit_number: 0,
+                   entry: ^entry
+                 }
+               }},
+              {:broadcast, %Envelope{payload: %Commit{view_number: 0, commit_number: 0}}},
+              {:schedule_timer, :heartbeat, _, next_heartbeat_token}
+            ]} = Protocol.step(prepared, {:timeout, :heartbeat, heartbeat_token})
+
+    assert retried.commit_number == 0
+    assert retried.log == prepared.log
+    assert retried.timer_tokens.heartbeat == next_heartbeat_token
+  end
+
   test "duplicate applied and pending requests do not append another entry" do
     state = normal_state(1)
     request = request(:client, 7, :operation)
@@ -94,12 +135,11 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
             [
               {:broadcast,
                %Envelope{
-                 payload:
-                   %ReadBarrier{
-                     view_number: 0,
-                     nonce: nonce,
-                     commit_number: 0
-                   }
+                 payload: %ReadBarrier{
+                   view_number: 0,
+                   nonce: nonce,
+                   commit_number: 0
+                 }
                }},
               {:schedule_timer, :read, _, read_timer}
             ]} = Protocol.step(state, {:read_request, :route, {:get, :key}})
@@ -204,6 +244,46 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
     assert Log.to_list(same_log.log) == [entry]
   end
 
+  test "an exact retry below a backup's log tip is reacknowledged without state transfer" do
+    primary = normal_state(1)
+
+    {primary, _effects} =
+      Protocol.step(primary, {:client_request, :first, request(:first, 1, :one)})
+
+    {primary, _effects} =
+      Protocol.step(primary, {:client_request, :second, request(:second, 1, :two)})
+
+    first = Log.fetch!(primary.log, 1)
+
+    backup = %{
+      normal_state(2)
+      | log: primary.log,
+        op_number: 2,
+        client_table: primary.client_table
+    }
+
+    assert {same_backup,
+            [
+              {:send, 1, %Envelope{payload: %PrepareOk{view_number: 0, op_number: 1}}},
+              {:schedule_timer, :primary, _, _}
+            ]} =
+             peer_step(backup, 1, %Prepare{
+               view_number: 0,
+               op_number: 1,
+               commit_number: 0,
+               entry: first
+             })
+
+    assert same_backup.log == backup.log
+
+    assert {committed, _effects} =
+             peer_step(primary, 2, %PrepareOk{view_number: 0, op_number: 2})
+
+    assert committed.commit_number == 2
+    assert MapSet.member?(committed.prepare_acks[1], 2)
+    assert MapSet.member?(committed.prepare_acks[2], 2)
+  end
+
   test "out-of-order prepare and commit request missing state without mutating the log" do
     state = normal_state(2)
     entry = entry(2, 0, :client, 2)
@@ -245,7 +325,8 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
             [
               {:persist, {:hard_state, %{view_number: 2, status: :recovering}}},
               {:request_state_transfer, 3, 1..1},
-              {:send, 3, %Envelope{payload: %GetState{view_number: 2, from_op_number: 1}}}
+              {:send, 3, %Envelope{payload: %GetState{view_number: 2, from_op_number: 1}}},
+              {:schedule_timer, :recovery, _, recovery_token}
             ]} =
              peer_step(state, 3, %Prepare{
                view_number: 2,
@@ -257,6 +338,7 @@ defmodule ViewstampedReplication.Protocol.NormalOperationTest do
     assert recovering.status == :recovering
     assert recovering.view_number == 2
     assert recovering.log == state.log
+    assert recovering.timer_tokens.recovery == recovery_token
   end
 
   test "PrepareOk for N implies acknowledgement of the contiguous prefix" do

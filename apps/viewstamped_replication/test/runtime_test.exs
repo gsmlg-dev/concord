@@ -2,6 +2,8 @@ defmodule ViewstampedReplication.RuntimeTest do
   use ExUnit.Case, async: true
 
   alias ViewstampedReplication.{Client, Configuration, Member}
+  alias ViewstampedReplication.Protocol.{Envelope, Prepare, PrepareOk}
+  alias ViewstampedReplication.Transport.Local
 
   setup context do
     on_exit(fn ->
@@ -33,6 +35,12 @@ defmodule ViewstampedReplication.RuntimeTest do
     def restore(snapshot), do: {:error, {:invalid_snapshot, snapshot}}
   end
 
+  defmodule LegacyStorageAdapter do
+    @moduledoc false
+
+    def open(_opts), do: {:ok, :legacy_storage}
+  end
+
   test "public API starts, reports, and stops an independent replica" do
     group_id = unique_group()
     configuration = configuration(group_id)
@@ -60,6 +68,25 @@ defmodule ViewstampedReplication.RuntimeTest do
     assert {:ok, 1} = ViewstampedReplication.primary(group_id, 1)
     assert :ok = ViewstampedReplication.stop_replica(group_id, 1)
     assert {:error, :not_found} = ViewstampedReplication.status(group_id, 1)
+  end
+
+  test "replica startup rejects storage without atomic snapshot-state installation" do
+    group_id = unique_group()
+    previous_trap_exit = Process.flag(:trap_exit, true)
+
+    try do
+      assert {:error,
+              {:atomic_snapshot_state_install_not_supported,
+               ViewstampedReplication.RuntimeTest.LegacyStorageAdapter}} =
+               ViewstampedReplication.Replica.start_link(
+                 configuration: configuration(group_id),
+                 state_machine: MapStateMachine,
+                 storage: LegacyStorageAdapter,
+                 bootstrap: true
+               )
+    after
+      Process.flag(:trap_exit, previous_trap_exit)
+    end
   end
 
   test "client session submits a command and advances its stable request number" do
@@ -284,6 +311,70 @@ defmodule ViewstampedReplication.RuntimeTest do
 
     assert {:ok, %{commit_number: 2, applied_number: 2}} =
              ViewstampedReplication.status(group_id, 2)
+  end
+
+  test "running replicas retry dropped prepares and prepare acknowledgements" do
+    group_id = unique_group()
+    group_members = members(group_id, 3)
+    counters = :atomics.new(2, [])
+
+    deliver = fn destination, message ->
+      drop? =
+        case message do
+          {:vsr_peer, _sender, %Envelope{payload: %Prepare{}}} ->
+            :atomics.add_get(counters, 1, 1) <= 2
+
+          {:vsr_peer, _sender, %Envelope{payload: %PrepareOk{}}} ->
+            :atomics.add_get(counters, 2, 1) <= 2
+
+          _other ->
+            false
+        end
+
+      unless drop?, do: send(destination, message)
+      :ok
+    end
+
+    transport =
+      {Local,
+       Local.new(
+         registry: ViewstampedReplication.Registry,
+         endpoints: Map.new(group_members, &{&1.id, &1.endpoint}),
+         deliver: deliver
+       )}
+
+    for replica_id <- 1..3 do
+      configuration =
+        Configuration.new!(
+          group_id: group_id,
+          replica_id: replica_id,
+          members: group_members
+        )
+
+      assert {:ok, _pid} =
+               ViewstampedReplication.start_replica(
+                 configuration: configuration,
+                 state_machine: MapStateMachine,
+                 transport: transport,
+                 bootstrap: true
+               )
+
+      on_exit(fn -> ViewstampedReplication.stop_replica(group_id, replica_id) end)
+    end
+
+    client = start_client(group_id, {:retry_client, group_id}, [1, 2, 3])
+
+    assert {:ok, :ok} =
+             ViewstampedReplication.command(group_id, {:put, :retried, true},
+               client: client,
+               timeout: 2_500
+             )
+
+    assert :atomics.get(counters, 1) >= 6
+    assert :atomics.get(counters, 2) >= 3
+
+    assert {:ok, %{commit_number: 1, applied_number: 1}} =
+             ViewstampedReplication.status(group_id, 1)
   end
 
   test "groups with one through six replicas commit with their configured majority" do

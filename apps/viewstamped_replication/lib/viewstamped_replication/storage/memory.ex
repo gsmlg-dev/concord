@@ -5,7 +5,7 @@ defmodule ViewstampedReplication.Storage.Memory do
 
   @behaviour ViewstampedReplication.Storage
 
-  alias ViewstampedReplication.{Log, LogEntry}
+  alias ViewstampedReplication.{Log, LogEntry, Storage}
 
   @enforce_keys [:configuration_hash, :replica_id]
   defstruct [
@@ -34,7 +34,13 @@ defmodule ViewstampedReplication.Storage.Memory do
   end
 
   @impl true
-  def recover(%__MODULE__{} = state), do: {:ok, recovered(state), state}
+  def recover(%__MODULE__{} = state) do
+    recovered = recovered(state)
+
+    with :ok <- Storage.validate_recovered(recovered) do
+      {:ok, recovered, state}
+    end
+  end
 
   @impl true
   def persist_hard_state(%__MODULE__{} = state, hard_state) when is_map(hard_state),
@@ -91,6 +97,14 @@ defmodule ViewstampedReplication.Storage.Memory do
   @impl true
   def install_snapshot(%__MODULE__{} = state, snapshot),
     do: {:ok, %{state | snapshot: snapshot}}
+
+  @impl true
+  def install_snapshot_state(%__MODULE__{} = state, snapshot, durable_state)
+      when is_map(durable_state) do
+    with {:ok, updated} <- install_state(state, durable_state) do
+      {:ok, %{updated | snapshot: snapshot}}
+    end
+  end
 
   @impl true
   def install_state(%__MODULE__{} = state, durable_state) when is_map(durable_state) do

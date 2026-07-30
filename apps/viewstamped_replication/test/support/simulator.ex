@@ -458,7 +458,42 @@ defmodule ViewstampedReplication.Test.Simulator do
     %{simulator | timer_queue: timers}
   end
 
+  defp interpret_effect(
+         simulator,
+         replica_id,
+         {:persist, {:install_snapshot_state, snapshot, _durable_state}}
+       ) do
+    install_state_machine_snapshot(simulator, replica_id, snapshot)
+  end
+
   defp interpret_effect(simulator, replica_id, {:persist, {:install_snapshot, snapshot}}) do
+    install_state_machine_snapshot(simulator, replica_id, snapshot)
+  end
+
+  defp interpret_effect(simulator, replica_id, {:persist, {:write_snapshot, snapshot}}) do
+    snapshot_op_number = Map.fetch!(simulator.replicas, replica_id).snapshot_op_number
+
+    remaining_history =
+      simulator.applied_history
+      |> Map.get(replica_id, [])
+      |> Enum.reject(fn {entry, _result} -> entry.op_number <= snapshot_op_number end)
+
+    simulator
+    |> Map.update!(:applied_history, &Map.put(&1, replica_id, remaining_history))
+    |> Map.update!(:snapshot_bases, &Map.put(&1, replica_id, snapshot_op_number))
+    |> record(%{
+      type: :snapshot_written,
+      replica_id: replica_id,
+      snapshot_op_number: snapshot_op_number,
+      snapshot: snapshot
+    })
+  end
+
+  defp interpret_effect(simulator, replica_id, effect) do
+    record(simulator, %{type: :effect, replica_id: replica_id, effect: effect})
+  end
+
+  defp install_state_machine_snapshot(simulator, replica_id, snapshot) do
     state_machine_snapshot =
       case snapshot do
         %{state_machine: value} -> value
@@ -484,29 +519,6 @@ defmodule ViewstampedReplication.Test.Simulator do
         raise "simulator snapshot restore failed (seed=#{inspect(simulator.seed)}): " <>
                 inspect(reason)
     end
-  end
-
-  defp interpret_effect(simulator, replica_id, {:persist, {:write_snapshot, snapshot}}) do
-    snapshot_op_number = Map.fetch!(simulator.replicas, replica_id).snapshot_op_number
-
-    remaining_history =
-      simulator.applied_history
-      |> Map.get(replica_id, [])
-      |> Enum.reject(fn {entry, _result} -> entry.op_number <= snapshot_op_number end)
-
-    simulator
-    |> Map.update!(:applied_history, &Map.put(&1, replica_id, remaining_history))
-    |> Map.update!(:snapshot_bases, &Map.put(&1, replica_id, snapshot_op_number))
-    |> record(%{
-      type: :snapshot_written,
-      replica_id: replica_id,
-      snapshot_op_number: snapshot_op_number,
-      snapshot: snapshot
-    })
-  end
-
-  defp interpret_effect(simulator, replica_id, effect) do
-    record(simulator, %{type: :effect, replica_id: replica_id, effect: effect})
   end
 
   defp enqueue_message(simulator, from, to, envelope) do

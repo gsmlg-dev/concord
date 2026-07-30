@@ -6,6 +6,7 @@ defmodule ViewstampedReplication.Test.ProtocolScenariosTest do
 
   alias ViewstampedReplication.Protocol.{
     Commit,
+    DoViewChange,
     Envelope,
     GetState,
     NewState,
@@ -48,6 +49,33 @@ defmodule ViewstampedReplication.Test.ProtocolScenariosTest do
     assert simulator.machine_states[1] == 10
     assert simulator.machine_states[2] == 10
     assert Linearizability.linearizable?(simulator.history)
+  end
+
+  test "heartbeat repairs lost prepares and a lost prepare acknowledgement" do
+    simulator =
+      Simulator.new(seed: 115)
+      |> Simulator.submit_client_request(1, request(1, {:write, 10}))
+      |> Simulator.drop_message(&(payload?(&1, Prepare) and &1.to == 2))
+      |> Simulator.drop_message(&(payload?(&1, Prepare) and &1.to == 3))
+      |> put_heartbeat_timer(1)
+      |> Simulator.fire_timer(1, :heartbeat)
+      |> deliver_payload(Prepare, 2)
+      |> Simulator.drop_message(&payload?(&1, PrepareOk))
+      |> Simulator.drop_message(&(payload?(&1, Prepare) and &1.to == 3))
+
+    assert simulator.replicas[1].commit_number == 0
+
+    repaired =
+      simulator
+      |> Simulator.fire_timer(1, :heartbeat)
+      |> Simulator.deliver_all()
+
+    assert Enum.all?(repaired.replicas, fn {_id, state} ->
+             state.commit_number == 1 and state.applied_number == 1
+           end)
+
+    assert Enum.all?(repaired.machine_states, fn {_id, value} -> value == 10 end)
+    assert Linearizability.linearizable?(repaired.history)
   end
 
   test "an isolated minority primary cannot commit" do
@@ -135,6 +163,63 @@ defmodule ViewstampedReplication.Test.ProtocolScenariosTest do
 
     assert healed.replicas[1].status == :normal
     assert healed.replicas[1].view_number == 1
+  end
+
+  test "new primary retries an inherited uncommitted request after lost adoption traffic" do
+    request = request(1, {:write, 10})
+
+    simulator =
+      Simulator.new(seed: 116)
+      |> Simulator.submit_client_request(1, request)
+      |> deliver_payload(Prepare, 2)
+      |> Simulator.drop_message(&payload?(&1, PrepareOk))
+      |> Simulator.drop_message(&(payload?(&1, Prepare) and &1.to == 3))
+      |> Simulator.partition(1, [2, 3])
+      |> put_primary_timer(3)
+      |> Simulator.fire_timer(2, :primary)
+      |> Simulator.fire_timer(3, :primary)
+      |> deliver_payload(StartViewChange, 3)
+      |> deliver_payload(StartViewChange, 2)
+      |> deliver_payload(DoViewChange, 2)
+      |> Simulator.drop_message(&(payload?(&1, StartView) and &1.to == 3))
+
+    assert simulator.replicas[2].status == :normal
+    assert simulator.replicas[2].view_number == 1
+    assert simulator.replicas[2].commit_number == 0
+    assert MapSet.equal?(simulator.replicas[2].prepare_acks[1], MapSet.new([2]))
+    assert simulator.replicas[3].status == :view_change
+
+    simulator =
+      simulator
+      |> Simulator.fire_timer(2, :heartbeat)
+      |> deliver_payload(Prepare, 3)
+      |> deliver_payload(GetState, 2)
+      |> deliver_payload(NewState, 3)
+      |> Simulator.drop_message(
+        &(payload?(&1, PrepareOk) and &1.from == 3 and &1.to == 2)
+      )
+
+    assert simulator.replicas[2].commit_number == 0
+    assert simulator.replicas[3].status == :normal
+    assert simulator.replicas[3].view_number == 1
+
+    repaired =
+      simulator
+      |> Simulator.fire_timer(2, :heartbeat)
+      |> Simulator.deliver_all()
+      |> Simulator.submit_client_request(2, request)
+      |> Simulator.deliver_all()
+
+    for replica_id <- [2, 3] do
+      assert repaired.replicas[replica_id].commit_number == 1
+      assert repaired.replicas[replica_id].applied_number == 1
+      assert repaired.machine_states[replica_id] == 10
+      assert [{%LogEntry{op_number: 1}, _result}] = repaired.applied_history[replica_id]
+    end
+
+    assert Enum.count(repaired.history, &(&1.type == :retry)) == 1
+    assert Enum.count(repaired.history, &(&1.type == :complete)) == 1
+    assert Linearizability.linearizable?(repaired.history)
   end
 
   test "a primary crash after one prepare cannot commit that operation without a quorum" do
@@ -412,6 +497,32 @@ defmodule ViewstampedReplication.Test.ProtocolScenariosTest do
             simulator.replicas,
             replica_id,
             %{state | timer_tokens: Map.put(state.timer_tokens, :primary, token)}
+          ),
+        timer_queue: simulator.timer_queue ++ [timer],
+        next_id: timer_id + 1
+    }
+  end
+
+  defp put_heartbeat_timer(simulator, replica_id) do
+    token = {:simulated_heartbeat_timeout, replica_id}
+    timer_id = simulator.next_id
+    state = Map.fetch!(simulator.replicas, replica_id)
+
+    timer = %Timer{
+      id: timer_id,
+      replica_id: replica_id,
+      kind: :heartbeat,
+      token: token,
+      timeout: 0
+    }
+
+    %{
+      simulator
+      | replicas:
+          Map.put(
+            simulator.replicas,
+            replica_id,
+            %{state | timer_tokens: Map.put(state.timer_tokens, :heartbeat, token)}
           ),
         timer_queue: simulator.timer_queue ++ [timer],
         next_id: timer_id + 1

@@ -220,8 +220,7 @@ defmodule ViewstampedReplication.Protocol do
       not primary?(state) ->
         {state,
          [
-           {:read_reply, route,
-            {:error, {:not_primary, primary_id(state, state.view_number)}}}
+           {:read_reply, route, {:error, {:not_primary, primary_id(state, state.view_number)}}}
          ]}
 
       state.applied_number != state.commit_number or not is_nil(state.applying_number) ->
@@ -340,6 +339,21 @@ defmodule ViewstampedReplication.Protocol do
       else: {state, []}
   end
 
+  defp handle_prepare(
+         %State{status: status} = state,
+         sender,
+         %Prepare{
+           view_number: view,
+           op_number: op_number,
+           entry: %LogEntry{} = entry
+         }
+       )
+       when status in [:view_change, :recovering] and view == state.view_number do
+    if sender == primary_id(state, view) and valid_prepare_entry?(entry, view, op_number),
+      do: request_future_state(state, sender, view, op_number),
+      else: {state, []}
+  end
+
   defp handle_prepare(%State{status: :normal} = state, sender, %Prepare{
          view_number: view,
          op_number: op_number,
@@ -351,7 +365,7 @@ defmodule ViewstampedReplication.Protocol do
       sender != primary_id(state, view) ->
         {state, []}
 
-      entry.view_number != view or entry.op_number != op_number ->
+      not valid_prepare_entry?(entry, view, op_number) ->
         {state, []}
 
       op_number == state.op_number + 1 ->
@@ -377,12 +391,33 @@ defmodule ViewstampedReplication.Protocol do
       op_number > state.op_number + 1 ->
         request_missing_state(state, sender, view, state.op_number + 1, op_number)
 
+      op_number > state.commit_number ->
+        request_missing_state(
+          state,
+          sender,
+          view,
+          state.commit_number + 1,
+          max(state.op_number, op_number)
+        )
+
       true ->
         {state, []}
     end
   end
 
   defp handle_prepare(state, _sender, _message), do: {state, []}
+
+  # The message view identifies the view adopting the operation. The entry
+  # keeps the view where the client request was originally appended.
+  defp valid_prepare_entry?(
+         %LogEntry{view_number: entry_view, op_number: op_number},
+         view,
+         op_number
+       )
+       when is_integer(entry_view) and entry_view >= 0 and entry_view <= view,
+       do: true
+
+  defp valid_prepare_entry?(_entry, _view, _op_number), do: false
 
   defp accept_prepare(state, sender, entry, commit_number) do
     state = %{
@@ -662,8 +697,7 @@ defmodule ViewstampedReplication.Protocol do
 
       {state,
        [
-         {:persist, {:write_snapshot, snapshot}},
-         {:persist, {:install_state, install_state_operation(state)}}
+         {:persist, {:install_snapshot_state, snapshot, install_state_operation(state)}}
        ]}
     else
       {:error, _reason} -> {state, []}
@@ -899,9 +933,17 @@ defmodule ViewstampedReplication.Protocol do
        ) do
     previous_status = state.status
     op_number = Log.last_op_number(log)
-    client_table = normalize_client_table(log, client_table)
+    installed_commit_number = max(state.commit_number, min(commit_number, op_number))
+
     snapshot_op_number = normalized_snapshot_op_number(snapshot, snapshot_op_number)
     applied_number = if snapshot, do: snapshot_op_number, else: state.applied_number
+
+    client_table =
+      installed_client_table(
+        log,
+        if(snapshot, do: client_table, else: state.client_table),
+        applied_number
+      )
 
     state = %{
       state
@@ -909,7 +951,7 @@ defmodule ViewstampedReplication.Protocol do
         view_number: view,
         last_normal_view: view,
         op_number: op_number,
-        commit_number: max(state.commit_number, min(commit_number, op_number)),
+        commit_number: installed_commit_number,
         log: log,
         client_table: client_table,
         applied_number: applied_number,
@@ -920,7 +962,13 @@ defmodule ViewstampedReplication.Protocol do
           ),
         snapshot: snapshot || state.snapshot,
         snapshot_op_number: if(snapshot, do: snapshot_op_number, else: state.snapshot_op_number),
-        prepare_acks: %{},
+        prepare_acks:
+          adopted_prepare_acks(
+            role,
+            state.replica_id,
+            installed_commit_number,
+            op_number
+          ),
         start_view_change_votes: %{},
         do_view_change_messages: %{},
         recovery_nonce: nil,
@@ -929,14 +977,17 @@ defmodule ViewstampedReplication.Protocol do
 
     install = install_state_operation(state)
 
-    snapshot_effects =
-      if snapshot, do: [{:persist, {:install_snapshot, snapshot}}], else: []
+    install_effect =
+      if snapshot do
+        {:persist, {:install_snapshot_state, snapshot, install}}
+      else
+        {:persist, {:install_state, install}}
+      end
 
     effects =
       effects ++
-        snapshot_effects ++
         [
-          {:persist, {:install_state, install}},
+          install_effect,
           {:cancel_timer, :view_change},
           {:cancel_timer, :recovery}
         ]
@@ -980,8 +1031,43 @@ defmodule ViewstampedReplication.Protocol do
         effects
       end
 
+    effects = acknowledge_adopted_log(effects, state, role)
     {state, effects} = schedule_normal_timer(state, effects)
     maybe_start_apply(state, effects)
+  end
+
+  defp adopted_prepare_acks(:primary, replica_id, commit_number, op_number) do
+    (commit_number + 1)..op_number//1
+    |> Map.new(&{&1, MapSet.new([replica_id])})
+  end
+
+  defp adopted_prepare_acks(:backup, _replica_id, _commit_number, _op_number), do: %{}
+
+  defp acknowledge_adopted_log(effects, state, :backup)
+       when state.op_number > state.commit_number do
+    if valid_adopted_suffix?(state) do
+      effects ++
+        [
+          {:send, primary_id(state, state.view_number),
+           envelope(
+             state,
+             %PrepareOk{view_number: state.view_number, op_number: state.op_number}
+           )}
+        ]
+    else
+      effects
+    end
+  end
+
+  defp acknowledge_adopted_log(effects, _state, _role), do: effects
+
+  defp valid_adopted_suffix?(state) do
+    Enum.all?((state.commit_number + 1)..state.op_number//1, fn op_number ->
+      case Log.fetch(state.log, op_number) do
+        {:ok, entry} -> valid_prepare_entry?(entry, state.view_number, op_number)
+        _missing_or_compacted -> false
+      end
+    end)
   end
 
   defp handle_start_view(state, _sender, %StartView{view_number: view})
@@ -1203,34 +1289,55 @@ defmodule ViewstampedReplication.Protocol do
   defp handle_new_state(state, _sender, _message), do: {state, []}
 
   defp request_future_state(state, sender, view, advertised_op) do
+    from_op = state.commit_number + 1
+
+    read_effects =
+      Enum.map(state.pending_reads, fn {_nonce, pending_read} ->
+        {:read_reply, pending_read.route, {:error, :recovering}}
+      end)
+
+    stale_timer_kinds =
+      [:primary, :heartbeat, :view_change, :read]
+      |> Enum.filter(&Map.has_key?(state.timer_tokens, &1))
+
     state = %{
       state
       | status: :recovering,
         view_number: view,
         prepare_acks: %{},
+        pending_reads: %{},
         start_view_change_votes: %{},
-        do_view_change_messages: %{}
+        do_view_change_messages: %{},
+        recovery_nonce: nil,
+        recovery_responses: %{},
+        timer_tokens: Map.drop(state.timer_tokens, stale_timer_kinds)
     }
 
-    range = (state.op_number + 1)..max(state.op_number + 1, advertised_op)//1
+    range = from_op..max(from_op, advertised_op)//1
 
-    effects = [
-      {:persist,
-       {:hard_state,
-        %{
-          view_number: view,
-          status: :recovering,
-          last_normal_view: state.last_normal_view
-        }}},
-      {:request_state_transfer, sender, range},
-      {:send, sender,
-       envelope(
-         state,
-         %GetState{view_number: view, from_op_number: state.op_number + 1}
-       )}
-    ]
+    effects =
+      [
+        {:persist,
+         {:hard_state,
+          %{
+            view_number: view,
+            status: :recovering,
+            last_normal_view: state.last_normal_view
+          }}}
+      ] ++
+        read_effects ++
+        Enum.map(stale_timer_kinds, &{:cancel_timer, &1}) ++
+        [
+          {:request_state_transfer, sender, range},
+          {:send, sender,
+           envelope(
+             state,
+             %GetState{view_number: view, from_op_number: from_op}
+           )}
+        ]
 
-    {state, effects}
+    {state, timer_effects} = schedule_timer(state, :recovery)
+    {state, effects ++ timer_effects}
   end
 
   defp request_missing_state(state, sender, view, from_op, through_op) do
@@ -1273,7 +1380,7 @@ defmodule ViewstampedReplication.Protocol do
            applied_number,
            snapshot_op_number,
            log
-         ) do
+         ) and recovered_client_table_complete?(log, client_table, applied_number) do
         state = %{
           state
           | view_number: view,
@@ -1298,14 +1405,15 @@ defmodule ViewstampedReplication.Protocol do
             bootstrap_recovery(state, Map.get(recovered, :recovery_nonce, recovery_nonce(state)))
         end
       else
-        {state, []}
+        bootstrap_recovery(state, recovery_nonce(state))
       end
     else
-      _error -> {state, []}
+      _error -> bootstrap_recovery(state, recovery_nonce(state))
     end
   end
 
-  defp handle_storage_recovered(state, _invalid), do: {state, []}
+  defp handle_storage_recovered(state, _invalid),
+    do: bootstrap_recovery(state, recovery_nonce(state))
 
   defp bootstrap_empty(state, nonce) do
     if Configuration.member_count(state.configuration) == 1 do
@@ -1338,7 +1446,18 @@ defmodule ViewstampedReplication.Protocol do
   end
 
   defp enter_singleton_normal(state) do
-    state = %{state | status: :normal, last_normal_view: state.view_number}
+    state = %{
+      state
+      | status: :normal,
+        last_normal_view: state.view_number,
+        prepare_acks:
+          adopted_prepare_acks(
+            :primary,
+            state.replica_id,
+            state.commit_number,
+            state.op_number
+          )
+    }
 
     effects = [
       {:persist,
@@ -1350,6 +1469,7 @@ defmodule ViewstampedReplication.Protocol do
         }}}
     ]
 
+    {state, effects} = maybe_commit_prepared(state, effects)
     {state, effects} = schedule_normal_timer(state, effects)
     maybe_start_apply(state, effects)
   end
@@ -1449,13 +1569,15 @@ defmodule ViewstampedReplication.Protocol do
 
   defp handle_timeout(%State{status: :normal} = state, :heartbeat, token) do
     if timer_current?(state, :heartbeat, token) and primary?(state) do
-      effects = [
-        {:broadcast,
-         envelope(
-           state,
-           %Commit{view_number: state.view_number, commit_number: state.commit_number}
-         )}
-      ]
+      effects =
+        retry_uncommitted_prepares(state) ++
+          [
+            {:broadcast,
+             envelope(
+               state,
+               %Commit{view_number: state.view_number, commit_number: state.commit_number}
+             )}
+          ]
 
       schedule_normal_timer(state, effects)
     else
@@ -1497,6 +1619,38 @@ defmodule ViewstampedReplication.Protocol do
   end
 
   defp handle_timeout(state, _kind, _token), do: {state, []}
+
+  defp retry_uncommitted_prepares(state) do
+    (state.commit_number + 1)..state.op_number//1
+    |> Enum.flat_map(&retry_prepare(state, &1))
+  end
+
+  defp retry_prepare(state, op_number) do
+    case Log.fetch(state.log, op_number) do
+      {:ok, %LogEntry{view_number: view} = entry}
+      when is_integer(view) and view >= 0 and view <= state.view_number ->
+        acknowledgements =
+          state.prepare_acks
+          |> Map.get(op_number, MapSet.new())
+          |> MapSet.put(state.replica_id)
+
+        state.configuration.members
+        |> Enum.reject(&MapSet.member?(acknowledgements, &1.id))
+        |> Enum.map(fn member ->
+          prepare = %Prepare{
+            view_number: state.view_number,
+            op_number: op_number,
+            commit_number: state.commit_number,
+            entry: entry
+          }
+
+          {:send, member.id, envelope(state, prepare)}
+        end)
+
+      _missing_or_future_view_entry ->
+        []
+    end
+  end
 
   defp schedule_normal_timer(state, effects) do
     kind = if primary?(state), do: :heartbeat, else: :primary
@@ -1582,6 +1736,29 @@ defmodule ViewstampedReplication.Protocol do
     Enum.reduce(Log.to_list(log), client_table || %{}, fn entry, table ->
       record_pending_request(table, entry)
     end)
+  end
+
+  defp installed_client_table(log, client_table, applied_number) do
+    entries = Log.to_list(log)
+
+    applied_records =
+      Enum.reduce(client_table || %{}, %{}, fn
+        {client_id, %{request_number: request_number, status: :applied} = record}, table ->
+          applied_ahead? =
+            Enum.any?(entries, fn entry ->
+              entry.client_id == client_id and entry.request_number == request_number and
+                entry.op_number > applied_number
+            end)
+
+          if applied_ahead?, do: table, else: Map.put(table, client_id, record)
+
+        {_client_id, _pending_or_invalid}, table ->
+          table
+      end)
+
+    entries
+    |> Enum.filter(&(&1.op_number > applied_number))
+    |> Enum.reduce(applied_records, fn entry, table -> record_pending_request(table, entry) end)
   end
 
   defp state_transfer_message(state, from_op_number)
@@ -1731,6 +1908,9 @@ defmodule ViewstampedReplication.Protocol do
       when is_integer(last_op_number) and last_op_number >= 0 ->
         last_op_number
 
+      %{op_number: op_number} when is_integer(op_number) and op_number >= 0 ->
+        op_number
+
       _snapshot when is_integer(advertised) and advertised >= 0 ->
         advertised
 
@@ -1773,6 +1953,29 @@ defmodule ViewstampedReplication.Protocol do
       applied_number <= commit_number and
       commit_number <= Log.last_op_number(log)
   end
+
+  defp recovered_client_table_complete?(log, client_table, applied_number)
+       when is_map(client_table) do
+    log
+    |> Log.to_list()
+    |> Enum.reduce(%{}, fn entry, latest -> Map.put(latest, entry.client_id, entry) end)
+    |> Enum.all?(fn
+      {_client_id, %LogEntry{op_number: op_number}} when op_number > applied_number ->
+        true
+
+      {client_id, %LogEntry{request_number: request_number}} ->
+        case Map.get(client_table, client_id) do
+          %{status: :applied, request_number: recorded}
+          when is_integer(recorded) and recorded >= request_number ->
+            true
+
+          _missing_or_pending ->
+            false
+        end
+    end)
+  end
+
+  defp recovered_client_table_complete?(_log, _client_table, _applied_number), do: false
 
   defp install_state_operation(state) do
     %{

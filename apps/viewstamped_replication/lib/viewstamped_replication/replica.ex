@@ -15,6 +15,7 @@ defmodule ViewstampedReplication.Replica do
     LogEntry,
     Member,
     Protocol,
+    Storage,
     Telemetry
   }
 
@@ -235,6 +236,8 @@ defmodule ViewstampedReplication.Replica do
   @impl true
   def handle_continue(:recover_storage, state) do
     with {:ok, recovered, storage_state} <- state.storage.recover(state.storage_state),
+         :ok <- Storage.validate_recovered(recovered),
+         :ok <- validate_recovered_identity(state.configuration, recovered),
          {:ok, state} <- recover_runtime(%{state | storage_state: storage_state}, recovered) do
       {:noreply, state}
     else
@@ -458,6 +461,27 @@ defmodule ViewstampedReplication.Replica do
     end
   end
 
+  defp execute_effect(
+         state,
+         {:persist, {:install_snapshot_state, snapshot, durable_state}}
+       ) do
+    with {:ok, state} <- restore_state_machine(state, snapshot),
+         {:ok, storage_state} <-
+           install_snapshot_state(state.storage, state.storage_state, snapshot, durable_state) do
+      Telemetry.execute([:storage, :operation], %{count: 1}, telemetry_metadata(state))
+
+      {:ok,
+       %{
+         state
+         | storage_state: storage_state,
+           durable_applied_number:
+             Map.get(durable_state, :applied_number, state.durable_applied_number)
+       }}
+    else
+      {:error, reason} -> {:stop, {:snapshot_install_failed, reason}, state}
+    end
+  end
+
   defp execute_effect(state, {:persist, {:install_state, durable_state}}) do
     case state.storage.install_state(state.storage_state, durable_state) do
       {:ok, storage_state} ->
@@ -566,6 +590,14 @@ defmodule ViewstampedReplication.Replica do
   defp persist(_storage, _storage_state, operation),
     do: {:error, {:unsupported_storage_operation, operation}}
 
+  defp install_snapshot_state(storage, storage_state, snapshot, durable_state) do
+    if function_exported?(storage, :install_snapshot_state, 3) do
+      storage.install_snapshot_state(storage_state, snapshot, durable_state)
+    else
+      {:error, {:atomic_snapshot_state_install_not_supported, storage}}
+    end
+  end
+
   defp open_storage(configuration, opts) do
     {storage, storage_opts} =
       case Keyword.get(opts, :storage, Memory) do
@@ -579,9 +611,21 @@ defmodule ViewstampedReplication.Replica do
         replica_id: configuration.replica_id
       )
 
-    case storage.open(storage_opts) do
-      {:ok, storage_state} -> {:ok, storage, storage_state}
-      {:error, reason} -> {:error, reason}
+    with :ok <- validate_storage_adapter(storage),
+         {:ok, storage_state} <- storage.open(storage_opts) do
+      {:ok, storage, storage_state}
+    end
+  end
+
+  defp validate_storage_adapter(storage) do
+    with {:module, ^storage} <- Code.ensure_loaded(storage),
+         true <-
+           function_exported?(storage, :install_snapshot_state, 3) or
+             {:error, {:atomic_snapshot_state_install_not_supported, storage}} do
+      :ok
+    else
+      {:error, {:atomic_snapshot_state_install_not_supported, _storage}} = error -> error
+      {:error, reason} -> {:error, {:storage_adapter_load_failed, storage, reason}}
     end
   end
 
@@ -630,6 +674,19 @@ defmodule ViewstampedReplication.Replica do
 
     recovered.hard_state == %{} and Log.last_op_number(log) == 0 and
       recovered.commit_number == 0 and is_nil(recovered.snapshot)
+  end
+
+  defp validate_recovered_identity(configuration, recovered) do
+    cond do
+      recovered.configuration_hash != Configuration.hash(configuration) ->
+        {:error, :configuration_hash_mismatch}
+
+      recovered.replica_id != configuration.replica_id ->
+        {:error, :replica_id_mismatch}
+
+      true ->
+        :ok
+    end
   end
 
   defp persist_applied_state(state) do

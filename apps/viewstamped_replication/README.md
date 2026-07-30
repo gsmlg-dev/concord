@@ -17,6 +17,9 @@ one through six replicas. Current operational constraints are:
 
 - fixed membership with no reconfiguration protocol;
 - no automatic log-compaction or storage-retention policy;
+- applied client results are retained without eviction, so deployments that
+  continually create new client identities need a future replicated
+  session-retirement policy to bound the durable client table;
 - no storage-format migration between incompatible VSR releases;
 - snapshots are explicit rather than managed by a production checkpoint
   policy.
@@ -54,8 +57,33 @@ ViewstampedReplication.read(group_id, operation,
 `ViewstampedReplication.Storage.Memory` is volatile and intended for tests.
 `ViewstampedReplication.Storage.File` provides a checksummed, fsynced WAL,
 atomic checkpoints, configuration identity validation, and truncation of
-partial or corrupt WAL tails during recovery. It does not yet provide an
-automatic compaction or retention policy.
+incomplete version-two WAL tails whose length header is checksummed. Complete
+corrupt records and ambiguous incomplete version-one records fail recovery
+without modifying the WAL. A tail ending in a partial magic prefix, or in the
+complete magic without a version byte, is treated as an incomplete append and
+truncated. It does not yet provide an automatic compaction or retention policy.
+
+WAL records and checkpoints have the same fixed 256 MiB ETF payload limit.
+Oversized writes fail before changing the WAL or replacing a checkpoint, so
+everything acknowledged to disk remains readable by recovery. State that grows
+beyond one checkpoint record requires a future chunked snapshot format; the
+adapter does not silently split or truncate it.
+
+Writes default to version one for rollback compatibility. The file storage
+option `write_version` controls both new WAL records and rewritten checkpoints.
+Set `write_version: 2` only after every deployment has passed the old-reader
+rollback window. Once either a version-two WAL record or checkpoint exists,
+setting `write_version: 1` does not downgrade it, and opening that directory
+with an older reader is unsafe. A later binary rollback requires restoring a
+separately verified version-one-compatible backup; no automatic downgrade is
+provided.
+
+State transfer must persist the transferred snapshot together with its matching
+hard state, log, commit/applied counters, and client table. A custom
+`ViewstampedReplication.Storage` adapter must implement
+`install_snapshot_state/3` as one crash-atomic operation. The runtime returns
+`{:atomic_snapshot_state_install_not_supported, adapter}` instead of attempting
+a non-atomic fallback when that callback is absent.
 
 `ViewstampedReplication.Transport.Local` routes through the local registry and
 supports an injectable delivery function for deterministic fault tests.

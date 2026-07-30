@@ -1,13 +1,17 @@
 defmodule ViewstampedReplication.Protocol.ViewChangeTest do
   use ExUnit.Case, async: true
 
-  alias ViewstampedReplication.{Configuration, Log, LogEntry, Member}
+  alias ViewstampedReplication.{Configuration, Log, LogEntry, Member, Reply, Request}
   alias ViewstampedReplication.Protocol
 
   alias ViewstampedReplication.Protocol.{
+    Commit,
     DoViewChange,
     Envelope,
+    GetState,
     Prepare,
+    PrepareOk,
+    Recovery,
     StartView,
     StartViewChange,
     State
@@ -105,6 +109,171 @@ defmodule ViewstampedReplication.Protocol.ViewChangeTest do
     {new_primary, _effects} = peer_step(two_messages, 3, remote)
     assert new_primary.status == :normal
     assert new_primary.view_number == 1
+  end
+
+  test "a new view durably adopts and reprepares an inherited uncommitted entry" do
+    inherited = entry(1, 0, :inherited)
+    inherited_log = Log.append!(Log.new(), inherited)
+
+    backup = %{
+      normal_state(3)
+      | status: :view_change,
+        view_number: 1,
+        log: inherited_log,
+        op_number: 1
+    }
+
+    start_view = %StartView{
+      view_number: 1,
+      op_number: 1,
+      commit_number: 0,
+      log: inherited_log,
+      client_table: %{}
+    }
+
+    assert {installed, effects} = peer_step(backup, 2, start_view)
+
+    persist_index =
+      Enum.find_index(effects, &match?({:persist, {:install_state, %{view_number: 1}}}, &1))
+
+    acknowledgement_index =
+      Enum.find_index(
+        effects,
+        &match?({:send, 2, %Envelope{payload: %PrepareOk{view_number: 1, op_number: 1}}}, &1)
+      )
+
+    assert is_integer(persist_index)
+    assert is_integer(acknowledgement_index)
+    assert persist_index < acknowledgement_index
+    assert installed.log == inherited_log
+    assert Log.fetch!(installed.log, 1).view_number == 0
+
+    heartbeat_token = {:heartbeat, 1, :adoption_retry}
+
+    primary = %{
+      normal_state(2)
+      | view_number: 1,
+        last_normal_view: 1,
+        log: inherited_log,
+        op_number: 1,
+        prepare_acks: %{1 => MapSet.new([2])},
+        timer_tokens: %{heartbeat: heartbeat_token}
+    }
+
+    assert {retried, retry_effects} =
+             Protocol.step(primary, {:timeout, :heartbeat, heartbeat_token})
+
+    retry =
+      Enum.find_value(retry_effects, fn
+        {:send, 3,
+         %Envelope{
+           payload: %Prepare{view_number: 1, op_number: 1, entry: ^inherited} = prepare
+         }} ->
+          prepare
+
+        _effect ->
+          nil
+      end)
+
+    assert %Prepare{} = retry
+
+    assert {reacknowledged,
+            [
+              {:send, 2, %Envelope{payload: %PrepareOk{view_number: 1, op_number: 1}}},
+              {:schedule_timer, :primary, _, _}
+            ]} = peer_step(installed, 2, retry)
+
+    assert reacknowledged.log == installed.log
+    assert retried.commit_number == 0
+  end
+
+  test "equal-log view-change tie cannot regress an applied client result to pending" do
+    applied_entry = entry(1, 0, :client)
+    log = Log.append!(Log.new(), applied_entry)
+    applied = %{request_number: 1, status: :applied, result: :result}
+    pending = %{request_number: 1, status: :pending, result: nil}
+
+    local_message = %DoViewChange{
+      view_number: 1,
+      last_normal_view: 0,
+      op_number: 1,
+      commit_number: 1,
+      log: log,
+      client_table: %{client: applied}
+    }
+
+    remote_message = %{
+      local_message
+      | commit_number: 0,
+        client_table: %{client: pending}
+    }
+
+    changing = %{
+      normal_state(2)
+      | status: :view_change,
+        view_number: 1,
+        log: log,
+        op_number: 1,
+        commit_number: 1,
+        applied_number: 1,
+        client_table: %{client: applied},
+        do_view_change_messages: %{1 => %{2 => local_message}}
+    }
+
+    assert {installed, _effects} = peer_step(changing, 1, remote_message)
+    assert installed.status == :normal
+    assert installed.applied_number == 1
+    assert installed.client_table.client == applied
+
+    request = %Request{client_id: :client, request_number: 1, operation: :client}
+
+    assert {^installed, [{:reply, :route, %Reply{result: :result}}]} =
+             Protocol.step(installed, {:client_request, :route, request})
+  end
+
+  test "a dropped targeted state transfer falls back to timed recovery" do
+    stale_view_change_token = {:view_change, 1, :stale}
+
+    changing = %{
+      normal_state(3)
+      | status: :view_change,
+        view_number: 1,
+        timer_tokens: %{view_change: stale_view_change_token}
+    }
+
+    inherited = entry(1, 0, :inherited)
+
+    assert {recovering, effects} =
+             peer_step(changing, 2, %Prepare{
+               view_number: 1,
+               op_number: 1,
+               commit_number: 0,
+               entry: inherited
+             })
+
+    assert recovering.status == :recovering
+    assert {:cancel_timer, :view_change} in effects
+    assert {:request_state_transfer, 2, 1..1} in effects
+    assert Enum.any?(effects, &match?({:send, 2, %Envelope{payload: %GetState{}}}, &1))
+
+    assert {:schedule_timer, :recovery, _, recovery_token} =
+             Enum.find(effects, &match?({:schedule_timer, :recovery, _, _}, &1))
+
+    assert recovering.timer_tokens.recovery == recovery_token
+    refute Map.has_key?(recovering.timer_tokens, :view_change)
+
+    assert {^recovering, []} =
+             peer_step(recovering, 2, %Commit{view_number: 1, commit_number: 1})
+
+    assert {^recovering, []} =
+             Protocol.step(recovering, {:timeout, :view_change, stale_view_change_token})
+
+    assert {retrying, retry_effects} =
+             Protocol.step(recovering, {:timeout, :recovery, recovery_token})
+
+    assert retrying.status == :recovering
+    assert Enum.any?(retry_effects, &match?({:broadcast, %Envelope{payload: %Recovery{}}}, &1))
+    assert Enum.any?(retry_effects, &match?({:schedule_timer, :recovery, _, _}, &1))
   end
 
   test "receiving a higher StartViewChange immediately joins that view" do
@@ -233,7 +402,8 @@ defmodule ViewstampedReplication.Protocol.ViewChangeTest do
       group_id: :group,
       replica_id: replica_id,
       members:
-        for(member_id <- 1..member_count,
+        for(
+          member_id <- 1..member_count,
           do: %Member{id: member_id, endpoint: {:replica, member_id}}
         )
     )

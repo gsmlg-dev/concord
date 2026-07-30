@@ -175,7 +175,11 @@ defmodule ViewstampedReplication.Protocol.RecoveryTest do
     assert {installed, effects} = peer_step(recovering, 1, new_state)
     assert installed.status == :normal
     assert installed.log == primary.log
-    assert Enum.any?(effects, &match?({:persist, {:install_state, _}}, &1))
+
+    assert Enum.any?(
+             effects,
+             &match?({:persist, {:install_snapshot_state, %{state: :snapshot}, _}}, &1)
+           )
   end
 
   test "single-replica empty bootstrap enters normal directly" do
@@ -190,7 +194,63 @@ defmodule ViewstampedReplication.Protocol.RecoveryTest do
     assert normal.status == :normal
   end
 
-  test "snapshot completion compacts the local log and persists the checkpoint before state" do
+  test "single-replica durable recovery commits a fsynced uncommitted suffix" do
+    first = entry(1)
+    log = Log.append!(Log.new(), first)
+
+    recovered = %{
+      configuration_hash: Configuration.hash(single_configuration()),
+      replica_id: 1,
+      hard_state: %{view_number: 0, last_normal_view: 0, status: :normal},
+      log: log,
+      commit_number: 0,
+      applied_number: 0,
+      snapshot: nil,
+      client_table: %{}
+    }
+
+    assert {normal, effects} =
+             Protocol.step(
+               State.new(single_configuration()),
+               {:storage_recovered, {:durable, recovered}}
+             )
+
+    assert normal.status == :normal
+    assert normal.commit_number == 1
+    assert normal.applying_number == 1
+    assert MapSet.equal?(normal.prepare_acks[1], MapSet.new([1]))
+    assert Enum.any?(effects, &match?({:persist, {:set_commit_number, 1}}, &1))
+    assert Enum.any?(effects, &match?({:apply, ^first}, &1))
+    assert Enum.any?(effects, &match?({:schedule_timer, :heartbeat, _, _}, &1))
+  end
+
+  test "invalid direct durable recovery remains live while storage rejects it" do
+    invalid = %{
+      configuration_hash: Configuration.hash(configuration(2)),
+      replica_id: 2,
+      hard_state: %{view_number: :not_an_integer, last_normal_view: 0, status: :normal},
+      log: Log.new(),
+      commit_number: 0,
+      applied_number: 0,
+      snapshot: nil,
+      client_table: %{}
+    }
+
+    assert {:error, {:invalid_recovered_state, :invalid_view_number}} =
+             ViewstampedReplication.Storage.validate_recovered(invalid)
+
+    assert {recovering, effects} =
+             Protocol.step(
+               State.new(configuration(2)),
+               {:storage_recovered, {:durable, invalid}}
+             )
+
+    assert recovering.status == :recovering
+    assert Enum.any?(effects, &match?({:broadcast, %Envelope{payload: %Recovery{}}}, &1))
+    assert Enum.any?(effects, &match?({:schedule_timer, :recovery, _, _}, &1))
+  end
+
+  test "snapshot completion atomically persists the snapshot with only the compacted state" do
     entries = [entry(1), entry(2), entry(3)]
     {:ok, log} = Log.new(entries)
 
@@ -206,9 +266,14 @@ defmodule ViewstampedReplication.Protocol.RecoveryTest do
 
     assert {compacted,
             [
-              {:persist, {:write_snapshot, ^snapshot}},
               {:persist,
-               {:install_state, %{snapshot: ^snapshot, snapshot_op_number: 2, applied_number: 3}}}
+               {:install_snapshot_state, ^snapshot,
+                %{
+                  snapshot: ^snapshot,
+                  snapshot_op_number: 2,
+                  applied_number: 3,
+                  log: %Log{base_op_number: 2, entries: [%LogEntry{op_number: 3}]}
+                }}}
             ]} = Protocol.step(state, {:snapshot_completed, 2, snapshot})
 
     assert compacted.snapshot == snapshot
@@ -217,7 +282,7 @@ defmodule ViewstampedReplication.Protocol.RecoveryTest do
     assert [%LogEntry{op_number: 3}] = Log.to_list(compacted.log)
   end
 
-  test "peer checkpoint install restores snapshot before installing and applying suffix" do
+  test "peer checkpoint atomically restores snapshot and matching state before applying suffix" do
     snapshot = %{last_op_number: 2, state_machine: %{value: 2}}
     third = entry(3)
     {:ok, compacted_log} = Log.new(2, [third])
@@ -238,9 +303,9 @@ defmodule ViewstampedReplication.Protocol.RecoveryTest do
 
     assert {installed,
             [
-              {:persist, {:install_snapshot, ^snapshot}},
               {:persist,
-               {:install_state, %{snapshot_op_number: 2, applied_number: 2, log: ^compacted_log}}},
+               {:install_snapshot_state, ^snapshot,
+                %{snapshot_op_number: 2, applied_number: 2, log: ^compacted_log}}},
               {:cancel_timer, :view_change},
               {:cancel_timer, :recovery},
               {:emit_telemetry, [:viewstamped_replication, :recovery, :stop], _,
@@ -345,6 +410,35 @@ defmodule ViewstampedReplication.Protocol.RecoveryTest do
              )
 
     assert normal.status == :normal
+  end
+
+  test "durable recovery accepts the legacy snapshot operation-number field" do
+    snapshot = %{op_number: 2, state_machine: %{value: 2}}
+    {:ok, log} = Log.new(2, [])
+
+    recovered = %{
+      configuration_hash: Configuration.hash(configuration(2)),
+      replica_id: 2,
+      hard_state: %{view_number: 0, last_normal_view: 0, status: :normal},
+      log: log,
+      commit_number: 2,
+      applied_number: 2,
+      snapshot: snapshot,
+      client_table: %{}
+    }
+
+    assert :ok = ViewstampedReplication.Storage.validate_recovered(recovered)
+
+    assert {normal, [{:schedule_timer, :primary, _, _}]} =
+             Protocol.step(
+               State.new(configuration(2)),
+               {:storage_recovered, {:durable, recovered}}
+             )
+
+    assert normal.status == :normal
+    assert normal.snapshot == snapshot
+    assert normal.snapshot_op_number == 2
+    assert normal.log.base_op_number == 2
   end
 
   defp normal_state(replica_id), do: %{State.new(configuration(replica_id)) | status: :normal}
