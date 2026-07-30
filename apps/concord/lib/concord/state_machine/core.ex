@@ -717,25 +717,32 @@ defmodule Concord.StateMachine.Core do
   defp do_query({:list, selector, opts}, state, now) do
     limit = Map.get(opts, :limit, 1000)
     keys_only = Map.get(opts, :keys_only, false)
+    revision = Map.get(opts, :revision)
 
-    entries =
-      state.current
-      |> Enum.filter(fn {key, record} ->
-        selector_match?(selector, key) and not Record.expired?(record, now)
-      end)
-      |> Enum.sort_by(&elem(&1, 0))
+    if revision != nil and revision <= state.compact_revision do
+      {:error, {:compacted, state.compact_revision}}
+    else
+      entries =
+        state
+        |> records_at_revision(revision)
+        |> Enum.filter(fn {key, record} ->
+          selector_match?(selector, key) and not Record.tombstone?(record) and
+            not Record.expired?(record, now)
+        end)
+        |> Enum.sort_by(&elem(&1, 0))
 
-    has_more = length(entries) > limit
-    entries = Enum.take(entries, limit)
+      has_more = length(entries) > limit
+      entries = Enum.take(entries, limit)
 
-    records =
-      Enum.map(entries, fn {key, record} ->
-        record = if keys_only, do: %{record | value: nil}, else: record
-        Map.put(record, :key, key)
-      end)
+      records =
+        Enum.map(entries, fn {key, record} ->
+          record = if keys_only, do: %{record | value: nil}, else: record
+          Map.put(record, :key, key)
+        end)
 
-    last_key = if entries == [], do: nil, else: entries |> List.last() |> elem(0)
-    {:ok, records, %{has_more: has_more, last_key: last_key}}
+      last_key = if entries == [], do: nil, else: entries |> List.last() |> elem(0)
+      {:ok, records, %{has_more: has_more, last_key: last_key}}
+    end
   end
 
   defp do_query({:lease_info, id}, state, now) do
@@ -1051,6 +1058,16 @@ defmodule Concord.StateMachine.Core do
       {_key, record} ->
         if Record.tombstone?(record), do: {:error, :not_found}, else: {:ok, record.value}
     end
+  end
+
+  defp records_at_revision(state, nil), do: state.current
+
+  defp records_at_revision(state, target_revision) do
+    (Map.to_list(state.current) ++
+       Enum.map(state.history, fn {{key, _revision}, record} -> {key, record} end))
+    |> Enum.filter(fn {_key, record} -> record.mod_revision <= target_revision end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Map.new(fn {key, records} -> {key, Enum.max_by(records, & &1.mod_revision)} end)
   end
 
   defp mutating_op?({:put, _, _, _}), do: true
