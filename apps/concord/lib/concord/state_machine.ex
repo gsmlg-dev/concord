@@ -8,7 +8,6 @@ defmodule Concord.StateMachine do
   views for callers that have not yet migrated to core queries.
   """
 
-  alias Concord.Index
   alias Concord.StateMachine.Core
   alias Concord.StateMachine.Core.{Context, State}
   alias Concord.StateMachine.Observer
@@ -28,7 +27,7 @@ defmodule Concord.StateMachine do
 
     context = context(meta)
     started_at = System.monotonic_time()
-    {result, state} = Core.apply(context, command, previous_state)
+    {result, state} = Core.apply_compatibility(context, command, previous_state)
     materialize(state)
     Observer.committed(context, command, previous_state, state, observer_source())
 
@@ -98,7 +97,7 @@ defmodule Concord.StateMachine do
 
     :telemetry.execute(
       [:concord, :snapshot, :installed],
-      %{timestamp: System.system_time()},
+      %{timestamp: System.system_time(), size: map_size(state.store)},
       %{node: node()}
     )
 
@@ -164,16 +163,32 @@ defmodule Concord.StateMachine do
     ensure_table(table(:current), [:ordered_set, :named_table])
     ensure_table(table(:history), [:ordered_set, :named_table])
     ensure_table(table(:leases), [:set, :named_table])
+    ensure_table(table(:index_registry), [:set, :named_table])
 
     replace_table(table(:store), state.store)
     replace_table(table(:current), state.current)
     replace_table(table(:history), state.history)
     replace_table(table(:leases), state.leases)
 
-    Enum.each(state.indexes, fn {name, _extractor} ->
-      index_table = Index.index_table_name(name)
-      ensure_table(index_table, [:set, :named_table])
-      replace_table(index_table, Map.get(state.index_entries, name, %{}))
+    active_index_names =
+      state.indexes
+      |> Map.keys()
+      |> Enum.filter(&is_binary/1)
+      |> MapSet.new()
+
+    prune_index_tables(active_index_names)
+
+    Enum.each(state.indexes, fn
+      {name, _extractor} when is_binary(name) ->
+        index_table = ensure_index_table(name)
+        replace_table(index_table, Map.get(state.index_entries, name, %{}))
+
+      {_legacy_name, _extractor} ->
+        # Pre-versioning commands accepted arbitrary index names. Core remains
+        # authoritative for those historical entries, but they cannot be
+        # represented by the legacy named-ETS view. Skipping them keeps the
+        # node available long enough to drop them through the migration gate.
+        :ok
     end)
 
     :ok
@@ -181,11 +196,15 @@ defmodule Concord.StateMachine do
 
   defp merge_legacy_index_views(%State{} = state) do
     entries =
-      Enum.reduce(state.indexes, state.index_entries, fn {name, _extractor}, acc ->
-        index_table = Index.index_table_name(name)
-        values = table_entries(index_table, Map.get(acc, name, %{}))
+      Enum.reduce(state.indexes, state.index_entries, fn
+        {name, _extractor}, acc when is_binary(name) ->
+          index_table = StorageScope.index_table_name(name)
+          values = table_entries(index_table, Map.get(acc, name, %{}))
 
-        Map.put(acc, name, values)
+          Map.put(acc, name, values)
+
+        {_legacy_name, _extractor}, acc ->
+          acc
       end)
 
     %{state | index_entries: entries}
@@ -205,10 +224,9 @@ defmodule Concord.StateMachine do
   end
 
   defp table_entries(name, fallback) do
-    case :ets.whereis(name) do
-      :undefined -> fallback
-      _table -> Map.new(:ets.tab2list(name))
-    end
+    if :ets.info(name) == :undefined, do: fallback, else: Map.new(:ets.tab2list(name))
+  rescue
+    ArgumentError -> fallback
   end
 
   defp table(name), do: StorageScope.table(name)
@@ -220,6 +238,39 @@ defmodule Concord.StateMachine do
       :undefined -> :ets.new(name, [access | options])
       _table -> :ok
     end
+  end
+
+  defp ensure_index_table(name) do
+    registry = table(:index_registry)
+
+    case StorageScope.index_table_name(name) do
+      :undefined ->
+        access = Application.get_env(:concord, :ets_access_mode, :protected)
+        index_table = :ets.new(:concord_index_view, [access, :set])
+        true = :ets.insert(registry, {name, index_table})
+        index_table
+
+      index_table ->
+        true = :ets.insert(registry, {name, index_table})
+        index_table
+    end
+  end
+
+  defp prune_index_tables(active_index_names) do
+    registry = table(:index_registry)
+
+    Enum.each(:ets.tab2list(registry), fn {name, index_table} ->
+      unless MapSet.member?(active_index_names, name) do
+        delete_index_table(index_table)
+        :ets.delete(registry, name)
+      end
+    end)
+  end
+
+  defp delete_index_table(index_table) do
+    if :ets.info(index_table) != :undefined, do: :ets.delete(index_table)
+  rescue
+    ArgumentError -> :ok
   end
 
   defp replace_table(name, entries) do

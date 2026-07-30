@@ -114,7 +114,8 @@ defmodule Concord.KV do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
 
-      query_cmd = {:history, key, Keyword.drop(opts, [:engine])}
+      history_opts = Keyword.take(opts, [:from_revision, :to_revision, :limit])
+      query_cmd = {:history, key, history_opts}
       do_query(query_cmd, timeout, consistency, opts)
     end
   end
@@ -197,6 +198,7 @@ defmodule Concord.KV do
           {:ok, map()} | :ok | {:error, term()}
   def put(key, value, opts \\ []) do
     with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value),
          :ok <- validate_ttl_option(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       compressed_value = maybe_compress(value, opts)
@@ -249,26 +251,27 @@ defmodule Concord.KV do
   """
   @spec create(binary(), term(), keyword()) :: {:ok, map()} | {:error, term()}
   def create(key, value, opts \\ []) do
-    with :ok <- validate_key(key) do
+    with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       compressed_value = maybe_compress(value, opts)
 
-      cmd =
-        {:txn,
-         %{
-           compare: [{:exists, key, :==, false}],
-           success: [{:put, key, compressed_value, %{}}],
-           failure: [{:get, {:key, key}, %{}}]
-         }}
+      spec = %{
+        compare: [{:exists, key, :==, false}],
+        success: [{:put, key, compressed_value, %{}}],
+        failure: [{:get, {:key, key}, %{}}]
+      }
 
-      case do_command(cmd, timeout, opts) do
-        {:ok, {:ok, %{succeeded: true} = result}, _} -> {:ok, result}
-        {:ok, {:ok, %{succeeded: false} = result}, _} -> {:ok, result}
-        {:ok, %{succeeded: true} = result, _} -> {:ok, result}
-        {:ok, %{succeeded: false} = result, _} -> {:ok, result}
-        {:timeout, _} -> {:error, :timeout}
-        {:error, :noproc} -> {:error, :cluster_not_ready}
-        {:error, reason} -> {:error, reason}
+      with :ok <- Validation.validate_txn_spec(spec) do
+        case do_command({:txn, spec}, timeout, opts) do
+          {:ok, {:ok, %{succeeded: true} = result}, _} -> {:ok, result}
+          {:ok, {:ok, %{succeeded: false} = result}, _} -> {:ok, result}
+          {:ok, %{succeeded: true} = result, _} -> {:ok, result}
+          {:ok, %{succeeded: false} = result, _} -> {:ok, result}
+          {:timeout, _} -> {:error, :timeout}
+          {:error, :noproc} -> {:error, :cluster_not_ready}
+          {:error, reason} -> {:error, reason}
+        end
       end
     end
   end
@@ -280,24 +283,25 @@ defmodule Concord.KV do
   """
   @spec replace(binary(), term(), keyword()) :: {:ok, map()} | {:error, term()}
   def replace(key, value, opts \\ []) do
-    with :ok <- validate_key(key) do
+    with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       compressed_value = maybe_compress(value, opts)
 
-      cmd =
-        {:txn,
-         %{
-           compare: [{:exists, key, :==, true}],
-           success: [{:put, key, compressed_value, %{prev_kv: true}}],
-           failure: []
-         }}
+      spec = %{
+        compare: [{:exists, key, :==, true}],
+        success: [{:put, key, compressed_value, %{prev_kv: true}}],
+        failure: []
+      }
 
-      case do_command(cmd, timeout, opts) do
-        {:ok, {:ok, result}, _} -> {:ok, result}
-        {:ok, result, _} -> {:ok, result}
-        {:timeout, _} -> {:error, :timeout}
-        {:error, :noproc} -> {:error, :cluster_not_ready}
-        {:error, reason} -> {:error, reason}
+      with :ok <- Validation.validate_txn_spec(spec) do
+        case do_command({:txn, spec}, timeout, opts) do
+          {:ok, {:ok, result}, _} -> {:ok, result}
+          {:ok, result, _} -> {:ok, result}
+          {:timeout, _} -> {:error, :timeout}
+          {:error, :noproc} -> {:error, :cluster_not_ready}
+          {:error, reason} -> {:error, reason}
+        end
       end
     end
   end
@@ -309,25 +313,26 @@ defmodule Concord.KV do
   """
   @spec update_if(binary(), term(), keyword()) :: {:ok, map()} | {:error, term()}
   def update_if(key, value, opts \\ []) do
-    with :ok <- validate_key(key) do
+    with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       mod_revision = Keyword.fetch!(opts, :mod_revision)
       compressed_value = maybe_compress(value, opts)
 
-      cmd =
-        {:txn,
-         %{
-           compare: [{:mod_revision, key, :==, mod_revision}],
-           success: [{:put, key, compressed_value, %{prev_kv: true}}],
-           failure: [{:get, {:key, key}, %{}}]
-         }}
+      spec = %{
+        compare: [{:mod_revision, key, :==, mod_revision}],
+        success: [{:put, key, compressed_value, %{prev_kv: true}}],
+        failure: [{:get, {:key, key}, %{}}]
+      }
 
-      case do_command(cmd, timeout, opts) do
-        {:ok, {:ok, result}, _} -> {:ok, result}
-        {:ok, result, _} -> {:ok, result}
-        {:timeout, _} -> {:error, :timeout}
-        {:error, :noproc} -> {:error, :cluster_not_ready}
-        {:error, reason} -> {:error, reason}
+      with :ok <- Validation.validate_txn_spec(spec) do
+        case do_command({:txn, spec}, timeout, opts) do
+          {:ok, {:ok, result}, _} -> {:ok, result}
+          {:ok, result, _} -> {:ok, result}
+          {:timeout, _} -> {:error, :timeout}
+          {:error, :noproc} -> {:error, :cluster_not_ready}
+          {:error, reason} -> {:error, reason}
+        end
       end
     end
   end

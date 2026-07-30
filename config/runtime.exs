@@ -64,6 +64,22 @@ vsr_bootstrap =
   |> String.downcase()
   |> then(&(&1 in ["1", "true", "yes", "on"]))
 
+vsr_command_version =
+  System.get_env("CONCORD_VSR_COMMAND_VERSION", "0")
+  |> String.to_integer()
+
+unless vsr_command_version in [0, 1] do
+  raise "invalid CONCORD_VSR_COMMAND_VERSION=#{inspect(vsr_command_version)}"
+end
+
+vsr_wal_version =
+  System.get_env("CONCORD_VSR_WAL_VERSION", "1")
+  |> String.to_integer()
+
+unless vsr_wal_version in [1, 2] do
+  raise "invalid CONCORD_VSR_WAL_VERSION=#{inspect(vsr_wal_version)}"
+end
+
 config :concord,
   cluster_name: :concord_cluster,
   cluster_enabled: cluster_enabled,
@@ -78,8 +94,10 @@ config :concord,
         "CONCORD_VSR_STORAGE_PATH",
         Path.join([data_dir, "vsr", Atom.to_string(vsr_replica_id)])
       ),
+    wal_version: vsr_wal_version,
     bootstrap: vsr_bootstrap,
-    retry_timeout: String.to_integer(System.get_env("CONCORD_VSR_RETRY_TIMEOUT", "100"))
+    retry_timeout: String.to_integer(System.get_env("CONCORD_VSR_RETRY_TIMEOUT", "100")),
+    command_version: vsr_command_version
   ],
   data_dir: data_dir
 

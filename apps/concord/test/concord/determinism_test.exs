@@ -25,7 +25,7 @@ defmodule Concord.DeterminismTest do
     # Clear any index tables that may exist
     for name <- ["idx1"] do
       table = Concord.Index.index_table_name(name)
-      if :ets.whereis(table) != :undefined, do: :ets.delete_all_objects(table)
+      if :ets.info(table) != :undefined, do: :ets.delete_all_objects(table)
     end
   end
 

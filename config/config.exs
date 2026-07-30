@@ -14,11 +14,20 @@ config :concord,
     transport: :distribution,
     storage: :file,
     storage_path: nil,
+    # Keep writing the rollback-compatible WAL format until every deployment
+    # has passed its old-reader rollback window.
+    wal_version: 1,
     bootstrap: false,
-    retry_timeout: 100
+    retry_timeout: 100,
+    # Phase one of command-envelope rollout emits the legacy shape until every
+    # replica runs a reader that supports version 1.
+    command_version: 0
   ],
   data_dir: "./data",
+  # Local API admission caps. Values above the immutable v1 protocol maxima
+  # are clamped, never used to widen the replicated command language.
   max_batch_size: 500,
+  max_command_bytes: 64 * 1_024 * 1_024,
   # Default read consistency name. VSR treats all accepted names as linearizable aliases.
   default_read_consistency: :leader,
   ttl: [
@@ -32,7 +41,7 @@ config :concord,
   compression: [
     # Enable automatic compression
     enabled: true,
-    # :zlib or :gzip
+    # :zlib, :gzip, or :none
     algorithm: :zlib,
     # Compress values larger than 1KB
     threshold_bytes: 1024,
@@ -103,7 +112,8 @@ config :concord,
   ],
   # KV limits
   kv: [
-    max_key_bytes: 4_096
+    max_key_bytes: 4_096,
+    max_value_bytes: 16 * 1_024 * 1_024
   ],
   # v2: Sync / change log
   change_log_max_entries: 100_000,

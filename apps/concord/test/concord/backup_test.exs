@@ -64,7 +64,7 @@ defmodule Concord.BackupTest do
 
       # Index tables should exist and be rebuilt
       table = Concord.Index.index_table_name("by_email")
-      assert :ets.whereis(table) != :undefined
+      assert :ets.info(table) != :undefined
     end
 
     test "V1 restore_backup still works (backward compat)", %{state: state} do

@@ -58,16 +58,17 @@ defmodule Concord.Txn do
   def commit(spec, opts \\ []) do
     idempotency_key = Keyword.get(opts, :idempotency_key)
 
-    with :ok <- Validation.validate_txn_spec(spec),
-         :ok <- validate_idempotency_key(idempotency_key) do
-      timeout = Keyword.get(opts, :timeout, @timeout)
+    command_spec =
+      if is_binary(idempotency_key) and is_map(spec) do
+        Map.put(spec, :idempotency_key, idempotency_key)
+      else
+        spec
+      end
 
-      cmd =
-        if is_binary(idempotency_key) do
-          {:txn, Map.put(spec, :idempotency_key, idempotency_key)}
-        else
-          {:txn, spec}
-        end
+    with :ok <- validate_idempotency_key(idempotency_key),
+         :ok <- Validation.validate_txn_spec(command_spec) do
+      timeout = Keyword.get(opts, :timeout, @timeout)
+      cmd = {:txn, command_spec}
 
       engine_opts = Keyword.take(opts, [:engine])
 

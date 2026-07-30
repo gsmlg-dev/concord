@@ -64,7 +64,7 @@ defmodule Concord.SnapshotTest do
 
       # Verify index ETS table exists and has data
       table = Concord.Index.index_table_name("by_name")
-      assert :ets.whereis(table) != :undefined
+      assert :ets.info(table) != :undefined
       assert :ets.tab2list(table) != []
     end
 
@@ -100,7 +100,7 @@ defmodule Concord.SnapshotTest do
 
       # Verify index ETS
       table = Concord.Index.index_table_name("idx1")
-      assert :ets.whereis(table) != :undefined
+      assert :ets.info(table) != :undefined
     end
   end
 
@@ -116,7 +116,7 @@ defmodule Concord.SnapshotTest do
         table = Concord.Index.index_table_name(name)
 
         ets_data =
-          if :ets.whereis(table) != :undefined,
+          if :ets.info(table) != :undefined,
             do: :ets.tab2list(table),
             else: []
 

@@ -91,8 +91,21 @@ defmodule Concord.TestHelper do
   defp materialized_view?(table) when is_atom(table) do
     name = Atom.to_string(table)
 
-    table in [:concord_store, :concord_current, :concord_history, :concord_leases] or
+    table in [
+      :concord_store,
+      :concord_current,
+      :concord_history,
+      :concord_leases,
+      :concord_index_registry,
+      :concord_local_index_registry
+    ] or
       String.starts_with?(name, "concord_index_")
+  end
+
+  defp materialized_view?(table) when is_reference(table) do
+    :ets.info(table, :name) == :concord_index_view
+  rescue
+    ArgumentError -> false
   end
 
   defp materialized_view?(_table), do: false

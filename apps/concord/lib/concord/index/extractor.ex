@@ -36,12 +36,20 @@ defmodule Concord.Index.Extractor do
   """
   @spec valid?(term()) :: boolean()
   def valid?({:map_get, key}) when is_atom(key) or is_binary(key), do: true
-  def valid?({:nested, [_ | _]}), do: true
+
+  def valid?({:nested, [_ | _] = keys}) when is_list(keys) do
+    Enum.all?(keys, &(is_atom(&1) or is_binary(&1)))
+  end
+
   def valid?({:identity}), do: true
   def valid?({:element, n}) when is_integer(n) and n >= 0, do: true
-  # Backward compatibility: accept anonymous functions during migration
-  def valid?(f) when is_function(f, 1), do: true
   def valid?(_), do: false
+
+  @doc false
+  @spec legacy_valid?(term()) :: boolean()
+  def legacy_valid?({:nested, [_ | _]}), do: true
+  def legacy_valid?(extractor) when is_function(extractor, 1), do: true
+  def legacy_valid?(extractor), do: valid?(extractor)
 
   @doc """
   Extracts an index value from a stored value using the given spec.
@@ -50,13 +58,21 @@ defmodule Concord.Index.Extractor do
   """
   @spec extract(spec(), term()) :: term() | nil
   def extract({:map_get, key}, value) when is_map(value), do: Map.get(value, key)
-  def extract({:nested, keys}, value) when is_map(value), do: get_in(value, keys)
+
+  def extract({:nested, keys}, value) when is_map(value) do
+    get_in(value, keys)
+  rescue
+    _error -> nil
+  end
+
   def extract({:identity}, value), do: value
 
   def extract({:element, n}, value) when is_tuple(value) and tuple_size(value) > n,
     do: elem(value, n)
 
-  # Backward compatibility: evaluate anonymous functions during migration
+  # Version-zero replay and version-four snapshots may still contain legacy
+  # extractors. New command emission rejects them, but existing indexes must
+  # keep their historical behavior until operators drop and recreate them.
   def extract(extractor, value) when is_function(extractor, 1) do
     extractor.(value)
   rescue
@@ -69,7 +85,7 @@ defmodule Concord.Index.Extractor do
   Indexes a value in the given ETS table using the extractor spec.
   Handles single values and lists of values.
   """
-  @spec index_value(atom(), binary(), term(), spec()) :: :ok
+  @spec index_value(:ets.table(), binary(), term(), spec()) :: :ok
   def index_value(table, key, value, spec) do
     case extract(spec, value) do
       nil ->
@@ -90,7 +106,7 @@ defmodule Concord.Index.Extractor do
   @doc """
   Removes a value from the index ETS table using the extractor spec.
   """
-  @spec remove_from_index(atom(), binary(), term(), spec()) :: :ok
+  @spec remove_from_index(:ets.table(), binary(), term(), spec()) :: :ok
   def remove_from_index(table, key, old_value, spec) do
     case extract(spec, old_value) do
       nil ->
@@ -109,7 +125,7 @@ defmodule Concord.Index.Extractor do
   end
 
   defp add_to_index(table, index_value, key) do
-    if :ets.whereis(table) != :undefined do
+    if table_exists?(table) do
       case :ets.lookup(table, index_value) do
         [{^index_value, keys}] ->
           unless key in keys do
@@ -123,7 +139,7 @@ defmodule Concord.Index.Extractor do
   end
 
   defp remove_key_from_index(table, index_value, key) do
-    if :ets.whereis(table) != :undefined do
+    if table_exists?(table) do
       case :ets.lookup(table, index_value) do
         [{^index_value, keys}] ->
           new_keys = List.delete(keys, key)
@@ -139,4 +155,6 @@ defmodule Concord.Index.Extractor do
       end
     end
   end
+
+  defp table_exists?(table), do: :ets.info(table) != :undefined
 end

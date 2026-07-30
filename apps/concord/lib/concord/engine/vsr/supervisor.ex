@@ -34,18 +34,38 @@ defmodule Concord.Engine.VSR.Supervisor do
     client_opts = [
       name: VSR.Client,
       group_id: configuration.group_id,
-      client_id: Keyword.get_lazy(opts, :client_id, &default_client_id/0),
       replicas: configuration.members,
       retry_timeout: Keyword.get(opts, :retry_timeout, 100)
     ]
 
+    client_opts =
+      case Keyword.fetch(opts, :client_id) do
+        {:ok, client_id_base} -> Keyword.put(client_opts, :client_id_base, client_id_base)
+        :error -> client_opts
+      end
+
     children = [
       {ReplicaSupervisor, replica_opts},
-      {Client, client_opts},
-      {VSR, configuration: configuration}
+      client_child_spec(client_opts),
+      {VSR,
+       configuration: configuration,
+       command_version: Keyword.get(opts, :command_version, 0),
+       wal_version: Keyword.get(opts, :wal_version, 1)}
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)
+  end
+
+  @doc false
+  @spec start_client(keyword()) :: GenServer.on_start()
+  def start_client(opts) do
+    client_id_base = Keyword.get(opts, :client_id_base, Concord.Engine.VSR)
+    client_id = {client_id_base, client_incarnation()}
+
+    opts
+    |> Keyword.delete(:client_id_base)
+    |> Keyword.put(:client_id, client_id)
+    |> Client.start_link()
   end
 
   defp configuration(opts) do
@@ -84,7 +104,8 @@ defmodule Concord.Engine.VSR.Supervisor do
         {Storage.File,
          path:
            Keyword.get(opts, :storage_path) ||
-             default_storage_path(configuration.replica_id)}
+             default_storage_path(configuration.replica_id),
+         write_version: Keyword.get(opts, :wal_version, 1)}
 
       :memory ->
         Storage.Memory
@@ -118,7 +139,11 @@ defmodule Concord.Engine.VSR.Supervisor do
     |> Path.join(replica)
   end
 
-  defp default_client_id do
-    {Concord.Engine.VSR, node(), System.unique_integer([:positive, :monotonic])}
+  defp client_child_spec(client_opts) do
+    {Client, client_opts}
+    |> Supervisor.child_spec([])
+    |> Map.put(:start, {__MODULE__, :start_client, [client_opts]})
   end
+
+  defp client_incarnation, do: :crypto.strong_rand_bytes(16)
 end

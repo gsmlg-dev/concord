@@ -11,7 +11,7 @@ defmodule Concord.Engine.Local do
 
   @behaviour Concord.Engine
 
-  alias Concord.{StateMachine, StorageScope}
+  alias Concord.{CommandSchema, QuerySchema, StateMachine, StorageScope, Validation}
   alias Concord.StateMachine.Core
   alias Concord.StateMachine.Core.Context
   alias Concord.StateMachine.Observer
@@ -38,12 +38,16 @@ defmodule Concord.Engine.Local do
 
   @impl Concord.Engine
   def command(command, opts \\ []) do
-    call({:command, command}, opts)
+    with :ok <- validate_command(command) do
+      call({:command, command}, opts)
+    end
   end
 
   @impl Concord.Engine
   def query(query, opts \\ []) do
-    call({:query, query}, opts)
+    with :ok <- validate_query(query) do
+      call({:query, query}, opts)
+    end
   end
 
   @impl Concord.Engine
@@ -80,33 +84,25 @@ defmodule Concord.Engine.Local do
 
   @impl true
   def handle_call({:command, command}, _from, %__MODULE__{} = state) do
-    next_index = state.applied_index + 1
-
-    context =
-      Context.new!(
-        op_number: next_index,
-        timestamp_ms: System.system_time(:millisecond)
-      )
-
-    {result, machine_state} =
-      with_local_scope(fn ->
-        previous_state = state.machine_state
-        {result, machine_state} = Core.apply(context, command, previous_state)
-        StateMachine.materialize(machine_state)
-        Observer.committed(context, command, previous_state, machine_state, :local)
-        {result, machine_state}
-      end)
-
-    {:reply, {:ok, result}, %{state | machine_state: machine_state, applied_index: next_index}}
+    case validate_command(command) do
+      :ok -> apply_command(CommandSchema.normalize_emission(command), state)
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:query, query}, _from, %__MODULE__{} = state) do
-    result =
-      Core.query(query, state.machine_state, %{
-        timestamp_ms: System.system_time(:millisecond)
-      })
+    case validate_query(query) do
+      :ok ->
+        result =
+          Core.query(query, state.machine_state, %{
+            timestamp_ms: System.system_time(:millisecond)
+          })
 
-    {:reply, {:ok, result}, state}
+        {:reply, {:ok, result}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call(:reset, _from, %__MODULE__{}) do
@@ -134,6 +130,48 @@ defmodule Concord.Engine.Local do
     end
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  defp apply_command(command, state) do
+    next_index = state.applied_index + 1
+
+    context =
+      Context.new!(
+        op_number: next_index,
+        timestamp_ms: System.system_time(:millisecond)
+      )
+
+    {result, machine_state} =
+      with_local_scope(fn ->
+        previous_state = state.machine_state
+        {result, machine_state} = Core.apply(context, command, previous_state)
+        StateMachine.materialize(machine_state)
+        Observer.committed(context, command, previous_state, machine_state, :local)
+        {result, machine_state}
+      end)
+
+    {:reply, {:ok, result}, %{state | machine_state: machine_state, applied_index: next_index}}
+  end
+
+  defp validate_command(command) do
+    with :ok <- Validation.validate_command_size(command),
+         :ok <- CommandSchema.validate_emission(command) do
+      :ok
+    end
+  end
+
+  defp validate_query(query) do
+    with :ok <- validate_safe_query(query),
+         :ok <- QuerySchema.validate(query) do
+      :ok
+    end
+  end
+
+  defp validate_safe_query(query) do
+    case Validation.validate_term(query) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:invalid_query, reason}}
+    end
   end
 
   defp clear_ets(table) do

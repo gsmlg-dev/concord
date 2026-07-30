@@ -51,6 +51,41 @@ defmodule Concord.ValidationTest do
       assert {:error, :ref_in_spec} = Validation.validate_term(make_ref())
     end
 
+    test "rejects ports with a distinct reason" do
+      port = Port.open({:spawn_executable, System.find_executable("cat")}, [:binary])
+
+      try do
+        assert {:error, :port_in_spec} = Validation.validate_term(port)
+      after
+        Port.close(port)
+      end
+    end
+
+    test "rejects forbidden values in improper-list tails" do
+      unsafe_function = fn -> :unsafe end
+
+      assert {:error, :function_in_spec} =
+               Validation.validate_term([:safe | unsafe_function])
+
+      assert {:error, :pid_in_spec} = Validation.validate_term([:safe | self()])
+      assert {:error, :ref_in_spec} = Validation.validate_term([:safe, :nested | make_ref()])
+    end
+
+    test "accepts ordinary structs and non-byte-aligned bitstrings" do
+      assert :ok = Validation.validate_term(URI.parse("https://example.test/path"))
+      assert :ok = Validation.validate_term(<<1::size(1), 0::size(1)>>)
+    end
+
+    test "validates forged struct markers instead of raising" do
+      assert {:error, :pid_in_spec} = Validation.validate_term(%{__struct__: self(), value: 1})
+
+      assert {:error, :function_in_spec} =
+               Validation.validate_term(%{__struct__: fn -> :unsafe end, value: 1})
+
+      assert {:error, :ref_in_spec} =
+               Validation.validate_term(%{__struct__: make_ref(), value: 1})
+    end
+
     test "rejects deeply nested forbidden values" do
       term = %{a: %{b: %{c: [fn -> :bad end]}}}
       assert {:error, :function_in_spec} = Validation.validate_term(term)
@@ -114,6 +149,53 @@ defmodule Concord.ValidationTest do
 
     test "rejects non-map spec" do
       assert {:error, {:invalid_txn, :invalid_spec}} = Validation.validate_txn_spec("bad")
+    end
+
+    test "returns errors instead of raising for malformed nested collections and operations" do
+      malformed_specs = [
+        %{compare: :bad},
+        %{success: :bad},
+        %{failure: :bad},
+        %{success: [{:put, "key", "value", :bad}]},
+        %{success: [{:delete, {:key, "key"}, :bad}]},
+        %{success: [{:get, {:key, "key"}, :bad}]},
+        %{success: [{:touch, "key", 10, :bad}]},
+        %{compare: [{:field, "key", [:valid, 1], :==, nil}]}
+      ]
+
+      Enum.each(malformed_specs, fn spec ->
+        assert {:error, _reason} = Validation.validate_txn_spec(spec)
+      end)
+    end
+
+    test "rejects shapes that the frozen transaction grammar does not admit" do
+      malformed_specs = [
+        %{unknown: true},
+        %{compare: [{:field, "key", :==, true}]},
+        %{success: [{:get, {:key, "key"}, %{unknown: true}}]},
+        %{success: [{:put, "key", "value", %{unknown: true}}]},
+        %{success: [{:delete, {:key, "key"}, %{unknown: true}}]}
+      ]
+
+      Enum.each(malformed_specs, fn spec ->
+        assert {:error, {:invalid_txn, _reason}} = Validation.validate_txn_spec(spec)
+      end)
+    end
+
+    test "returns a specific error when a configured range limit exceeds the protocol cap" do
+      spec = %{
+        success: [
+          {:get, {:prefix, "key"}, %{limit: Concord.CommandSchema.max_txn_range_limit() + 1}}
+        ]
+      }
+
+      assert {:error, {:invalid_txn, :range_limit_too_high}} =
+               Validation.validate_txn_spec(spec)
+    end
+
+    test "accepts infinity as a transaction put TTL" do
+      spec = %{success: [{:put, "key", "value", %{ttl: :infinity}}]}
+      assert :ok = Validation.validate_txn_spec(spec)
     end
 
     test "rejects too many compares" do

@@ -11,7 +11,6 @@ defmodule Concord.Index do
   - **Automatic Maintenance**: Indexes update automatically on put/delete
   - **Multiple Indexes**: Support for multiple indexes per store
   - **Declarative Extractors**: Define indexes with data specs (safe for replication)
-  - **Backward Compatible**: Anonymous functions still accepted during migration
   - **Efficient Lookups**: O(1) lookup by indexed value
   - **Multi-value Support**: Index multiple values per key (e.g., tags)
 
@@ -26,22 +25,21 @@ defmodule Concord.Index do
       # Index on the raw value
       :ok = Concord.Index.create("by_value", {:identity})
 
-  ## Legacy Function Extractors (Deprecated)
-
-      # Still works but stores anonymous functions in the replicated log — unsafe across upgrades
-      :ok = Concord.Index.create("by_email", fn u -> u.email end)
+  Anonymous function extractors are rejected because executing code references
+  from a replicated log is not deterministic across nodes or code versions.
   """
 
   alias Concord.{Engine, StorageScope}
   alias Concord.Index.Extractor
 
   @timeout 5_000
+  @max_name_bytes 255
 
   @typedoc "Index name (unique identifier)"
   @type index_name :: String.t()
 
-  @typedoc "Extractor: declarative spec or legacy function"
-  @type extractor :: Extractor.spec() | (term() -> term())
+  @typedoc "Declarative extractor specification"
+  @type extractor :: Extractor.spec()
 
   @typedoc "Value to index (must be comparable)"
   @type index_value :: term()
@@ -49,8 +47,8 @@ defmodule Concord.Index do
   @doc """
   Creates a new secondary index.
 
-  Accepts either a declarative extractor spec (recommended) or a legacy
-  anonymous function (deprecated — unsafe across code upgrades).
+  Accepts a declarative extractor spec. Anonymous functions return
+  `{:error, :invalid_extractor}` before a storage command is issued.
 
   ## Declarative Specs (Recommended)
 
@@ -194,10 +192,12 @@ defmodule Concord.Index do
     Extractor.remove_from_index(table_name, key, value, extractor)
   end
 
-  defp validate_index_name(name) when is_binary(name) and byte_size(name) > 0, do: :ok
-  defp validate_index_name(_), do: {:error, :invalid_name}
+  defp validate_index_name(name)
+       when is_binary(name) and byte_size(name) > 0 and byte_size(name) <= @max_name_bytes do
+    if String.valid?(name), do: :ok, else: {:error, :invalid_name}
+  end
 
-  defp validate_extractor(extractor) when is_function(extractor, 1), do: :ok
+  defp validate_index_name(_), do: {:error, :invalid_name}
 
   defp validate_extractor(extractor) do
     if Extractor.valid?(extractor), do: :ok, else: {:error, :invalid_extractor}

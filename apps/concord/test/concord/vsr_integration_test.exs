@@ -4,6 +4,7 @@ defmodule Concord.VSRIntegrationTest do
   alias Concord.Engine
   alias Concord.KV.Record
   alias Concord.Sync.Event
+  alias ViewstampedReplication.Replica
 
   setup_all do
     {:ok, _started} = Application.ensure_all_started(:viewstamped_replication)
@@ -65,6 +66,8 @@ defmodule Concord.VSRIntegrationTest do
     assert {:ok,
             %{
               engine: :vsr,
+              command_version: 0,
+              wal_version: 1,
               node: current_node,
               cluster: %{replica_id: 1, status: :normal, primary_id: 1},
               storage: storage
@@ -74,6 +77,190 @@ defmodule Concord.VSRIntegrationTest do
     assert is_map(storage)
     assert {:ok, [{1, member_endpoint}]} = Concord.members()
     assert member_endpoint == configured_endpoint
+  end
+
+  test "unsupported commands are rejected before advancing the replicated log", %{
+    group_id: group_id,
+    replica_id: replica_id
+  } do
+    assert {:ok, before_status} = ViewstampedReplication.status(group_id, replica_id)
+    assert {:error, :unsupported_command} = Engine.VSR.command({:future_command, :payload})
+    assert {:ok, after_status} = ViewstampedReplication.status(group_id, replica_id)
+
+    assert after_status.op_number == before_status.op_number
+    assert after_status.commit_number == before_status.commit_number
+  end
+
+  test "malformed reads do not kill the replica or advance the replicated log", %{
+    group_id: group_id,
+    replica_id: replica_id
+  } do
+    replica = Replica.whereis(group_id, replica_id)
+    assert is_pid(replica)
+    assert {:ok, before_status} = ViewstampedReplication.status(group_id, replica_id)
+
+    malformed_queries = [
+      {:history, "key", %{}},
+      {:list, {:prefix, :not_a_binary}, %{limit: 1}},
+      {:get, "key", revision: :latest},
+      {:index_lookup, <<255>>, "value"},
+      {:get_many, ["key", :not_a_key]}
+    ]
+
+    Enum.each(malformed_queries, fn query ->
+      assert {:error, :unsupported_query} = Engine.VSR.query(query)
+
+      assert {:ok, {:error, :unsupported_query}} =
+               Replica.read(
+                 replica,
+                 {:concord_query, System.system_time(:millisecond), query},
+                 timeout: 1_000
+               )
+    end)
+
+    assert {:ok, {:error, {:invalid_query, :pid_in_spec}}} =
+             Replica.read(
+               replica,
+               {:concord_query, System.system_time(:millisecond),
+                {:index_lookup, "index", self()}},
+               timeout: 1_000
+             )
+
+    assert {:ok, {:error, :invalid_query_envelope}} =
+             Replica.read(
+               replica,
+               {:concord_query, -1, :stats},
+               timeout: 1_000
+             )
+
+    assert Process.alive?(replica)
+    assert Replica.whereis(group_id, replica_id) == replica
+
+    assert {:ok, after_status} = ViewstampedReplication.status(group_id, replica_id)
+    assert after_status.op_number == before_status.op_number
+    assert after_status.commit_number == before_status.commit_number
+    assert after_status.applied_number == before_status.applied_number
+  end
+
+  test "valid history queries keep transport options outside the fixed query payload" do
+    assert {:ok, %{revision: revision}} = Concord.KV.put("history-options", "value")
+
+    assert {:ok, [%Record{value: "value", mod_revision: ^revision}]} =
+             Concord.KV.history("history-options",
+               from_revision: revision,
+               to_revision: revision,
+               limit: 1,
+               consistency: :strong,
+               timeout: 1_000
+             )
+  end
+
+  test "the version-zero writer rejects reconciliation before advancing the log", %{
+    group_id: group_id,
+    replica_id: replica_id
+  } do
+    assert {:ok, before_status} = ViewstampedReplication.status(group_id, replica_id)
+
+    assert {:error, {:command_version_required, 1}} =
+             Engine.VSR.command(:reconcile_legacy_state)
+
+    assert {:ok, after_status} = ViewstampedReplication.status(group_id, replica_id)
+    assert after_status.op_number == before_status.op_number
+    assert after_status.commit_number == before_status.commit_number
+  end
+
+  test "a configured client identity base gets a fresh incarnation after restart", %{
+    group_id: group_id
+  } do
+    client_id_base = {:concord_vsr_test_client, group_id, 1}
+    original_client = Process.whereis(Concord.Engine.VSR.Client)
+
+    assert %{client_id: {^client_id_base, original_incarnation}} =
+             ViewstampedReplication.Client.status(original_client)
+
+    assert byte_size(original_incarnation) == 16
+    assert :ok = Concord.put("client-restart:first", "first")
+
+    Process.exit(original_client, :kill)
+    restarted_client = wait_for_client_restart(original_client)
+    assert :ok = Concord.TestHelper.wait_for_cluster_ready()
+
+    assert %{client_id: {^client_id_base, restarted_incarnation}} =
+             ViewstampedReplication.Client.status(restarted_client)
+
+    assert byte_size(restarted_incarnation) == 16
+    refute restarted_incarnation == original_incarnation
+
+    assert :ok = Concord.put("client-restart:second", "second")
+    assert {:ok, "first"} = Concord.get("client-restart:first")
+    assert {:ok, "second"} = Concord.get("client-restart:second")
+  end
+
+  test "default client identities are unique for child and supervisor incarnations", %{
+    supervisor: supervisor,
+    vsr_opts: opts
+  } do
+    stop_supervisor(supervisor)
+    default_opts = Keyword.delete(opts, :client_id)
+    Application.put_env(:concord, :vsr, default_opts)
+
+    {:ok, first_supervisor} = Engine.VSR.Supervisor.start_link(default_opts)
+    Process.unlink(first_supervisor)
+    on_exit(fn -> stop_supervisor(first_supervisor) end)
+
+    first_client = Process.whereis(Concord.Engine.VSR.Client)
+    %{client_id: first_client_id} = ViewstampedReplication.Client.status(first_client)
+
+    Process.exit(first_client, :kill)
+    restarted_client = wait_for_client_restart(first_client)
+    %{client_id: restarted_client_id} = ViewstampedReplication.Client.status(restarted_client)
+
+    stop_supervisor(first_supervisor)
+
+    {:ok, second_supervisor} = Engine.VSR.Supervisor.start_link(default_opts)
+    Process.unlink(second_supervisor)
+    on_exit(fn -> stop_supervisor(second_supervisor) end)
+
+    %{client_id: second_supervisor_client_id} =
+      ViewstampedReplication.Client.status(Concord.Engine.VSR.Client)
+
+    client_ids = [first_client_id, restarted_client_id, second_supervisor_client_id]
+
+    Enum.each(client_ids, fn client_id ->
+      assert {Concord.Engine.VSR, incarnation} = client_id
+      assert byte_size(incarnation) == 16
+    end)
+
+    assert [_first, _restarted, _second_supervisor] = Enum.uniq(client_ids)
+  end
+
+  test "quorum failures remain distinguishable from caller timeouts", %{
+    supervisor: supervisor
+  } do
+    stop_supervisor(supervisor)
+    group_id = {:concord_vsr_quorum_error, System.unique_integer([:positive, :monotonic])}
+
+    opts = [
+      group_id: group_id,
+      replica_id: 1,
+      members: [
+        %{id: 1, endpoint: {:local_test_endpoint, group_id, 1}},
+        %{id: 2, endpoint: {:local_test_endpoint, group_id, 2}}
+      ],
+      transport: :local,
+      storage: :memory,
+      bootstrap: true,
+      retry_timeout: 10,
+      client_id: {:concord_vsr_quorum_error_client, group_id}
+    ]
+
+    Application.put_env(:concord, :vsr, opts)
+    {:ok, minority_supervisor} = Engine.VSR.Supervisor.start_link(opts)
+    Process.unlink(minority_supervisor)
+    on_exit(fn -> stop_supervisor(minority_supervisor) end)
+
+    assert {:error, :quorum_unavailable} =
+             Concord.get("unavailable", consistency: :strong, timeout: 50)
   end
 
   test "all advertised read consistencies use non-log-growing linearizable reads", %{
@@ -110,6 +297,26 @@ defmodule Concord.VSRIntegrationTest do
              Concord.get_with_ttl("vsr:ttl", consistency: :strong)
 
     assert ttl_with_value in 29..30
+  end
+
+  test "the default v0 writer canonicalizes infinite TTLs before replication" do
+    assert {:ok, %{command_version: 0}} = Concord.status()
+
+    assert {:ok, %{revision: 1}} =
+             Concord.KV.put("vsr:infinite-ttl", "value", ttl: :infinity)
+
+    assert {:ok, %Record{expires_at: nil}} =
+             Concord.KV.get("vsr:infinite-ttl", metadata: true, consistency: :strong)
+
+    assert {:ok, %Concord.Txn.Result{succeeded: true}} =
+             Concord.Txn.commit(%{
+               success: [
+                 {:put, "vsr:txn-infinite-ttl", "value", %{ttl: :infinity}}
+               ]
+             })
+
+    assert {:ok, %Record{expires_at: nil}} =
+             Concord.KV.get("vsr:txn-infinite-ttl", metadata: true, consistency: :strong)
   end
 
   test "lease timestamps and revocation run through the replicated VSR state" do
@@ -254,6 +461,153 @@ defmodule Concord.VSRIntegrationTest do
   end
 
   @tag :tmp_dir
+  test "version-one commands write, checkpoint, and replay after restart", %{
+    group_id: group_id,
+    supervisor: supervisor,
+    vsr_opts: opts
+  } do
+    stop_supervisor(supervisor)
+
+    versioned_opts =
+      opts
+      |> Keyword.put(:bootstrap, false)
+      |> Keyword.put(:command_version, 1)
+      |> Keyword.put(:client_id, {:concord_vsr_versioned_client, group_id})
+
+    {:ok, versioned} = Engine.VSR.Supervisor.start_link(versioned_opts)
+    Process.unlink(versioned)
+    on_exit(fn -> stop_supervisor(versioned) end)
+
+    assert :ok = Concord.put("vsr:version-one", %{replayed: true})
+    assert :ok = ViewstampedReplication.snapshot(group_id, 1)
+    assert {:ok, %{command_version: 1, wal_version: 1}} = Concord.status()
+
+    stop_supervisor(versioned)
+
+    {:ok, restarted} = Engine.VSR.Supervisor.start_link(versioned_opts)
+    Process.unlink(restarted)
+    on_exit(fn -> stop_supervisor(restarted) end)
+
+    assert {:ok, %{replayed: true}} =
+             Concord.get("vsr:version-one", consistency: :strong)
+  end
+
+  @tag :tmp_dir
+  test "version-one emission blocks until legacy indexes are migrated and backfilled", %{
+    group_id: group_id,
+    supervisor: supervisor,
+    vsr_opts: opts
+  } do
+    legacy_extractor = fn value -> Map.get(value, :email) end
+
+    assert {:ok, :ok} =
+             ViewstampedReplication.command(
+               group_id,
+               {:concord_command, 1_000, {:create_index, "legacy-email", legacy_extractor}},
+               client: Concord.Engine.VSR.Client,
+               timeout: 1_000
+             )
+
+    assert :ok = Concord.put("legacy-user", %{email: "legacy@example.test"})
+
+    assert {:ok, %{storage: %{legacy_indexes: ["legacy-email"]}}} = Concord.status()
+
+    stop_supervisor(supervisor)
+
+    versioned_opts =
+      opts
+      |> Keyword.put(:bootstrap, false)
+      |> Keyword.put(:command_version, 1)
+
+    {:ok, versioned} = Engine.VSR.Supervisor.start_link(versioned_opts)
+    Process.unlink(versioned)
+    on_exit(fn -> stop_supervisor(versioned) end)
+
+    assert {:error, {:legacy_indexes_require_migration, ["legacy-email"]}} =
+             Concord.put("blocked", true)
+
+    assert :ok = Concord.Index.drop("legacy-email")
+
+    assert {:error, {:legacy_state_requires_reconciliation, %{required: true}}} =
+             Concord.Index.create("legacy-email", {:map_get, :email}, reindex: true)
+
+    assert {:ok, {:ok, %{reconciled: 0}}} = Engine.VSR.command(:reconcile_legacy_state)
+    assert :ok = Concord.Index.create("legacy-email", {:map_get, :email}, reindex: true)
+
+    assert {:ok, ["legacy-user"]} =
+             Concord.Index.lookup("legacy-email", "legacy@example.test")
+
+    assert :ok = Concord.put("unblocked", true)
+    assert {:ok, %{storage: %{legacy_indexes: []}}} = Concord.status()
+  end
+
+  @tag :tmp_dir
+  test "legacy index names are dropped under version zero before reconciliation", %{
+    group_id: group_id,
+    supervisor: supervisor,
+    vsr_opts: opts
+  } do
+    assert {:ok, :ok} =
+             ViewstampedReplication.command(
+               group_id,
+               {:concord_command, 1_000, {:create_index, :legacy_email, {:map_get, :email}}},
+               client: Concord.Engine.VSR.Client,
+               timeout: 1_000
+             )
+
+    assert :ok = Concord.put("legacy-named-user", %{email: "named@example.test"})
+    assert {:ok, %{storage: %{legacy_indexes: [:legacy_email]}}} = Concord.status()
+
+    assert :ok = Concord.Index.drop(:legacy_email)
+    assert {:ok, %{storage: %{legacy_indexes: []}}} = Concord.status()
+
+    stop_supervisor(supervisor)
+
+    versioned_opts =
+      opts
+      |> Keyword.put(:bootstrap, false)
+      |> Keyword.put(:command_version, 1)
+
+    {:ok, versioned} = Engine.VSR.Supervisor.start_link(versioned_opts)
+    Process.unlink(versioned)
+    on_exit(fn -> stop_supervisor(versioned) end)
+
+    assert {:ok, {:ok, %{reconciled: 0}}} = Engine.VSR.command(:reconcile_legacy_state)
+    assert :ok = Concord.Index.create("legacy-email", {:map_get, :email}, reindex: true)
+
+    assert {:ok, %{command_version: 1, storage: %{legacy_indexes: []}}} = Concord.status()
+
+    assert {:ok, ["legacy-named-user"]} =
+             Concord.Index.lookup("legacy-email", "named@example.test")
+
+    assert :ok = Concord.put("version-one-after-migration", true)
+  end
+
+  test "invalid programmatic command versions fail engine startup", %{
+    group_id: group_id,
+    member_endpoint: member_endpoint,
+    supervisor: supervisor
+  } do
+    stop_supervisor(supervisor)
+
+    configuration =
+      ViewstampedReplication.Configuration.new!(
+        group_id: group_id,
+        replica_id: 1,
+        members: [%ViewstampedReplication.Member{id: 1, endpoint: member_endpoint}]
+      )
+
+    previous_trap_exit = Process.flag(:trap_exit, true)
+
+    try do
+      assert {:error, {:unsupported_command_version, 2}} =
+               Engine.VSR.start_link(configuration: configuration, command_version: 2)
+    after
+      Process.flag(:trap_exit, previous_trap_exit)
+    end
+  end
+
+  @tag :tmp_dir
   test "an uncheckpointed singleton restores multiple committed operations", %{
     group_id: group_id,
     replica_id: replica_id,
@@ -295,6 +649,23 @@ defmodule Concord.VSRIntegrationTest do
 
   defp start_unless_running(module) do
     if is_nil(Process.whereis(module)), do: start_supervised!({module, []})
+  end
+
+  defp wait_for_client_restart(original_client, attempts \\ 100)
+
+  defp wait_for_client_restart(_original_client, 0) do
+    flunk("VSR client did not restart")
+  end
+
+  defp wait_for_client_restart(original_client, attempts) do
+    case Process.whereis(Concord.Engine.VSR.Client) do
+      client when is_pid(client) and client != original_client ->
+        client
+
+      _client ->
+        Process.sleep(10)
+        wait_for_client_restart(original_client, attempts - 1)
+    end
   end
 
   defp restore_env(key, {:ok, value}), do: Application.put_env(:concord, key, value)

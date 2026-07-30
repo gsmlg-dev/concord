@@ -38,7 +38,7 @@ defmodule Concord.IndexTest do
 
   describe "Index.create/3" do
     test "creates a new index" do
-      extractor = fn user -> user.email end
+      extractor = {:map_get, :email}
       assert :ok = Concord.Index.create("users_by_email", extractor)
 
       {:ok, indexes} = Concord.Index.list()
@@ -46,20 +46,33 @@ defmodule Concord.IndexTest do
     end
 
     test "returns error if index already exists" do
-      extractor = fn user -> user.email end
+      extractor = {:map_get, :email}
       :ok = Concord.Index.create("users_by_email", extractor)
 
       assert {:error, :index_exists} = Concord.Index.create("users_by_email", extractor)
     end
 
     test "validates index name" do
-      assert {:error, :invalid_name} = Concord.Index.create("", fn x -> x end)
-      assert {:error, :invalid_name} = Concord.Index.create(nil, fn x -> x end)
+      assert {:error, :invalid_name} = Concord.Index.create("", {:identity})
+      assert {:error, :invalid_name} = Concord.Index.create(nil, {:identity})
+      assert {:error, :invalid_name} = Concord.Index.create(<<255>>, {:identity})
+
+      assert {:error, :invalid_name} =
+               Concord.Index.create(String.duplicate("x", 256), {:identity})
     end
 
-    test "validates extractor function" do
+    test "validates declarative extractors" do
       assert {:error, :invalid_extractor} = Concord.Index.create("test", "not_a_function")
       assert {:error, :invalid_extractor} = Concord.Index.create("test", nil)
+      assert {:error, :invalid_extractor} = Concord.Index.create("test", fn value -> value end)
+    end
+
+    test "rejects function extractors from local and replicated APIs" do
+      extractor = fn value -> value end
+
+      assert {:error, :invalid_extractor} = Concord.Local.Index.create("local", extractor)
+      assert {:error, :invalid_extractor} = Concord.Cluster.Index.create("cluster", extractor)
+      assert {:ok, []} = Concord.Index.list()
     end
 
     test "supports reindex option" do
@@ -68,7 +81,7 @@ defmodule Concord.IndexTest do
       :ok = Concord.put("user:2", %{email: "bob@example.com"})
 
       # Create index with reindex
-      extractor = fn user -> user.email end
+      extractor = {:map_get, :email}
       assert :ok = Concord.Index.create("users_by_email", extractor, reindex: true)
 
       # Should be able to lookup existing data
@@ -79,7 +92,7 @@ defmodule Concord.IndexTest do
 
   describe "Index.drop/2" do
     test "drops an existing index" do
-      :ok = Concord.Index.create("test_index", fn x -> x.id end)
+      :ok = Concord.Index.create("test_index", {:map_get, :id})
       {:ok, indexes} = Concord.Index.list()
       assert "test_index" in indexes
 
@@ -96,7 +109,7 @@ defmodule Concord.IndexTest do
 
   describe "Index.lookup/3" do
     test "finds keys by indexed value" do
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
       :ok = Concord.put("user:1", %{name: "Alice", email: "alice@example.com"})
       :ok = Concord.put("user:2", %{name: "Bob", email: "bob@example.com"})
@@ -109,7 +122,7 @@ defmodule Concord.IndexTest do
     end
 
     test "returns empty list if no matches" do
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
       {:ok, keys} = Concord.Index.lookup("users_by_email", "nobody@example.com")
       assert keys == []
@@ -120,7 +133,7 @@ defmodule Concord.IndexTest do
     end
 
     test "handles multi-value indexes (tags)" do
-      :ok = Concord.Index.create("posts_by_tag", fn post -> post.tags end)
+      :ok = Concord.Index.create("posts_by_tag", {:map_get, :tags})
 
       :ok = Concord.put("post:1", %{title: "Elixir", tags: ["elixir", "functional"]})
       :ok = Concord.put("post:2", %{title: "VSR", tags: ["distributed", "consensus"]})
@@ -135,15 +148,12 @@ defmodule Concord.IndexTest do
       assert keys == ["post:2"]
     end
 
-    test "handles conditional indexing (nil skips)" do
-      :ok =
-        Concord.Index.create("active_users", fn user ->
-          if user.active, do: user.id, else: nil
-        end)
+    test "skips values when declarative extraction returns nil" do
+      :ok = Concord.Index.create("active_users", {:map_get, :active_id})
 
-      :ok = Concord.put("user:1", %{id: 1, active: true})
-      :ok = Concord.put("user:2", %{id: 2, active: false})
-      :ok = Concord.put("user:3", %{id: 3, active: true})
+      :ok = Concord.put("user:1", %{id: 1, active_id: 1})
+      :ok = Concord.put("user:2", %{id: 2, active_id: nil})
+      :ok = Concord.put("user:3", %{id: 3, active_id: 3})
 
       {:ok, keys} = Concord.Index.lookup("active_users", 1)
       assert keys == ["user:1"]
@@ -159,8 +169,8 @@ defmodule Concord.IndexTest do
       {:ok, indexes} = Concord.Index.list()
       assert indexes == []
 
-      :ok = Concord.Index.create("index1", fn x -> x.a end)
-      :ok = Concord.Index.create("index2", fn x -> x.b end)
+      :ok = Concord.Index.create("index1", {:map_get, :a})
+      :ok = Concord.Index.create("index2", {:map_get, :b})
 
       {:ok, indexes} = Concord.Index.list()
       assert length(indexes) == 2
@@ -176,7 +186,7 @@ defmodule Concord.IndexTest do
       :ok = Concord.put("user:2", %{email: "bob@example.com"})
 
       # Create index without reindex option
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
       # Initially empty because data was added before index
       {:ok, keys} = Concord.Index.lookup("users_by_email", "alice@example.com")
@@ -197,7 +207,7 @@ defmodule Concord.IndexTest do
 
   describe "automatic index maintenance" do
     test "updates index on put" do
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
       :ok = Concord.put("user:1", %{email: "alice@example.com"})
 
@@ -206,7 +216,7 @@ defmodule Concord.IndexTest do
     end
 
     test "updates index when value changes" do
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
       :ok = Concord.put("user:1", %{email: "alice@example.com"})
       {:ok, keys} = Concord.Index.lookup("users_by_email", "alice@example.com")
@@ -225,7 +235,7 @@ defmodule Concord.IndexTest do
     end
 
     test "removes from index on delete" do
-      :ok = Concord.Index.create("users_by_email", fn u -> u.email end)
+      :ok = Concord.Index.create("users_by_email", {:map_get, :email})
 
       :ok = Concord.put("user:1", %{email: "alice@example.com"})
       {:ok, keys} = Concord.Index.lookup("users_by_email", "alice@example.com")
@@ -238,7 +248,7 @@ defmodule Concord.IndexTest do
     end
 
     test "handles multi-value index updates" do
-      :ok = Concord.Index.create("posts_by_tag", fn post -> post.tags end)
+      :ok = Concord.Index.create("posts_by_tag", {:map_get, :tags})
 
       :ok = Concord.put("post:1", %{tags: ["elixir", "functional"]})
 
@@ -264,7 +274,7 @@ defmodule Concord.IndexTest do
 
   describe "integration with Query module" do
     test "can use indexed lookup with get_many" do
-      :ok = Concord.Index.create("users_by_role", fn u -> u.role end)
+      :ok = Concord.Index.create("users_by_role", {:map_get, :role})
 
       :ok = Concord.put("user:1", %{name: "Alice", role: "admin"})
       :ok = Concord.put("user:2", %{name: "Bob", role: "user"})
@@ -283,26 +293,18 @@ defmodule Concord.IndexTest do
     end
   end
 
-  describe "error handling" do
-    test "handles extractor exceptions gracefully" do
-      # Extractor that might raise
-      :ok =
-        Concord.Index.create("bad_index", fn value ->
-          if is_map(value), do: value.field, else: raise("oops")
-        end)
+  describe "invalid extractors" do
+    test "does not create an index for an anonymous function" do
+      assert {:error, :invalid_extractor} =
+               Concord.Index.create("bad_index", fn value -> value end)
 
-      # Should not crash when extractor fails
-      :ok = Concord.put("key:1", "not_a_map")
-
-      # Index lookup should work
-      {:ok, keys} = Concord.Index.lookup("bad_index", "anything")
-      assert keys == []
+      assert {:ok, []} = Concord.Index.list()
     end
   end
 
   describe "index with compression" do
     test "works with compressed values" do
-      :ok = Concord.Index.create("products_by_category", fn p -> p.category end)
+      :ok = Concord.Index.create("products_by_category", {:map_get, :category})
 
       # Put with compression
       large_value = %{

@@ -42,6 +42,7 @@ defmodule Concord do
   """
   def put(key, value, opts \\ []) do
     with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value),
          :ok <- validate_ttl_option(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       ttl_option = Keyword.get(opts, :ttl)
@@ -182,8 +183,10 @@ defmodule Concord do
   """
   def put_if(key, value, opts) do
     with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value),
          :ok <- validate_ttl_option(opts),
-         :ok <- validate_condition_opts(opts) do
+         :ok <- validate_condition_opts(opts),
+         :ok <- validate_expected_value(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       ttl_option = Keyword.get(opts, :ttl)
       expires_at = calculate_expires_at(ttl_option)
@@ -255,7 +258,8 @@ defmodule Concord do
   """
   def delete_if(key, opts) do
     with :ok <- validate_key(key),
-         :ok <- validate_condition_opts(opts) do
+         :ok <- validate_condition_opts(opts),
+         :ok <- validate_expected_value(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       expected = Keyword.get(opts, :expected)
       condition_fn = Keyword.get(opts, :condition)
@@ -843,9 +847,7 @@ defmodule Concord do
   # Batch operation validation helpers
 
   defp validate_batch_size(items) when is_list(items) do
-    max_batch_size = Application.get_env(:concord, :max_batch_size, 500)
-
-    if length(items) > max_batch_size do
+    if length(items) > Validation.max_batch_size() do
       {:error, :batch_too_large}
     else
       :ok
@@ -855,54 +857,60 @@ defmodule Concord do
   defp validate_batch_size(_), do: {:error, :invalid_batch_format}
 
   defp validate_put_operations(operations) when is_list(operations) do
-    case Enum.find_value(operations, :ok, fn operation ->
-           validate_put_operation(operation)
-         end) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
+    Enum.reduce_while(operations, :ok, fn operation, :ok ->
+      case validate_put_operation(operation) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_put_operation({key, value}) when is_binary(key) and byte_size(key) > 0 do
+    with :ok <- validate_key(key) do
+      Validation.validate_value(value)
     end
   end
 
-  defp validate_put_operation({key, _value}) when is_binary(key) and byte_size(key) > 0 do
-    validate_key(key)
-  end
-
-  defp validate_put_operation({key, _value, ttl}) when is_binary(key) and byte_size(key) > 0 do
+  defp validate_put_operation({key, value, ttl}) when is_binary(key) and byte_size(key) > 0 do
     with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value),
          :ok <- TTL.validate_ttl(ttl) do
       :ok
     end
   end
 
-  defp validate_put_operation({key, _value, expires_at})
+  defp validate_put_operation({key, value, expires_at})
        when is_binary(key) and byte_size(key) > 0 do
-    if expires_at == nil or is_integer(expires_at) do
-      validate_key(key)
-    else
-      {:error, :invalid_expires_at}
+    with :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value) do
+      if expires_at == nil or is_integer(expires_at),
+        do: :ok,
+        else: {:error, :invalid_expires_at}
     end
   end
 
+  defp validate_put_operation({_key, _value}), do: {:error, :invalid_key}
+  defp validate_put_operation({_key, _value, _ttl}), do: {:error, :invalid_key}
   defp validate_put_operation(_), do: {:error, :invalid_operation_format}
 
   defp validate_keys(keys) when is_list(keys) do
-    case Enum.find_value(keys, :ok, fn key ->
-           validate_key(key)
-         end) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+    Enum.reduce_while(keys, :ok, fn key, :ok ->
+      case validate_key(key) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp validate_keys(_), do: {:error, :invalid_keys_format}
 
   defp validate_touch_operations(operations) when is_list(operations) do
-    case Enum.find_value(operations, :ok, fn operation ->
-           validate_touch_operation(operation)
-         end) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+    Enum.reduce_while(operations, :ok, fn operation, :ok ->
+      case validate_touch_operation(operation) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp validate_touch_operation({key, ttl_seconds})
@@ -928,6 +936,13 @@ defmodule Concord do
 
       true ->
         {:error, :invalid_condition}
+    end
+  end
+
+  defp validate_expected_value(opts) do
+    case Keyword.fetch(opts, :expected) do
+      {:ok, expected} when not is_nil(expected) -> Validation.validate_value(expected)
+      _missing_or_nil -> :ok
     end
   end
 
