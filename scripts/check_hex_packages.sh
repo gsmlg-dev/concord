@@ -10,36 +10,38 @@ ex_turso_package="$tmp_dir/ex_turso"
 vsr_package="$tmp_dir/viewstamped_replication"
 consumer="$tmp_dir/consumer"
 
-release_version="$(sed -n 's/^  @version "\([^"]*\)"$/\1/p' "$repo_root/apps/concord/mix.exs")"
-test -n "$release_version"
-
 for app_dir in "$repo_root"/apps/*; do
   mix_file="$app_dir/mix.exs"
   test -f "$mix_file" || continue
 
   app_name="$(basename "$app_dir")"
   app_version="$(sed -n 's/^  @version "\([^"]*\)"$/\1/p' "$mix_file")"
-
-  if [[ "$app_version" != "$release_version" ]]; then
-    echo "$app_name version $app_version does not match Concord $release_version" >&2
-    exit 1
-  fi
+  test -n "$app_version"
 
   (
     cd "$app_dir"
     CONCORD_HEX_BUILD=1 mix hex.build --unpack --output "$tmp_dir/$app_name"
   )
 
-  grep -Fq "{<<\"version\">>,<<\"$release_version\">>}." \
+  grep -Fq "{<<\"version\">>,<<\"$app_version\">>}." \
     "$tmp_dir/$app_name/hex_metadata.config"
 done
 
-same_version_requirement="{<<\"requirement\">>,<<\"$release_version\">>}"
-same_version_dependency_count="$(grep -Fc "$same_version_requirement" \
-  "$concord_package/hex_metadata.config" || true)"
+ex_turso_version="$(sed -n 's/^  @version "\([^"]*\)"$/\1/p' \
+  "$repo_root/apps/ex_turso/mix.exs")"
+vsr_version="$(sed -n 's/^  @version "\([^"]*\)"$/\1/p' \
+  "$repo_root/apps/viewstamped_replication/mix.exs")"
 
-if [[ "$same_version_dependency_count" -ne 2 ]]; then
-  echo "Concord does not require both umbrella packages at $release_version" >&2
+if ! grep -FA4 '{<<"name">>,<<"ex_turso">>}' "$concord_package/hex_metadata.config" |
+  grep -Fq "{<<\"requirement\">>,<<\"$ex_turso_version\">>}"; then
+  echo "Concord does not require ex_turso at $ex_turso_version" >&2
+  exit 1
+fi
+
+if ! grep -FA4 '{<<"name">>,<<"viewstamped_replication">>}' \
+  "$concord_package/hex_metadata.config" |
+  grep -Fq "{<<\"requirement\">>,<<\"$vsr_version\">>}"; then
+  echo "Concord does not require viewstamped_replication at $vsr_version" >&2
   exit 1
 fi
 
