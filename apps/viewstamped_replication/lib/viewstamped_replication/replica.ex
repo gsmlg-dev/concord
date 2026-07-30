@@ -105,6 +105,9 @@ defmodule ViewstampedReplication.Replica do
 
   def submit(replica, route, %ViewstampedReplication.Request{} = request) do
     GenServer.cast(server(replica), {:client_request, route, request})
+  catch
+    :exit, _reason -> :ok
+    :error, _reason -> :ok
   end
 
   @spec read(pid() | term(), term(), keyword()) :: {:ok, term()} | {:error, term()}
@@ -153,6 +156,7 @@ defmodule ViewstampedReplication.Replica do
     :exit, {:timeout, _details} -> {:error, :quorum_unavailable}
     :exit, {:noproc, _details} -> {:error, :not_found}
     :exit, _reason -> {:error, :not_found}
+    :error, _reason -> {:error, :not_found}
   end
 
   @spec deliver(term(), term(), Envelope.t()) :: :ok | {:error, :not_found}
@@ -184,12 +188,17 @@ defmodule ViewstampedReplication.Replica do
 
   @spec whereis(term(), term()) :: pid() | nil
   def whereis(group_id, replica_id) do
-    case Registry.lookup(ViewstampedReplication.Registry, {:replica, group_id, replica_id}) do
-      [{pid, _value}] when is_pid(pid) ->
-        if Process.alive?(pid), do: pid, else: nil
+    try do
+      case Registry.lookup(ViewstampedReplication.Registry, {:replica, group_id, replica_id}) do
+        [{pid, _value}] when is_pid(pid) ->
+          if Process.alive?(pid), do: pid, else: nil
 
-      [] ->
-        nil
+        [] ->
+          nil
+      end
+    catch
+      :exit, _reason -> nil
+      :error, _reason -> nil
     end
   end
 
@@ -745,6 +754,7 @@ defmodule ViewstampedReplication.Replica do
     :erpc.call(node, __MODULE__, :read, [{group_id, replica_id}, operation, opts], timeout + 100)
   catch
     :exit, _reason -> {:error, :not_found}
+    :error, _reason -> {:error, :not_found}
   end
 
   defp distributed_endpoint?(endpoint) do
