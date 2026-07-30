@@ -62,7 +62,7 @@ from a non-arm64 host.
 ```elixir
 def deps do
   [
-    {:ex_turso, "~> 3.0.0-beta"}
+    {:ex_turso, "~> 3.0"}
   ]
 end
 ```
@@ -110,7 +110,7 @@ application that uses Ecto:
 ```elixir
 def deps do
   [
-    {:ex_turso, "~> 3.0.0-beta"},
+    {:ex_turso, "~> 3.0"},
     {:ecto_sql, "~> 3.14"}
   ]
 end

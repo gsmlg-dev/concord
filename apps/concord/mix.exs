@@ -2,6 +2,7 @@ defmodule Concord.MixProject do
   use Mix.Project
 
   @version "3.0.0-beta.0"
+  @ex_turso_version "3.0.0"
 
   def project do
     [
@@ -117,7 +118,7 @@ defmodule Concord.MixProject do
 
   defp ex_turso_dep do
     if System.get_env("CONCORD_HEX_BUILD") in ["1", "true"] do
-      {:ex_turso, @version}
+      {:ex_turso, @ex_turso_version}
     else
       {:ex_turso, in_umbrella: true}
     end
