@@ -65,7 +65,7 @@ defmodule Turso.Native do
   def connect_sync(_db), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc "Run bidirectional sync."
-  @spec sync(reference()) :: :ok | {:error, nif_error()}
+  @spec sync(reference()) :: {:ok, :ok} | {:error, nif_error()}
   def sync(_db), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc "Flush and release a connection. Returns `:ok`."

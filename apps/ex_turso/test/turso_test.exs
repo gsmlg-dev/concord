@@ -233,6 +233,14 @@ defmodule TursoTest do
              end)
   end
 
+  test "sync callback accepts the successful Rustler result" do
+    query = %Turso.Query{statement: "SYNC", command: :sync}
+    state = %Turso.Connection{}
+
+    assert {:ok, ^query, %Result{rows: nil, num_rows: 0}, ^state} =
+             Turso.Connection.handle_sync_result({:ok, :ok}, query, state)
+  end
+
   test "connect/1 returns error if only one of remote_url or auth_token is provided" do
     assert {:error,
             %Turso.Error{

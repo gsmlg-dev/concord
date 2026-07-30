@@ -118,10 +118,9 @@ defmodule Turso.Connection do
         {:error, %Error{message: "database is not configured for cloud sync"}, state}
 
       true ->
-        case Native.sync(state.sync_db) do
-          :ok -> {:ok, query, %Result{rows: nil, num_rows: 0}, state}
-          {:error, reason} -> error_or_disconnect(reason, state)
-        end
+        state.sync_db
+        |> Native.sync()
+        |> handle_sync_result(query, state)
     end
   end
 
@@ -157,6 +156,13 @@ defmodule Turso.Connection do
         error_or_disconnect(reason, state)
     end
   end
+
+  @doc false
+  def handle_sync_result({:ok, :ok}, query, state),
+    do: {:ok, query, %Result{rows: nil, num_rows: 0}, state}
+
+  def handle_sync_result({:error, reason}, _query, state),
+    do: error_or_disconnect(reason, state)
 
   # Statements are not prepared server-side; prepare/close are no-ops so the
   # query flows straight to handle_execute/4.
