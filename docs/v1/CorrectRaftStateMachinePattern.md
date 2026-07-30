@@ -4,6 +4,12 @@
 **Scope:** Deterministic replay, snapshot correctness, high-throughput ETS hot-path, Ra integration
 **Architecture:** Ra + ETS (no CubDB)
 
+> **Historical design audit.** Concord now uses Viewstamped Replication (VSR),
+> not Ra. The determinism and authoritative-state invariants in this document
+> still apply, but Ra APIs, effects, version callbacks, and operational steps
+> are retained only as migration history. See `DESIGN.md` and
+> `configuration.md` for the current runtime contract.
+
 ---
 
 ## Table of Contents
@@ -1290,10 +1296,29 @@ Scope: `apps/concord/lib/concord/state_machine.ex`, `apps/concord/lib/concord/ap
 
 ### Compatibility Notes
 
-- **Snapshot backward compatibility:** `migrate_snapshot/1` handles V1 (bare list) format from existing deployments. During rolling upgrade, followers may receive old-format snapshots.
+- **Snapshot backward compatibility:** Current restore code validates snapshot
+  structure and continues to read legacy bare-list and version-four state.
 
-- **Command backward compatibility:** New command tuples (`:auth_create_token`, etc.) are unknown to old nodes. During rolling upgrade, the leader must be upgraded first. Old followers receiving unknown commands fall through to the catch-all `apply_command` clause (line 453) which returns `{state, :ok, []}` — safe but no-op. After all nodes are upgraded, the new commands take effect.
+- **Command backward compatibility:** VSR commands use an explicit application
+  command version and an immutable per-version command schema. The exact
+  pre-versioning envelope remains readable with legacy semantics for WAL
+  replay, while new writers reject unsupported or unsafe commands before they
+  reach consensus. A rollout must not enable a new application version until
+  every replica supports it.
 
-- **Index extractor migration:** Old snapshots contain anonymous functions for index extractors. `migrate_snapshot/1` should drop these (they can't be safely deserialized after upgrade) and log a warning. Users must recreate indexes after upgrade using the new declarative API.
+- **Index and representation migration:** Version-four snapshots may contain
+  function extractors or names that are not non-empty, valid UTF-8 binaries of
+  at most 255 bytes, so restore preserves them during compatibility replay.
+  With all readers upgraded but still emitting version 0, operators must read
+  `storage.legacy_indexes` from `Concord.status/0` and drop each exact returned
+  name. After enabling command version 1 everywhere, run
+  `Concord.Engine.command(:reconcile_legacy_state)` before recreating the
+  dropped indexes with declarative extractors and `reindex: true`. Normal
+  version-one commands remain blocked until status reports the current
+  representation with no conflicts. This ordering prevents a recreated index
+  from being built over contradictory legacy and MVCC projections.
 
-- **State machine version:** Increment `version/0` to `3` in the final PR. Ra uses this to coordinate machine version across the cluster.
+- **State machine version:** The current VSR runtime has no Ra `version/0`
+  callback. Application semantics use the explicit Concord command-envelope
+  version; adding or reinterpreting a command requires a new envelope version
+  and the rollout gates described above.

@@ -145,6 +145,8 @@ Concord.put("product:3", {"electronics", "phone", 799})
 
 ### Managing Indexes
 
+Index names must be non-empty, valid UTF-8 binaries no longer than 255 bytes.
+
 ```elixir
 # Create an index
 :ok = Concord.Index.create("users_by_email", {:map_get, :email})
@@ -179,22 +181,58 @@ Concord.put("post:2", %{title: "VSR Consensus", tags: ["distributed", "elixir"]}
 {:ok, ["post:2"]} = Concord.Index.lookup("by_tag", "distributed")
 ```
 
-### Warning: No Anonymous Functions
+### Anonymous Functions Are Rejected
 
-Do not use anonymous functions as extractors. They cause `:badfun` errors on deserialization across code versions. Always use declarative tuple specs.
+Anonymous function extractors return `{:error, :invalid_extractor}` before a
+local or replicated command is issued. Always use declarative tuple specs.
 
 ```elixir
-# BAD -- will break after code upgrades or on other cluster nodes
-Concord.Index.create("by_email", fn user -> user.email end)
+# Rejected -- executable code cannot enter the replicated log
+{:error, :invalid_extractor} =
+  Concord.Index.create("by_email", fn user -> user.email end)
 
 # GOOD -- safe for replication and snapshots
 Concord.Index.create("by_email", {:map_get, :email})
 ```
 
-Anonymous functions are serialized into the replicated log and snapshots. When
-a node loads a snapshot produced by a different code version, the function
-reference can be invalid and raise `:badfun`. Declarative specs are plain data
-(tuples of atoms, binaries, and integers) and are safe to deserialize.
+Function references are not stable data: their behavior and validity can differ
+between nodes and code versions. Declarative specs are plain data (tuples of
+atoms, binaries, and integers) and are safe to replicate and deserialize.
+
+### Migrating Version-Zero Index and State Data
+
+Keep command emission at version 0 until every replica can read version 1.
+Then inspect status and drop each legacy index using the exact returned name:
+
+```elixir
+{:ok, %{storage: storage}} = Concord.status()
+
+Enum.each(storage.legacy_indexes, fn exact_name ->
+  :ok = Concord.Index.drop(exact_name)
+end)
+```
+
+Do not recreate those indexes yet. Restart every node with command version 1,
+leaving no old reader in the quorum, and reconcile the legacy state
+representation once:
+
+```elixir
+{:ok, {:ok, reconciliation}} =
+  Concord.Engine.command(:reconcile_legacy_state)
+
+{:ok, %{storage: storage}} = Concord.status()
+false = storage.legacy_state_reconciliation_required
+:current = storage.legacy_state_representation
+0 = storage.legacy_state_conflict_count
+```
+
+Normal version-one commands are rejected until reconciliation completes. Now
+recreate every dropped index with a valid name and declarative extractor, and
+backfill it from the reconciled records:
+
+```elixir
+:ok = Concord.Index.create("users_by_email", {:map_get, :email}, reindex: true)
+```
 
 ## Conditional Updates (Compare-and-Swap)
 
@@ -413,7 +451,7 @@ Compression is **enabled by default**:
 config :concord,
   compression: [
     enabled: true,
-    algorithm: :zlib,        # :zlib (faster) or :gzip (better ratio)
+    algorithm: :zlib,        # :zlib, :gzip, or :none
     threshold_bytes: 1024,   # Compress values > 1KB
     level: 6                 # 0-9 (0=none, 9=max)
   ]
@@ -440,6 +478,20 @@ Concord.put("small_key", "small value", compress: true)
 # Disable compression for this operation
 Concord.put("large_key", large_value, compress: false)
 ```
+
+Compression does not change admission limits. Both the raw serialized value
+and its logical representation after expanding compression must fit the 16 MiB
+v1 value maximum, so forced, automatic, and disabled compression use the same
+logical policy. A local `kv.max_value_bytes` setting may lower that maximum but
+cannot raise it.
+Transactions have a separate 1,000,000-byte logical spec maximum, and every
+replicated command (including bulk puts and backup restore) has a 64 MiB
+logical aggregate maximum.
+
+Raw compressed Erlang terms are a trusted embedded input. Decoding is bounded
+but can allocate terms and intern atom names; applications accepting untrusted
+network data should decode a bounded external schema and pass ordinary Elixir
+values to Concord rather than accepting compression envelopes directly.
 
 ### Compression Statistics
 

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Publish every umbrella package to Hex.pm at the Concord release version.
+- Version replicated Concord command envelopes while retaining replay support
+  and frozen legacy semantics for the exact pre-versioning envelope. Unknown
+  command schemas are rejected before they enter the replicated log.
+- Reject executable and runtime-local terms from replicated commands, including
+  anonymous index extractors, PIDs, ports, and references, even when hidden in
+  a compressed value. Existing legacy index definitions remain readable long
+  enough to drop by exact name. Version-one admission then requires explicit
+  state-representation reconciliation before indexes are recreated with
+  non-empty UTF-8 names of at most 255 bytes, declarative extractors, and a full
+  reindex.
+- Freeze version-one validation and logical size limits independently of local
+  API settings. Compression cannot change value, transaction, or aggregate
+  command admission; local limits may only lower the protocol maxima.
+- Give each default VSR client process incarnation a cryptographically unique
+  identity; use transaction idempotency keys for restart-safe write retries
+  while their bounded replicated-cache entries are retained.
 - Support fixed VSR configurations of one through six replicas with strict
   majority quorums.
 - Add an explicit VSR benchmark for throughput and latency across every
@@ -20,6 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   includes the read-barrier and durable-recovery runtime used by Concord 3.
 
 ### Fixed
+- Retransmit uncommitted VSR prepares so dropped `Prepare` or `PrepareOk`
+  messages cannot indefinitely stall a healthy quorum.
+- Checksum version-two WAL/checkpoint lengths and fail closed on malformed,
+  corrupt, or unsupported records, while retaining torn-tail recovery for
+  incomplete version-two WAL records and read compatibility with complete
+  version-one data. Version-two writes are gated behind
+  `CONCORD_VSR_WAL_VERSION=2`; the default remains rollback-compatible version
+  one and no automatic downgrade is attempted.
+- Install a transferred state-machine snapshot and its matching VSR durable
+  state crash-atomically; custom storage adapters must provide the same atomic
+  callback instead of exposing either half independently.
+- Reject malformed or unsupported Concord snapshot versions instead of
+  normalizing them as legacy state.
+- Preserve `:quorum_unavailable` and `:not_ready` errors instead of collapsing
+  them into generic caller timeouts.
 - Replay file-backed state machines from their snapshot without decreasing the
   durable applied-operation watermark during restart.
 - Derive the VSR package version in the release workflow instead of repeatedly

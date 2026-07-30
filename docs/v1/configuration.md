@@ -11,7 +11,21 @@ config :concord,
   data_dir: "./data",
   auth_enabled: false,
   max_batch_size: 500,
+  max_command_bytes: 64 * 1_024 * 1_024,
   default_read_consistency: :leader,  # :eventual, :leader, or :strong
+
+  txn: [
+    max_compare_ops: 64,
+    max_success_ops: 128,
+    max_failure_ops: 128,
+    max_txn_bytes: 1_000_000,
+    max_range_limit: 1_000
+  ],
+
+  kv: [
+    max_key_bytes: 4_096,
+    max_value_bytes: 16 * 1_024 * 1_024
+  ],
 
   ttl: [
     default_seconds: 86_400,
@@ -21,7 +35,7 @@ config :concord,
 
   compression: [
     enabled: true,
-    algorithm: :zlib,          # :zlib or :gzip
+    algorithm: :zlib,          # :zlib, :gzip, or :none
     threshold_bytes: 1024,
     level: 6                   # 0-9
   ],
@@ -61,6 +75,44 @@ config :concord,
   ]
 ```
 
+## Consensus and local admission limits
+
+Version-one envelopes have immutable protocol maxima. The corresponding
+settings above are local pre-consensus admission caps: a smaller value rejects
+work earlier, while a larger value is clamped to the protocol maximum and
+cannot widen the replicated command language. Configure the same local caps on
+every node so routing a request to another node does not change admission. Caps
+must be non-negative integers; an invalid value fails closed as a zero cap
+instead of silently widening admission.
+
+| Resource | Immutable v1 maximum | Local setting |
+|---|---:|---|
+| Operations in a bulk command | 500 | `max_batch_size` |
+| Raw and logical aggregate command size | 64 MiB each | `max_command_bytes` |
+| Key size | 4,096 bytes | `kv.max_key_bytes` |
+| Raw and logical value size | 16 MiB each | `kv.max_value_bytes` |
+| Transaction compares | 64 | `txn.max_compare_ops` |
+| Operations in either transaction branch | 128 | `txn.max_success_ops`, `txn.max_failure_ops` |
+| Logical serialized transaction size | 1,000,000 bytes | `txn.max_txn_bytes` |
+| Transaction range result limit | 1,000 | `txn.max_range_limit` |
+
+Raw serialized size and logical size after expanding Concord compression
+envelopes must both fit. Therefore compression cannot hide an oversized value
+or command, while `compress: true`, automatic compression, and
+`compress: false` have the same logical policy. The 64 MiB aggregate cap also
+covers `put_many` and `restore_backup`, leaving headroom below the VSR file
+WAL's 256 MiB record limit. Version-one replay uses these frozen maxima rather
+than local settings; exact version-zero replay remains unrestricted for
+historical compatibility.
+
+Compression decoding is an in-process trusted-input boundary, not a sandbox.
+The v1 decoder bounds expanded external-term data to 16 MiB and rejects nested
+ETF compression, functions, PIDs, ports, and references, but ordinary ETF atom
+decoding can intern atom names and decoding allocates the logical term before
+recursive validation. Do not expose raw Erlang-term command or backup input to
+untrusted clients; translate an authenticated, bounded wire schema at the
+application boundary.
+
 ## Storage APIs
 
 Storage/concurrency selection is API-based, not global configuration-based.
@@ -97,8 +149,10 @@ config :concord,
     transport: :distribution,
     storage: :file,
     storage_path: "/var/lib/concord/data/vsr/concord1",
+    wal_version: 1,
     bootstrap: false,
-    retry_timeout: 100
+    retry_timeout: 100,
+    command_version: 0
   ]
 ```
 
@@ -108,6 +162,51 @@ and set it back to `false` for subsequent starts using the same durable
 storage. VSR reads are replicated barriers and therefore linearizable;
 `:eventual`, `:leader`, and `:strong` query options all use the same barrier
 path.
+
+`command_version: 0` emits the legacy command envelope while readers are being
+upgraded. New writers still enforce the strict current command schema; the
+version-zero replay path exists only to preserve historical behavior. Use this
+rollout order:
+
+1. Upgrade every replica while keeping `command_version: 0`.
+2. Inspect `Concord.status/0`, record every exact value in
+   `storage.legacy_indexes`, and pass each exact name to
+   `Concord.Index.drop/2`. Do not recreate the indexes yet. The list includes
+   non-declarative extractors and names that are not non-empty, valid UTF-8
+   binaries of at most 255 bytes.
+3. Pause writes, set `command_version: 1` on every node, and remove every old
+   reader from the quorum before resuming operator commands. If an index was
+   missed, only its exact listed name is admitted for the required drop.
+4. Run `Concord.Engine.command(:reconcile_legacy_state)`. Normal version-one
+   commands remain blocked until status reports
+   `storage.legacy_state_reconciliation_required == false`,
+   `storage.legacy_state_representation == :current`, and
+   `storage.legacy_state_conflict_count == 0`.
+5. Recreate the dropped indexes with valid names and declarative extractors,
+   using `reindex: true`. A valid old name may be reused; an invalid name must
+   be replaced. Calling `Concord.Index.reindex/2` immediately after plain
+   creation is equivalent.
+
+Under version-one admission, the two pre-reconciliation errors are
+`{:legacy_indexes_require_migration, names}` and
+`{:legacy_state_requires_reconciliation, status}`. Reindexing after
+reconciliation backfills records that already exist. Status reports the active
+`command_version` and configured `wal_version`. The equivalent release
+variable is `CONCORD_VSR_COMMAND_VERSION`.
+
+`wal_version: 1` is also a compatibility gate. For built-in file storage it
+selects the format for both new WAL records and rewritten checkpoints; memory
+and custom storage do not derive their behavior from it. The current reader
+accepts versions one and two, but a release that predates version two can
+mistake version-two data for a disposable tail during rollback. Deploy the new
+reader everywhere while continuing to emit version one. Set `wal_version: 2`
+only after the old binary is outside the rollback window. Once a version-two
+WAL record or checkpoint exists, setting the option back to 1 does not convert
+it: do not open that directory with an old reader. A later binary rollback
+requires restoring a separately verified version-one-compatible backup because
+there is no automatic downgrade. Version two checksums the record length and
+can therefore distinguish a corrupt length from a genuinely incomplete append.
+The equivalent release variable is `CONCORD_VSR_WAL_VERSION`.
 
 For releases, `CONCORD_VSR_MEMBERS` is a comma-separated ordered list. A member
 can be a node name or an explicit `id=endpoint` pair:
@@ -260,8 +359,10 @@ data_dir =
 | `CONCORD_VSR_TRANSPORT` | `distribution` | VSR transport: `distribution` or `local` |
 | `CONCORD_VSR_STORAGE` | `file` | VSR storage: `file` or `memory` |
 | `CONCORD_VSR_STORAGE_PATH` | `<data_dir>/vsr/<replica_id>` | Durable VSR WAL/checkpoint directory |
+| `CONCORD_VSR_WAL_VERSION` | `1` | Built-in file-storage WAL/checkpoint write format (`1` during the rollback window, then one-way opt-in to `2`) |
 | `CONCORD_VSR_BOOTSTRAP` | `false` | Bootstrap a new VSR configuration |
 | `CONCORD_VSR_RETRY_TIMEOUT` | `100` | VSR client retry interval in milliseconds |
+| `CONCORD_VSR_COMMAND_VERSION` | `0` | Emitted Concord command envelope (`0` during compatibility rollout, then `1`) |
 | `CONCORD_API_PORT` | `8080` | HTTP API port (prod) |
 | `CONCORD_API_IP` | `0.0.0.0` | HTTP API bind address (prod) |
 | `CONCORD_HTTP_ENABLED` | `true` | Enable HTTP API (prod) |
