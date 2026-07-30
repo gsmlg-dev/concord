@@ -59,11 +59,14 @@ defmodule ViewstampedReplication.Transport.Distribution do
   end
 
   defp remote_deliver(node, group_id, replica_id, envelope) do
-    :erpc.cast(
-      node,
-      ViewstampedReplication.Replica,
-      :deliver,
-      [group_id, replica_id, envelope]
-    )
+    replica = ViewstampedReplication.Replica
+
+    if :erpc.call(node, :erlang, :function_exported, [replica, :deliver, 3]) do
+      :erpc.cast(node, replica, :deliver, [group_id, replica_id, envelope])
+    else
+      :ok
+    end
+  catch
+    :error, {:erpc, _reason} -> :ok
   end
 end
