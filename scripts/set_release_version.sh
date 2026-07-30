@@ -21,6 +21,14 @@ for mix_file in "$repo_root"/apps/*/mix.exs; do
   app_count=$((app_count + 1))
 done
 
+concord_mix="$repo_root/apps/concord/mix.exs"
+
+if grep -q '^  @ex_turso_version "[^"]*"$' "$concord_mix"; then
+  sed -i -E \
+    "s/^  @ex_turso_version \"[^\"]*\"$/  @ex_turso_version \"$version\"/" \
+    "$concord_mix"
+fi
+
 if [[ "$app_count" -eq 0 ]]; then
   echo "no umbrella applications found" >&2
   exit 1
@@ -35,3 +43,8 @@ for mix_file in "$repo_root"/apps/*/mix.exs; do
   app_name="$(basename "$(dirname "$mix_file")")"
   echo "$app_name=$version"
 done
+
+if ! grep -q "^  @ex_turso_version \"$version\"$" "$concord_mix"; then
+  echo "failed to set Concord's ex_turso dependency to $version" >&2
+  exit 1
+fi
