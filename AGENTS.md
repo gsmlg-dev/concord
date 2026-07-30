@@ -26,7 +26,7 @@ Run `mix format` before submitting changes; accept its two-space indentation and
 
 ## Testing Guidelines
 
-Tests use ExUnit and are named `*_test.exs`; test modules end in `Test`. Concord integration tests are usually `async: false` because registered VSR processes and ETS tables are shared. Coverage thresholds are 50% for Concord, 80% for VSR, and 25% for ExTurso. Add Core unit and public API integration coverage for replicated features; add E2E coverage for distribution or failover behavior.
+Tests use ExUnit and are named `*_test.exs`; test modules end in `Test`. Concord integration tests are usually `async: false` because registered VSR processes and ETS tables are shared. Coverage thresholds are 50% for Concord, 80% for VSR, and 25% for Turso. Add Core unit and public API integration coverage for replicated features; add E2E coverage for distribution or failover behavior.
 
 ## Commit & Pull Request Guidelines
 
