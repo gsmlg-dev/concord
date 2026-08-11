@@ -263,18 +263,18 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Connection) do
     end
 
     def delete_all(query) do
+      %{from: %{source: source}} = query
       sources = create_names(query, [])
-      cte = cte(query, sources)
-
-      from = from(query, sources)
-      where = where(query, sources)
+      {target, _alias} = get_source(query, sources, 0, source)
+      {_, _, schema} = elem(sources, 0)
+      delete_sources = put_elem(sources, 0, {target, target, schema})
 
       [
-        cte,
-        "DELETE",
-        from,
-        where,
-        returning(query, sources)
+        cte(query, delete_sources),
+        "DELETE FROM ",
+        target,
+        where(query, delete_sources),
+        returning(query, delete_sources)
       ]
     end
 
@@ -1616,7 +1616,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Connection) do
         quote_name(name),
         ?\s,
         column_type(ref.type, opts),
-        column_options(table, ref.type, opts),
+        add_column_options(table, ref.type, opts),
         reference_expr(ref, table, name)
       ]
     end
@@ -1637,7 +1637,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Connection) do
         quote_name(name),
         ?\s,
         column_type(type, opts),
-        column_options(table, type, opts)
+        add_column_options(table, type, opts)
       ]
     end
 
@@ -1647,7 +1647,7 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Connection) do
         quote_name(name),
         ?\s,
         column_type(type, opts),
-        column_options(table, type, opts)
+        add_column_options(table, type, opts)
       ]
     end
 
@@ -1668,6 +1668,12 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Connection) do
 
     defp column_change(_table, _) do
       raise ArgumentError, "Not supported by Turso"
+    end
+
+    defp add_column_options(table, type, opts) do
+      opts = if Keyword.get(opts, :null) == true, do: Keyword.delete(opts, :null), else: opts
+
+      column_options(table, type, opts)
     end
 
     defp column_options(table, type, opts) do

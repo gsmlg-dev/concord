@@ -292,4 +292,84 @@ defmodule TursoTest do
     assert {:error, %Turso.Error{code: :constraint}} =
              Turso.execute(db, "INSERT INTO uniq VALUES (?)", [1])
   end
+
+  test "explicitly created unique indexes can be dropped", %{db: db} do
+    {:ok, _} =
+      Turso.execute(
+        db,
+        "CREATE TABLE audit_events (id INTEGER PRIMARY KEY, operation_id TEXT, action TEXT NOT NULL)"
+      )
+
+    {:ok, _} =
+      Turso.execute(
+        db,
+        "CREATE UNIQUE INDEX audit_events_operation_action_index " <>
+          "ON audit_events (operation_id, action)"
+      )
+
+    assert {:ok, %Result{rows: [%{"name" => "audit_events_operation_action_index"}]}} =
+             Turso.query(
+               db,
+               "SELECT name FROM sqlite_master " <>
+                 "WHERE type = 'index' AND name = 'audit_events_operation_action_index'"
+             )
+
+    assert {:ok, %Result{rows: nil}} =
+             Turso.execute(db, "DROP INDEX audit_events_operation_action_index")
+
+    assert {:ok, %Result{rows: []}} =
+             Turso.query(
+               db,
+               "SELECT name FROM sqlite_master " <>
+                 "WHERE type = 'index' AND name = 'audit_events_operation_action_index'"
+             )
+  end
+
+  test "connections enable foreign-key enforcement", %{db: db} do
+    assert {:ok, %Result{rows: [%{"foreign_keys" => 1}]}} =
+             Turso.query(db, "PRAGMA foreign_keys")
+
+    assert {:ok, _} = Turso.execute(db, "CREATE TABLE fk_parents (id INTEGER PRIMARY KEY)")
+
+    assert {:ok, _} =
+             Turso.execute(
+               db,
+               "CREATE TABLE fk_children (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES fk_parents(id))"
+             )
+
+    assert {:error, %Turso.Error{code: :constraint}} =
+             Turso.execute(db, "INSERT INTO fk_children VALUES (?, ?)", [1, -1])
+  end
+
+  test "adding a nullable column preserves existing foreign keys", %{db: db} do
+    assert {:ok, _} =
+             Turso.execute(db, "CREATE TABLE alter_parents (id INTEGER PRIMARY KEY)")
+
+    assert {:ok, _} =
+             Turso.execute(
+               db,
+               "CREATE TABLE alter_children (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES alter_parents(id))"
+             )
+
+    assert {:ok, _} =
+             Turso.execute(
+               db,
+               "ALTER TABLE alter_children ADD COLUMN request_metadata TEXT NULL"
+             )
+
+    assert {:ok, %Result{rows: [%{"sql" => schema}]}} =
+             Turso.query(
+               db,
+               "SELECT sql FROM sqlite_schema WHERE name = 'alter_children'"
+             )
+
+    assert schema =~ "REFERENCES alter_parents"
+
+    assert {:error, %Turso.Error{code: :constraint}} =
+             Turso.execute(
+               db,
+               "INSERT INTO alter_children (id, parent_id) VALUES (?, ?)",
+               [1, -1]
+             )
+  end
 end
