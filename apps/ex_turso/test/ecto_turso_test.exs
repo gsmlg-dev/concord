@@ -4,6 +4,22 @@ defmodule Turso.EctoRepo do
     adapter: Ecto.Adapters.Turso
 end
 
+defmodule Turso.SandboxRepo do
+  use Ecto.Repo,
+    otp_app: :ex_turso,
+    adapter: Ecto.Adapters.Turso
+end
+
+defmodule Turso.ReversibleMigration do
+  use Ecto.Migration
+
+  def change do
+    create table(:migration_records) do
+      add(:name, :string)
+    end
+  end
+end
+
 defmodule Turso.EctoUser do
   use Ecto.Schema
 
@@ -28,8 +44,9 @@ defmodule Turso.EctoTursoTest do
 
   import Ecto.Query
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Ecto.Migration.Table
-  alias Turso.{EctoRepo, EctoUser}
+  alias Turso.{EctoRepo, EctoUser, ReversibleMigration, SandboxRepo}
 
   setup do
     start_supervised!({EctoRepo, database: ":memory:", pool_size: 1, log: false})
@@ -101,6 +118,34 @@ defmodule Turso.EctoTursoTest do
     assert EctoRepo.get(EctoUser, inserted.id) == nil
   end
 
+  test "delete_all uses the target table in filtered predicates" do
+    first =
+      %EctoUser{}
+      |> EctoUser.changeset(%{name: "First", active: true})
+      |> EctoRepo.insert!()
+
+    second =
+      %EctoUser{}
+      |> EctoUser.changeset(%{name: "Second", active: true})
+      |> EctoRepo.insert!()
+
+    assert {1, nil} =
+             EctoRepo.delete_all(from(user in EctoUser, where: user.id == ^first.id))
+
+    assert EctoRepo.get(EctoUser, first.id) == nil
+    assert EctoRepo.get!(EctoUser, second.id).name == "Second"
+  end
+
+  test "migration rollback deletes the applied schema version" do
+    version = 20_260_811_000_001
+
+    assert :ok = Ecto.Migrator.up(EctoRepo, version, ReversibleMigration, log: false)
+    assert version in Ecto.Migrator.migrated_versions(EctoRepo)
+
+    assert :ok = Ecto.Migrator.down(EctoRepo, version, ReversibleMigration, log: false)
+    refute version in Ecto.Migrator.migrated_versions(EctoRepo)
+  end
+
   test "transactions rollback through Ecto" do
     assert {:error, :stop} =
              EctoRepo.transaction(fn ->
@@ -112,6 +157,97 @@ defmodule Turso.EctoTursoTest do
              end)
 
     assert EctoRepo.aggregate(EctoUser, :count) == 0
+  end
+
+  test "transactions inside a sandbox checkout use savepoints" do
+    start_supervised!(
+      {SandboxRepo,
+       database: ":memory:", pool: Ecto.Adapters.SQL.Sandbox, pool_size: 1, log: false}
+    )
+
+    Sandbox.unboxed_run(SandboxRepo, fn ->
+      SandboxRepo.query!("CREATE TABLE sandbox_records (id INTEGER PRIMARY KEY)")
+    end)
+
+    assert :ok = Sandbox.checkout(SandboxRepo)
+
+    try do
+      refute SandboxRepo.in_transaction?()
+
+      assert {:ok, :ok} =
+               SandboxRepo.transaction(fn ->
+                 assert SandboxRepo.in_transaction?()
+                 SandboxRepo.query!("INSERT INTO sandbox_records VALUES (?)", [1])
+                 :ok
+               end)
+
+      assert {:error, :stop} =
+               SandboxRepo.transaction(fn ->
+                 SandboxRepo.query!("INSERT INTO sandbox_records VALUES (?)", [2])
+                 SandboxRepo.rollback(:stop)
+               end)
+
+      assert %{rows: [[1]]} =
+               SandboxRepo.query!("SELECT id FROM sandbox_records ORDER BY id")
+
+      assert {:ok, :ok} = SandboxRepo.transaction(fn -> :ok end)
+      refute SandboxRepo.in_transaction?()
+    after
+      Sandbox.checkin(SandboxRepo)
+    end
+
+    assert :ok = Sandbox.checkout(SandboxRepo)
+
+    try do
+      assert %{rows: []} = SandboxRepo.query!("SELECT id FROM sandbox_records")
+    after
+      Sandbox.checkin(SandboxRepo)
+    end
+  end
+
+  test "nullable ALTER TABLE columns preserve foreign keys" do
+    EctoRepo.query!("CREATE TABLE alter_parents (id INTEGER PRIMARY KEY)")
+
+    EctoRepo.query!(
+      "CREATE TABLE alter_children " <>
+        "(id INTEGER PRIMARY KEY, " <>
+        "parent_id INTEGER REFERENCES alter_parents(id))"
+    )
+
+    [alter_sql] =
+      Ecto.Adapters.Turso.Connection.execute_ddl(
+        {:alter, %Table{name: "alter_children"},
+         [{:add, :request_metadata, :string, [null: true]}]}
+      )
+
+    alter_sql = IO.iodata_to_binary(alter_sql)
+
+    assert alter_sql ==
+             ~s|ALTER TABLE "alter_children" ADD COLUMN "request_metadata" TEXT|
+
+    EctoRepo.query!(alter_sql)
+
+    assert %{columns: columns, rows: [row]} =
+             EctoRepo.query!("PRAGMA foreign_key_list(alter_children)")
+
+    assert %{"table" => "alter_parents", "from" => "parent_id", "to" => "id"} =
+             columns
+             |> Enum.zip(row)
+             |> Map.new()
+
+    EctoRepo.query!("INSERT INTO alter_parents VALUES (?)", [1])
+
+    EctoRepo.query!(
+      "INSERT INTO alter_children (id, parent_id) VALUES (?, ?)",
+      [1, 1]
+    )
+
+    assert_raise Turso.Error, ~r/FOREIGN KEY constraint failed/, fn ->
+      EctoRepo.query!(
+        "INSERT INTO alter_children (id, parent_id) VALUES (?, ?)",
+        [2, -1]
+      )
+    end
   end
 
   test "migration DDL supports string check constraints" do

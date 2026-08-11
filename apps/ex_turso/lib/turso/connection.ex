@@ -20,15 +20,17 @@ defmodule Turso.Connection do
   # Errors in these classes mean the underlying connection is unusable; the
   # pool drops the connection and opens a fresh one.
   @disconnect_codes [:io, :corrupt]
+  @savepoint_name "ecto_sandbox"
 
   @type t :: %__MODULE__{
           db: reference(),
           conn: reference(),
           sync_db: reference() | nil,
-          status: :idle | :transaction
+          status: :idle | :transaction,
+          transaction_depth: non_neg_integer()
         }
 
-  defstruct [:db, :conn, :sync_db, status: :idle]
+  defstruct [:db, :conn, :sync_db, status: :idle, transaction_depth: 0]
 
   @impl true
   def connect(opts) do
@@ -56,7 +58,7 @@ defmodule Turso.Connection do
 
     case result do
       {:ok, db, conn, is_sync} ->
-        {:ok, %__MODULE__{db: db, conn: conn, sync_db: if(is_sync, do: db, else: nil)}}
+        enable_foreign_keys(db, conn, is_sync)
 
       {:error, reason} ->
         {:error, wrap_error(reason)}
@@ -85,26 +87,42 @@ defmodule Turso.Connection do
   def handle_status(_opts, %__MODULE__{status: status} = state), do: {status, state}
 
   @impl true
-  def handle_begin(_opts, %__MODULE__{conn: conn} = state) do
-    case Native.execute(conn, "BEGIN", []) do
-      {:ok, _} -> {:ok, %Result{}, %{state | status: :transaction}}
-      {:error, reason} -> {:disconnect, wrap_error(reason), state}
+  def handle_begin(opts, %__MODULE__{conn: conn, transaction_depth: depth} = state) do
+    statement =
+      if opts[:mode] == :savepoint,
+        do: "SAVEPOINT #{@savepoint_name}",
+        else: "BEGIN"
+
+    transaction_result(Native.execute(conn, statement, []), depth + 1, state)
+  end
+
+  @impl true
+  def handle_commit(opts, %__MODULE__{conn: conn, transaction_depth: depth} = state) do
+    if opts[:mode] == :savepoint do
+      transaction_result(
+        Native.execute(conn, "RELEASE SAVEPOINT #{@savepoint_name}", []),
+        max(depth - 1, 0),
+        state
+      )
+    else
+      transaction_result(Native.execute(conn, "COMMIT", []), 0, state)
     end
   end
 
   @impl true
-  def handle_commit(_opts, %__MODULE__{conn: conn} = state) do
-    case Native.execute(conn, "COMMIT", []) do
-      {:ok, _} -> {:ok, %Result{}, %{state | status: :idle}}
-      {:error, reason} -> {:disconnect, wrap_error(reason), state}
-    end
-  end
-
-  @impl true
-  def handle_rollback(_opts, %__MODULE__{conn: conn} = state) do
-    case Native.execute(conn, "ROLLBACK", []) do
-      {:ok, _} -> {:ok, %Result{}, %{state | status: :idle}}
-      {:error, reason} -> {:disconnect, wrap_error(reason), state}
+  def handle_rollback(opts, %__MODULE__{conn: conn, transaction_depth: depth} = state) do
+    if opts[:mode] == :savepoint do
+      with {:ok, _} <- Native.execute(conn, "ROLLBACK TO SAVEPOINT #{@savepoint_name}", []) do
+        transaction_result(
+          Native.execute(conn, "RELEASE SAVEPOINT #{@savepoint_name}", []),
+          max(depth - 1, 0),
+          state
+        )
+      else
+        {:error, reason} -> {:disconnect, wrap_error(reason), state}
+      end
+    else
+      transaction_result(Native.execute(conn, "ROLLBACK", []), 0, state)
     end
   end
 
@@ -188,6 +206,19 @@ defmodule Turso.Connection do
     {:error, %Error{message: "cursors are not supported"}, state}
   end
 
+  defp enable_foreign_keys(db, conn, is_sync) do
+    state = %__MODULE__{db: db, conn: conn, sync_db: if(is_sync, do: db, else: nil)}
+
+    case Native.execute(conn, "PRAGMA foreign_keys = ON", []) do
+      {:ok, _} ->
+        {:ok, state}
+
+      {:error, reason} ->
+        disconnect(reason, state)
+        {:error, wrap_error(reason)}
+    end
+  end
+
   defp resolve_secret(fun) when is_function(fun, 0), do: fun.()
   defp resolve_secret(value), do: value
 
@@ -204,6 +235,15 @@ defmodule Turso.Connection do
     do: %Error{code: code, message: message}
 
   defp wrap_error(message) when is_binary(message), do: %Error{message: message}
+
+  defp transaction_result({:ok, _}, depth, state) do
+    status = if depth == 0, do: :idle, else: :transaction
+
+    {:ok, %Result{}, %{state | status: status, transaction_depth: depth}}
+  end
+
+  defp transaction_result({:error, reason}, _depth, state),
+    do: {:disconnect, wrap_error(reason), state}
 
   defp error_or_disconnect(reason, state) do
     error = wrap_error(reason)
