@@ -10,9 +10,9 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-turso = { version = "0.6", features = ["sync"] }
+turso = { version = "0.7", features = ["sync"] }
 # Keep FTS enabled explicitly on the shared Turso core dependency.
-turso_core = { version = "0.6", features = ["fts"] }
+turso_core = { version = "0.7", features = ["fts"] }
 rustler = "0.38"
 tokio = { version = "1", features = ["full"] }
 once_cell = "1"
