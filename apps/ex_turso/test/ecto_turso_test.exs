@@ -44,6 +44,8 @@ defmodule Turso.EctoIdentity do
 
   schema "ecto_identities" do
     field(:github_user_id, :integer)
+    field(:kind, Ecto.Enum, values: [:user, :deleted])
+    field(:local_user_id, :integer)
     field(:login, :string)
   end
 end
@@ -76,6 +78,8 @@ defmodule Turso.EctoTursoTest do
     CREATE TABLE ecto_identities (
       id INTEGER PRIMARY KEY,
       github_user_id INTEGER,
+      kind TEXT NOT NULL,
+      local_user_id INTEGER,
       login TEXT
     )
     """)
@@ -143,17 +147,32 @@ defmodule Turso.EctoTursoTest do
 
   test "upserts target partial unique indexes" do
     assert {:ok, %EctoIdentity{}} =
-             EctoRepo.insert(%EctoIdentity{github_user_id: 1, login: "octocat"})
+             EctoRepo.insert(%EctoIdentity{github_user_id: 1, kind: :user, login: "octocat"})
 
     assert {:ok, %EctoIdentity{}} =
              EctoRepo.insert(
-               %EctoIdentity{github_user_id: 1, login: "monalisa"},
+               %EctoIdentity{github_user_id: 1, kind: :user, login: "monalisa"},
                on_conflict: [set: [login: "monalisa"]],
                conflict_target:
                  {:unsafe_fragment, "(github_user_id) WHERE github_user_id IS NOT NULL"}
              )
 
     assert [%EctoIdentity{login: "monalisa"}] = EctoRepo.all(EctoIdentity)
+  end
+
+  test "Ecto.Enum literals bind with their dumped value" do
+    assert {:ok, %EctoIdentity{}} =
+             EctoRepo.insert(%EctoIdentity{kind: :user, local_user_id: 1, login: "octocat"})
+
+    assert [%EctoIdentity{kind: :user, local_user_id: 1}] =
+             EctoRepo.all(from(identity in EctoIdentity, where: identity.local_user_id == ^1))
+
+    assert [%EctoIdentity{kind: :user, local_user_id: 1}] =
+             EctoRepo.all(
+               from(identity in EctoIdentity,
+                 where: identity.kind == :user and identity.local_user_id == ^1
+               )
+             )
   end
 
   test "delete_all uses the target table in filtered predicates" do
