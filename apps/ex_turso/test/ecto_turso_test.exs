@@ -50,6 +50,26 @@ defmodule Turso.EctoIdentity do
   end
 end
 
+defmodule Turso.EctoWriteOperation do
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  schema "ecto_write_operations" do
+    field(:request_id, :integer)
+    field(:kind, :string)
+    field(:target_ref, :string)
+  end
+
+  def changeset(operation, attrs) do
+    operation
+    |> cast(attrs, [:request_id, :kind, :target_ref])
+    |> unique_constraint([:request_id, :kind, :target_ref],
+      name: :git_write_operations_request_ref_index
+    )
+  end
+end
+
 defmodule Turso.EctoTursoTest do
   use ExUnit.Case, async: false
 
@@ -57,7 +77,15 @@ defmodule Turso.EctoTursoTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Ecto.Migration.Table
-  alias Turso.{EctoIdentity, EctoRepo, EctoUser, ReversibleMigration, SandboxRepo}
+
+  alias Turso.{
+    EctoIdentity,
+    EctoRepo,
+    EctoUser,
+    EctoWriteOperation,
+    ReversibleMigration,
+    SandboxRepo
+  }
 
   setup do
     start_supervised!({EctoRepo, database: ":memory:", pool_size: 1, log: false})
@@ -85,9 +113,23 @@ defmodule Turso.EctoTursoTest do
     """)
 
     EctoRepo.query!("""
+    CREATE TABLE ecto_write_operations (
+      id INTEGER PRIMARY KEY,
+      request_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      target_ref TEXT NOT NULL
+    )
+    """)
+
+    EctoRepo.query!("""
     CREATE UNIQUE INDEX ecto_identities_github_user_id_index
     ON ecto_identities (github_user_id)
     WHERE github_user_id IS NOT NULL
+    """)
+
+    EctoRepo.query!("""
+    CREATE UNIQUE INDEX git_write_operations_request_ref_index
+    ON ecto_write_operations (request_id, kind, target_ref)
     """)
 
     :ok
@@ -173,6 +215,24 @@ defmodule Turso.EctoTursoTest do
                  where: identity.kind == :user and identity.local_user_id == ^1
                )
              )
+  end
+
+  test "unique constraint errors report the declared index name" do
+    attrs = %{request_id: 1, kind: "push", target_ref: "refs/heads/main"}
+
+    assert {:ok, %EctoWriteOperation{}} =
+             %EctoWriteOperation{}
+             |> EctoWriteOperation.changeset(attrs)
+             |> EctoRepo.insert()
+
+    assert {:error, changeset} =
+             %EctoWriteOperation{}
+             |> EctoWriteOperation.changeset(attrs)
+             |> EctoRepo.insert()
+
+    assert {"has already been taken",
+            [constraint: :unique, constraint_name: "git_write_operations_request_ref_index"]} =
+             changeset.errors[:request_id]
   end
 
   test "delete_all uses the target table in filtered predicates" do
