@@ -854,8 +854,6 @@ defmodule Concord do
     end
   end
 
-  defp validate_batch_size(_), do: {:error, :invalid_batch_format}
-
   defp validate_put_operations(operations) when is_list(operations) do
     Enum.reduce_while(operations, :ok, fn operation, :ok ->
       case validate_put_operation(operation) do
@@ -901,8 +899,6 @@ defmodule Concord do
       end
     end)
   end
-
-  defp validate_keys(_), do: {:error, :invalid_keys_format}
 
   defp validate_touch_operations(operations) when is_list(operations) do
     Enum.reduce_while(operations, :ok, fn operation, :ok ->

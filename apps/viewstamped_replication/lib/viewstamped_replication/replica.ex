@@ -572,20 +572,11 @@ defmodule ViewstampedReplication.Replica do
   defp persist(storage, storage_state, {:hard_state, hard_state}),
     do: storage.persist_hard_state(storage_state, hard_state)
 
-  defp persist(storage, storage_state, {:applied, applied_number, client_table}),
-    do: storage.set_applied(storage_state, applied_number, client_table)
-
-  defp persist(storage, storage_state, {:install_state, durable_state}),
-    do: storage.install_state(storage_state, durable_state)
-
   defp persist(storage, storage_state, {:truncate_suffix, last_op_number}),
     do: storage.truncate_suffix(storage_state, last_op_number)
 
   defp persist(storage, storage_state, {:write_snapshot, snapshot}),
     do: storage.write_snapshot(storage_state, snapshot)
-
-  defp persist(storage, storage_state, {:install_snapshot, snapshot}),
-    do: storage.install_snapshot(storage_state, snapshot)
 
   defp persist(_storage, _storage_state, operation),
     do: {:error, {:unsupported_storage_operation, operation}}

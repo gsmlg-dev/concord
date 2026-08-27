@@ -1157,21 +1157,8 @@ defmodule Concord.StateMachine.Core do
 
   defp invalid_command_result(_command), do: {:error, :unsupported_command}
 
-  defp legacy_dispatched_command?({:put, _key, _value}), do: true
-  defp legacy_dispatched_command?({:put, _key, _value, _opts_or_expiry}), do: true
-  defp legacy_dispatched_command?({:delete, _key}), do: true
-  defp legacy_dispatched_command?({:delete, _key, opts}) when is_map(opts), do: true
-  defp legacy_dispatched_command?({:put_if, _key, _value, _expiry, _expected}), do: true
-  defp legacy_dispatched_command?({:delete_if, _key, _expected, _condition}), do: true
-  defp legacy_dispatched_command?({:touch, _key, _ttl}), do: true
-  defp legacy_dispatched_command?(:cleanup_expired), do: true
-  defp legacy_dispatched_command?({:put_many, operations}) when is_list(operations), do: true
-  defp legacy_dispatched_command?({:delete_many, keys}) when is_list(keys), do: true
-  defp legacy_dispatched_command?({:touch_many, operations}) when is_list(operations), do: true
   defp legacy_dispatched_command?({:drop_index, _name}), do: true
-  defp legacy_dispatched_command?({:reindex, _name}), do: true
   defp legacy_dispatched_command?({:get_many, keys}) when is_list(keys), do: true
-  defp legacy_dispatched_command?({:txn, spec}) when is_map(spec), do: true
   defp legacy_dispatched_command?({:grant_lease, _ttl, _opts}), do: true
   defp legacy_dispatched_command?({:keep_alive_lease, _id, _opts}), do: true
   defp legacy_dispatched_command?({:revoke_lease, _id, _opts}), do: true
