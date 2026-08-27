@@ -39,6 +39,15 @@ defmodule Turso.EctoUser do
   end
 end
 
+defmodule Turso.EctoIdentity do
+  use Ecto.Schema
+
+  schema "ecto_identities" do
+    field(:github_user_id, :integer)
+    field(:login, :string)
+  end
+end
+
 defmodule Turso.EctoTursoTest do
   use ExUnit.Case, async: false
 
@@ -46,7 +55,7 @@ defmodule Turso.EctoTursoTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Ecto.Migration.Table
-  alias Turso.{EctoRepo, EctoUser, ReversibleMigration, SandboxRepo}
+  alias Turso.{EctoIdentity, EctoRepo, EctoUser, ReversibleMigration, SandboxRepo}
 
   setup do
     start_supervised!({EctoRepo, database: ":memory:", pool_size: 1, log: false})
@@ -61,6 +70,20 @@ defmodule Turso.EctoTursoTest do
       birthday TEXT,
       data BLOB
     )
+    """)
+
+    EctoRepo.query!("""
+    CREATE TABLE ecto_identities (
+      id INTEGER PRIMARY KEY,
+      github_user_id INTEGER,
+      login TEXT
+    )
+    """)
+
+    EctoRepo.query!("""
+    CREATE UNIQUE INDEX ecto_identities_github_user_id_index
+    ON ecto_identities (github_user_id)
+    WHERE github_user_id IS NOT NULL
     """)
 
     :ok
@@ -116,6 +139,21 @@ defmodule Turso.EctoTursoTest do
 
     assert {:ok, %EctoUser{}} = EctoRepo.delete(updated)
     assert EctoRepo.get(EctoUser, inserted.id) == nil
+  end
+
+  test "upserts target partial unique indexes" do
+    assert {:ok, %EctoIdentity{}} =
+             EctoRepo.insert(%EctoIdentity{github_user_id: 1, login: "octocat"})
+
+    assert {:ok, %EctoIdentity{}} =
+             EctoRepo.insert(
+               %EctoIdentity{github_user_id: 1, login: "monalisa"},
+               on_conflict: [set: [login: "monalisa"]],
+               conflict_target:
+                 {:unsafe_fragment, "(github_user_id) WHERE github_user_id IS NOT NULL"}
+             )
+
+    assert [%EctoIdentity{login: "monalisa"}] = EctoRepo.all(EctoIdentity)
   end
 
   test "delete_all uses the target table in filtered predicates" do
