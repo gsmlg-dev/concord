@@ -34,8 +34,6 @@ defmodule Concord.KV do
   same quorum-confirmed, linearizable read barrier.
   """
 
-  require Logger
-
   alias Concord.{Compression, Engine, Validation}
   alias Concord.KV.Record
 

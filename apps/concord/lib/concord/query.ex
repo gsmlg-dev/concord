@@ -31,8 +31,6 @@ defmodule Concord.Query do
       Concord.Query.keys(prefix: "order:", limit: 50, offset: 100)
   """
 
-  require Logger
-
   @type key :: binary()
   @type value :: term()
   @type pattern :: Regex.t()

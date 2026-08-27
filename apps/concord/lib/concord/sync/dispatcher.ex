@@ -5,8 +5,6 @@ defmodule Concord.Sync.Dispatcher do
   """
 
   use GenServer
-  require Logger
-
   alias Concord.Sync.{ChangeLog, Event, WatchHub}
 
   def start_link(opts \\ []) do

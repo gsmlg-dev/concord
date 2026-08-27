@@ -251,7 +251,7 @@ defmodule ViewstampedReplication.Storage.File do
       {:ok, record, consumed} ->
         case validate_wal_record(record) do
           :ok ->
-            <<_record::binary-size(consumed), rest::binary>> = binary
+            <<_record::binary-size(^consumed), rest::binary>> = binary
             decode_records(rest, [record | records], valid_bytes + consumed)
 
           {:error, reason} ->
@@ -369,7 +369,7 @@ defmodule ViewstampedReplication.Storage.File do
   end
 
   defp decode_payload(rest, length, checksum, header_size) do
-    <<payload::binary-size(length), _tail::binary>> = rest
+    <<payload::binary-size(^length), _tail::binary>> = rest
 
     if :erlang.crc32(payload) == checksum do
       try do

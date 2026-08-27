@@ -25,8 +25,6 @@ defmodule Mix.Tasks.Concord.Backup do
   """
 
   use Mix.Task
-  require Logger
-
   alias Concord.Backup
 
   @shortdoc "Manage Concord backups"
