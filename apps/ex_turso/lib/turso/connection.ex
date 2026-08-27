@@ -246,6 +246,7 @@ defmodule Turso.Connection do
     do: {:disconnect, wrap_error(reason), state}
 
   defp error_or_disconnect(reason, state) do
+    reason = resolve_unique_constraint(reason, state.conn)
     error = wrap_error(reason)
 
     if error.code in @disconnect_codes do
@@ -253,5 +254,56 @@ defmodule Turso.Connection do
     else
       {:error, error, state}
     end
+  end
+
+  defp resolve_unique_constraint(
+         {:constraint, "UNIQUE constraint failed: " <> message} = reason,
+         conn
+       ) do
+    with %{"table" => table, "columns" => columns} <-
+           Regex.named_captures(~r/^(?<table>.+)\.\((?<columns>.+)\) \(\d+\)$/, message),
+         columns <- String.split(columns, ", "),
+         {:ok, index_name} <- find_unique_index(conn, table, columns) do
+      {:constraint, "UNIQUE constraint failed: index '#{index_name}'"}
+    else
+      _ -> reason
+    end
+  end
+
+  defp resolve_unique_constraint(reason, _conn), do: reason
+
+  defp find_unique_index(conn, table, expected_columns) do
+    with {:ok, {columns, rows}} <-
+           Native.query_rows(conn, "PRAGMA index_list(#{quote_identifier(table)})", []),
+         name_index when is_integer(name_index) <- Enum.find_index(columns, &(&1 == "name")),
+         unique_index when is_integer(unique_index) <- Enum.find_index(columns, &(&1 == "unique")) do
+      names =
+        rows
+        |> Enum.filter(&(Enum.at(&1, unique_index) == 1))
+        |> Enum.map(&Enum.at(&1, name_index))
+        |> Enum.filter(&index_matches?(conn, &1, expected_columns))
+
+      case names do
+        [name] -> {:ok, name}
+        _ -> :error
+      end
+    else
+      _ -> :error
+    end
+  end
+
+  defp index_matches?(conn, index_name, expected_columns) do
+    with {:ok, {columns, rows}} <-
+           Native.query_rows(conn, "PRAGMA index_info(#{quote_identifier(index_name)})", []),
+         name_index when is_integer(name_index) <- Enum.find_index(columns, &(&1 == "name")) do
+      Enum.map(rows, &Enum.at(&1, name_index)) == expected_columns
+    else
+      _ -> false
+    end
+  end
+
+  defp quote_identifier(identifier) do
+    escaped = String.replace(identifier, "\"", "\"\"")
+    "\"#{escaped}\""
   end
 end
