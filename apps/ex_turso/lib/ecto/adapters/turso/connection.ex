@@ -1652,7 +1652,10 @@ if Code.ensure_loaded?(Ecto.Adapters.SQL.Connection) do
     end
 
     defp column_change(_table, {:modify, _name, _type, _opts}) do
-      raise ArgumentError, "ALTER COLUMN not supported by Turso"
+      raise ArgumentError,
+            "ALTER COLUMN is not supported by Turso. Use " <>
+              "Ecto.Adapters.Turso.Migration.rebuild_table!/3 from explicit up/0 and down/0 " <>
+              "migrations with @disable_ddl_transaction true"
     end
 
     defp column_change(table, {:remove, name, _type, _opts}) do

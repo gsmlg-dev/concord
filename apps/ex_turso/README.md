@@ -138,6 +138,68 @@ The adapter supports regular `Ecto.Repo` schema/query operations and
 `ecto_sql` migrations using Turso's SQLite-compatible SQL dialect. Streaming
 and multi-result queries are not supported by the current native connection.
 
+### Rebuilding a table for unsupported column changes
+
+Turso does not safely support every `ALTER COLUMN` operation. For changes that
+require replacing a table, use
+`Ecto.Adapters.Turso.Migration.rebuild_table!/3` from explicit `up/0` and
+`down/0` migrations. The helper requires the complete target table definition
+and an explicit identifier-only copy mapping.
+
+The `:create` callback receives an already quoted temporary table identifier:
+
+```elixir
+defmodule MyApp.Repo.Migrations.AllowNullableOwnerId do
+  use Ecto.Migration
+
+  @disable_ddl_transaction true
+
+  def up do
+    execute(fn -> rebuild(null: true) end)
+  end
+
+  def down do
+    execute(fn -> rebuild(null: false) end)
+  end
+
+  defp rebuild(opts) do
+    Ecto.Adapters.Turso.Migration.rebuild_table!(
+      repo(),
+      :github_import_runs,
+      create: fn temporary_table -> create_sql(temporary_table, opts) end,
+      copy: [:id, :source_owner_github_id, :source_repository_id],
+      recreate: [:indexes, :triggers]
+    )
+  end
+
+  defp create_sql(temporary_table, opts) do
+    owner_nullability = if opts[:null], do: "", else: " NOT NULL"
+
+    """
+    CREATE TABLE #{temporary_table} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_owner_github_id INTEGER#{owner_nullability},
+      source_repository_id INTEGER,
+      CONSTRAINT github_import_runs_owner_check
+        CHECK (source_owner_github_id IS NOT NULL OR source_repository_id IS NOT NULL)
+    )
+    """
+  end
+end
+```
+
+The helper pins one connection, temporarily disables foreign-key enforcement,
+creates and copies into the replacement table inside a transaction, restores
+explicit indexes, triggers, and the AUTOINCREMENT sequence, runs foreign-key
+and integrity checks, and restores the connection's original foreign-key
+setting on every exit path. It rejects existing transactions, qualified table
+names, generated or hidden columns, and copy mappings that do not preserve the
+primary key. `:recreate` defaults to both indexes and triggers; an optional
+`:validate` callback receives the checked-out transaction connection for
+additional application checks. Built-in foreign-key and integrity checks
+cannot be disabled. Application-specific backfills must be performed
+separately.
+
 ## Full-text search
 
 Turso enables Turso's embedded full-text search index support for local
