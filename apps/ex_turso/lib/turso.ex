@@ -28,7 +28,7 @@ defmodule Turso do
       children = [
         {Turso,
          database: "replica.db",
-         remote_url: "libsql://my-db.turso.io",
+         remote_url: "turso://my-db.turso.io",
          auth_token: fn -> System.fetch_env!("TURSO_AUTH_TOKEN") end,
          name: MyApp.DB}
       ]
@@ -43,7 +43,7 @@ defmodule Turso do
     * `:database` — path to the local database file (required); `":memory:"`
       opens an in-memory database per pooled connection
     * `:remote_url` — URL of a Turso Cloud database to sync with (requires
-      `:auth_token`)
+      `:auth_token`). Supports `turso://`, `libsql://`, and `https://` schemes.
     * `:auth_token` — auth token for the remote database, either a string or
       a zero-arity function returning one; prefer the function form so the
       token does not sit in supervisor child specs and crash reports

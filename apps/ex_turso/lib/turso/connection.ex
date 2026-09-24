@@ -8,7 +8,8 @@ defmodule Turso.Connection do
     * `:database` — path to the local database file (required). `":memory:"`
       opens an in-memory database.
     * `:remote_url` — URL of a Turso Cloud database to sync with (optional,
-      requires `:auth_token`).
+      requires `:auth_token`). Supports `turso://`, `libsql://`, and `https://`
+      schemes.
     * `:auth_token` — auth token for the remote database, either a string or a
       zero-arity function returning one (optional, requires `:remote_url`).
   """
@@ -35,7 +36,7 @@ defmodule Turso.Connection do
   @impl true
   def connect(opts) do
     database = Keyword.fetch!(opts, :database)
-    remote_url = opts[:remote_url]
+    remote_url = normalize_remote_url(opts[:remote_url])
     auth_token = resolve_secret(opts[:auth_token])
 
     result =
@@ -221,6 +222,17 @@ defmodule Turso.Connection do
 
   defp resolve_secret(fun) when is_function(fun, 0), do: fun.()
   defp resolve_secret(value), do: value
+
+  defp normalize_remote_url(url) when is_binary(url) do
+    url = String.trim(url)
+
+    case String.split(url, "://", parts: 2) do
+      [scheme, rest] -> String.downcase(scheme) <> "://" <> rest
+      _ -> url
+    end
+  end
+
+  defp normalize_remote_url(other), do: other
 
   defp close_conn(conn) when is_reference(conn), do: Native.close(conn)
   defp close_conn(_conn), do: :ok

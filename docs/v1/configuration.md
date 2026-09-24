@@ -250,7 +250,8 @@ CONCORD_CLUSTER_ENABLED=false
 CONCORD_TURSO_ENABLED=true
 CONCORD_TURSO_DATABASE=/var/apps/concord/lib/concord/turso.db
 CONCORD_TURSO_POOL_SIZE=1
-CONCORD_TURSO_REMOTE_URL=libsql://example.turso.io
+# Supports turso://, libsql://, or https:// schemes
+CONCORD_TURSO_REMOTE_URL=turso://example.turso.io
 CONCORD_TURSO_AUTH_TOKEN=...
 ```
 

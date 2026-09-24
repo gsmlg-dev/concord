@@ -233,9 +233,15 @@ fn open_sync(
     remote_url: String,
     auth_token: String,
 ) -> Result<ResourceArc<SyncDbResource>, NifError> {
+    let remote_url = remote_url.trim();
+    let normalized_url = match remote_url.split_once("://") {
+        Some((scheme, rest)) => format!("{}://{}", scheme.to_ascii_lowercase(), rest),
+        None => remote_url.to_string(),
+    };
+
     let result = RT.block_on(async {
         turso::sync::Builder::new_remote(&path)
-            .with_remote_url(&remote_url)
+            .with_remote_url(&normalized_url)
             .with_auth_token(&auth_token)
             .build()
             .await

@@ -221,13 +221,13 @@ queries instead.
 ## Turso Cloud sync
 
 Pass `:remote_url` and `:auth_token` to open the local file as an embedded
-replica of a Turso Cloud database:
+replica of a Turso Cloud database (supports `turso://`, `libsql://`, and `https://` schemes):
 
 ```elixir
 children = [
   {Turso,
    database: "replica.db",
-   remote_url: "libsql://my-db.turso.io",
+   remote_url: "turso://my-db.turso.io",
    auth_token: fn -> System.fetch_env!("TURSO_AUTH_TOKEN") end,
    name: MyApp.DB}
 ]

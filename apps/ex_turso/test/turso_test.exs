@@ -242,14 +242,26 @@ defmodule TursoTest do
   end
 
   test "connect/1 returns error if only one of remote_url or auth_token is provided" do
-    assert {:error,
-            %Turso.Error{
-              message: "both :remote_url and :auth_token must be provided for a synced database"
-            }} =
-             Turso.Connection.connect(
-               database: ":memory:",
-               remote_url: "libsql://some-url.turso.io"
-             )
+    for scheme_url <- ["libsql://some-url.turso.io", "turso://some-url.turso.io"] do
+      assert {:error,
+              %Turso.Error{
+                message: "both :remote_url and :auth_token must be provided for a synced database"
+              }} =
+               Turso.Connection.connect(
+                 database: ":memory:",
+                 remote_url: scheme_url
+               )
+
+      assert {:error,
+              %Turso.Error{
+                message: "both :remote_url and :auth_token must be provided for a synced database"
+              }} =
+               Turso.Connection.connect(
+                 database: ":memory:",
+                 remote_url: scheme_url,
+                 auth_token: fn -> nil end
+               )
+    end
 
     assert {:error,
             %Turso.Error{
@@ -258,17 +270,49 @@ defmodule TursoTest do
              Turso.Connection.connect(database: ":memory:", auth_token: "some-token")
   end
 
-  test "connect/1 resolves a zero-arity function as auth_token" do
-    # The function resolves to nil, so validation must treat the token as absent.
-    assert {:error,
-            %Turso.Error{
-              message: "both :remote_url and :auth_token must be provided for a synced database"
-            }} =
+  @tag :tmp_dir
+  test "allows turso:// and libsql:// schemes for remote_url", %{tmp_dir: tmp_dir} do
+    db_path = Path.join(tmp_dir, "scheme_test.db")
+
+    # Unsupported schemes fail with explicit unsupported remote URL scheme error
+    assert {:error, %Turso.Error{code: :error, message: message}} =
              Turso.Connection.connect(
-               database: ":memory:",
-               remote_url: "libsql://some-url.turso.io",
-               auth_token: fn -> nil end
+               database: db_path,
+               remote_url: "ftp://bad-scheme.turso.io",
+               auth_token: "test-token"
              )
+
+    assert message =~ "unsupported remote URL scheme: ftp://bad-scheme.turso.io"
+
+    # turso:// scheme is supported (does not fail with unsupported remote URL scheme)
+    assert {:error, %Turso.Error{message: message}} =
+             Turso.Connection.connect(
+               database: db_path,
+               remote_url: "turso://example.turso.io",
+               auth_token: "test-token"
+             )
+
+    refute message =~ "unsupported remote URL scheme"
+
+    # uppercase TURSO:// scheme is normalized and accepted
+    assert {:error, %Turso.Error{message: message}} =
+             Turso.Connection.connect(
+               database: db_path,
+               remote_url: "TURSO://example.turso.io",
+               auth_token: "test-token"
+             )
+
+    refute message =~ "unsupported remote URL scheme"
+
+    # libsql:// scheme is supported
+    assert {:error, %Turso.Error{message: message}} =
+             Turso.Connection.connect(
+               database: db_path,
+               remote_url: "libsql://example.turso.io",
+               auth_token: "test-token"
+             )
+
+    refute message =~ "unsupported remote URL scheme"
   end
 
   test "boolean parameters bind as integers 1 and 0", %{db: db} do

@@ -90,8 +90,9 @@ Concord.Turso.txn(%{
 
 `Concord.Turso` uses `ex_turso` and persists data to a local database file. It
 does not submit writes to VSR and does not provide Concord cluster membership,
-leases, watches, or secondary indexes. If `remote_url` and `auth_token` are
-configured, `Concord.Turso.sync/1` triggers Turso Cloud sync.
+leases, watches, or secondary indexes. If `remote_url` (supporting `turso://`,
+`libsql://`, or `https://` schemes) and `auth_token` are configured,
+`Concord.Turso.sync/1` triggers Turso Cloud sync.
 
 Applications that only need the durable Turso KV engine can disable the Concord
 VSR cluster runtime while still starting the Turso pool:
