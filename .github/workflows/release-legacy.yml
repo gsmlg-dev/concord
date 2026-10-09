@@ -1,0 +1,296 @@
+name: Release legacy compatibility patches
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-legacy-2.4.1-0.3.2
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare checksum-pinned legacy sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.18'
+      - run: bash scripts/prepare_legacy_packages.sh legacy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-sources
+          path: legacy
+
+  native:
+    name: NIF ${{ matrix.job.target }}
+    needs: prepare
+    runs-on: ${{ matrix.job.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - {target: aarch64-apple-darwin, os: macos-15}
+          - {target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, cross: true}
+          - {target: x86_64-apple-darwin, os: macos-15-intel}
+          - {target: x86_64-pc-windows-msvc, os: windows-2022}
+          - {target: x86_64-unknown-freebsd, os: ubuntu-22.04, cross: true}
+          - {target: x86_64-unknown-linux-gnu, os: ubuntu-22.04}
+          - {target: x86_64-unknown-linux-musl, os: ubuntu-latest, musl: true}
+          - {target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, musl: true}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: legacy-sources
+          path: legacy
+      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !matrix.job.musl }}
+        with:
+          targets: ${{ matrix.job.target }}
+      - name: Install native GNU build dependencies
+        if: ${{ runner.os == 'Linux' && !matrix.job.musl }}
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.job.musl }}
+        with:
+          workspaces: legacy/ex_turso/native/ex_turso
+      - name: Build original supported targets
+        if: ${{ !matrix.job.musl }}
+        id: native
+        uses: philss/rustler-precompiled-action@v1.1.5
+        with:
+          project-name: ex_turso
+          project-version: '0.3.2'
+          target: ${{ matrix.job.target }}
+          nif-version: '2.15'
+          use-cross: ${{ matrix.job.cross || false }}
+          cross-version: 'v0.2.5'
+          project-dir: legacy/ex_turso/native/ex_turso
+          cargo-args: '--locked'
+      - name: Build native Alpine shared library
+        if: ${{ matrix.job.musl }}
+        env:
+          TARGET: ${{ matrix.job.target }}
+        run: |
+          mkdir -p artifacts
+          docker run --rm \
+            -v "$PWD/legacy/ex_turso/native/ex_turso:/crate" \
+            -v "$PWD/artifacts:/artifacts" \
+            -e TARGET -e RUSTLER_NIF_VERSION=2.15 \
+            -e RUSTFLAGS='-C target-feature=-crt-static' \
+            -w /crate rust:alpine sh -ec '
+              apk add --no-cache build-base perl pkgconf
+              cargo build --release --locked --features rustler/nif_version_2_15
+              nm -D target/release/libex_turso.so | grep " nif_init$"
+              name="libex_turso-v0.3.2-nif-2.15-${TARGET}.so"
+              cp target/release/libex_turso.so "/artifacts/$name"
+              cd /artifacts
+              tar -czf "$name.tar.gz" "$name"
+              rm "$name"
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: precompiled-${{ matrix.job.target }}
+          path: ${{ matrix.job.musl && 'artifacts/*.tar.gz' || steps.native.outputs.file-path }}
+          if-no-files-found: error
+
+  package:
+    name: Package legacy sources with all native checksums
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.18'
+      - uses: actions/download-artifact@v4
+        with:
+          name: legacy-sources
+          path: legacy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: precompiled-*
+          path: nifs
+          merge-multiple: true
+      - name: Generate and verify every advertised checksum
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import re
+          native = Path('legacy/ex_turso/lib/ex_turso/native.ex').read_text()
+          targets = re.search(r'targets: ~w\((.*?)\)', native, re.S)[1].split()
+          expected = {
+              ('ex_turso' if 'windows' in target else 'libex_turso')
+              + '-v0.3.2-nif-2.15-' + target
+              + ('.dll.tar.gz' if 'windows' in target else '.so.tar.gz')
+              for target in targets
+          }
+          artifacts = {path.name: path for path in Path('nifs').glob('*.tar.gz')}
+          assert len(expected) == 8 and set(artifacts) == expected
+          entries = [
+              '  "' + name + '" => "sha256:'
+              + hashlib.sha256(artifacts[name].read_bytes()).hexdigest() + '",'
+              for name in sorted(expected)
+          ]
+          Path('legacy/ex_turso/checksum-Elixir.ExTurso.Native.exs').write_text(
+              '%{\n' + '\n'.join(entries) + '\n}\n'
+          )
+          PY
+          mix local.hex --force
+          mkdir packages
+          (cd legacy/ex_turso && mix hex.build --output "$GITHUB_WORKSPACE/packages/ex_turso-0.3.2.tar")
+          (cd legacy/concord && mix hex.build --output "$GITHUB_WORKSPACE/packages/concord-2.4.1.tar")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-checked-sources
+          path: legacy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-hex-packages
+          path: packages
+
+  alpine:
+    name: Alpine consumer on ${{ matrix.os }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: legacy-checked-sources
+          path: legacy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: precompiled-*
+          path: nifs
+          merge-multiple: true
+      - name: Compile and reopen the database without Rust
+        run: |
+          docker run --rm \
+            -v "$PWD:/work:ro" \
+            -e LEGACY_PACKAGE_PATH=/work/legacy \
+            -e RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH=/tmp/nifs \
+            elixir:1.18-otp-28-alpine sh -ec '
+              ! command -v cargo
+              ! command -v rustc
+              mkdir /tmp/nifs
+              cp /work/nifs/*.tar.gz /tmp/nifs/
+              sh /work/scripts/check_legacy_consumer.sh
+            '
+
+  publish:
+    name: Publish compatible legacy Hex packages
+    needs: alpine
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.18'
+      - uses: actions/download-artifact@v4
+        with:
+          name: legacy-checked-sources
+          path: legacy
+      - uses: actions/download-artifact@v4
+        with:
+          name: legacy-hex-packages
+          path: packages
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: precompiled-*
+          path: nifs
+          merge-multiple: true
+      - name: Publish ExTurso native release before Hex
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view v0.3.2 >/dev/null 2>&1; then
+            gh release create v0.3.2 --target "$GITHUB_SHA" --latest=false \
+              --title 'ExTurso 0.3.2 compatibility patch' \
+              --notes 'Preserves the ExTurso 0.3 API and adds precompiled Alpine amd64 and arm64 NIFs. Fixes #93.'
+          fi
+          existing="$(mktemp -d)"
+          for asset in nifs/*.tar.gz packages/ex_turso-0.3.2.tar; do
+            name="$(basename "$asset")"
+            if gh release view v0.3.2 --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              gh release download v0.3.2 --pattern "$name" --dir "$existing"
+              cmp "$asset" "$existing/$name"
+            else
+              gh release upload v0.3.2 "$asset"
+            fi
+          done
+      - name: Publish checksum-bearing ExTurso
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        working-directory: legacy/ex_turso
+        run: |
+          mix local.hex --force
+          if ! curl --silent --fail https://hex.pm/api/packages/ex_turso/releases/0.3.2 >/dev/null; then
+            mix deps.get
+            mix hex.publish package --yes
+          fi
+      - name: Publish dependency-compatible Concord
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        working-directory: legacy/concord
+        run: |
+          if ! curl --silent --fail https://hex.pm/api/packages/concord/releases/2.4.1 >/dev/null; then
+            for attempt in $(seq 1 12); do
+              if mix deps.get; then
+                break
+              fi
+              if [[ "$attempt" -eq 12 ]]; then
+                exit 1
+              fi
+              sleep 10
+            done
+            mix hex.publish package --yes
+          fi
+      - name: Publish Concord patch release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view v2.4.1 >/dev/null 2>&1; then
+            gh release create v2.4.1 packages/concord-2.4.1.tar \
+              --target "$GITHUB_SHA" --latest=false \
+              --title 'Concord 2.4.1 compatibility patch' \
+              --notes 'Preserves the Concord 2.4 API and requires ExTurso ~> 0.3.2, rejecting incompatible API releases. Fixes #92.'
+          fi
+
+  published-alpine:
+    name: Published Alpine packages on ${{ matrix.os }}
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify fresh Hex resolution and public NIF downloads
+        run: |
+          docker run --rm -v "$PWD/scripts:/scripts:ro" \
+            elixir:1.18-otp-28-alpine sh -ec '
+              ! command -v cargo
+              ! command -v rustc
+              sh /scripts/check_legacy_consumer.sh
+            '
