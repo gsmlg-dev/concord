@@ -1,8 +1,8 @@
 defmodule Concord.MixProject do
   use Mix.Project
 
-  @version "3.0.5"
-  @ex_turso_version "3.0.5"
+  @version "3.0.6"
+  @ex_turso_version "3.0.6"
 
   def project do
     [

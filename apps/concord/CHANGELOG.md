@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.6] - 2026-10-10
+
+### Fixed
+- Add a separate compatible legacy release path for Concord 2.4.1 and
+  ExTurso 0.3.2, preserving the `ExTurso.*` API and narrowing Concord's
+  dependency to the supported 0.3.x line.
+- Build, publish, and verify precompiled legacy ExTurso NIFs for Linux amd64
+  and arm64 musl, including package checksums and Alpine consumer checks.
+  The current `Turso.*` packages continue to build their NIF from source.
+
 ## [3.0.5] - 2026-10-09
 
 ### Changed
