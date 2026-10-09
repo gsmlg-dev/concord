@@ -66,6 +66,16 @@ replace_exact(
 )
 replace_exact(turso / "README.md", '{:ex_turso, "~> 0.2.0"}', '{:ex_turso, "~> 0.3.2"}', count=2)
 replace_exact(turso / "README.md", '| Linux |', '| Linux (glibc and musl) |')
+replace_exact(
+    turso / "README.md",
+    '## Installation\n',
+    'Alpine source builds also require dynamic CRT and C thread-local storage:\n\n'
+    '```sh\n'
+    'export RUSTFLAGS="-C target-feature=-crt-static"\n'
+    'export CFLAGS="-ftls-model=local-dynamic"\n'
+    '```\n\n'
+    '## Installation\n',
+)
 replace_exact(turso / "native/ex_turso/Cargo.toml", 'version = "0.3.1"', 'version = "0.3.2"')
 replace_exact(
     turso / "native/ex_turso/Cargo.lock",
@@ -83,7 +93,9 @@ for architecture in ["aarch64", "x86_64"]:
     replace_exact(native, target, target + f"      {architecture}-unknown-linux-musl\n")
 
 # Regenerate checksums from the 0.3.2 release assets before publishing this package.
-(turso / "checksum-Elixir.ExTurso.Native.exs").write_text("%{}\n")
+checksum_file = turso / "checksum-Elixir.ExTurso.Native.exs"
+(output / "baseline-nif-checksums.exs").write_bytes(checksum_file.read_bytes())
+checksum_file.write_text("%{}\n")
 print(f"Prepared Concord 2.4.1 at {concord}")
 print(f"Prepared ExTurso 0.3.2 at {turso}")
 PY

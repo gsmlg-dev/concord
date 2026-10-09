@@ -18,9 +18,12 @@ Run the compatibility release from `main`:
 gh workflow run release-legacy.yml --repo gsmlg-dev/concord --ref main
 ```
 
-The workflow preserves the six existing NIF targets and adds native Alpine
-amd64 and arm64 builds. It checks fresh WHOIS consumers and database reopen
-behavior on both Alpine architectures without Rust, then publishes the NIF
+The native source implementation is unchanged. The workflow verifies the six
+existing binaries against the pinned 0.3.1 checksum map and repackages their
+unchanged bytes under the new version, preserving their platform ABI. It adds
+native Alpine amd64 and arm64 builds with dynamic C TLS so mimalloc can load as
+a shared NIF. It checks fresh WHOIS consumers and database reopen behavior on
+both Alpine architectures without Rust, then publishes the NIF
 assets and checksum-bearing Hex packages. A final check installs the published
 packages and downloads their NIFs from the public release URLs without local
 package or artifact overrides.

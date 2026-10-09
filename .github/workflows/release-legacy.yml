@@ -29,6 +29,23 @@ jobs:
           name: legacy-sources
           path: legacy
 
+  retained-native:
+    name: Verify and retain the six unchanged platform binaries
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: legacy-sources
+          path: legacy
+      - run: python3 scripts/repackage_legacy_nifs.py legacy/baseline-nif-checksums.exs artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: precompiled-retained
+          path: artifacts/*.tar.gz
+          if-no-files-found: error
+
   native:
     name: NIF ${{ matrix.job.target }}
     needs: prepare
@@ -38,67 +55,14 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - {target: aarch64-apple-darwin, os: macos-15}
-          - {target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, cross: true}
-          - {target: x86_64-apple-darwin, os: macos-15-intel}
-          - {target: x86_64-pc-windows-msvc, os: windows-2022}
-          - {target: x86_64-unknown-freebsd, os: ubuntu-22.04, cross: true}
-          - {target: x86_64-unknown-linux-gnu, os: ubuntu-22.04}
-          - {target: x86_64-unknown-linux-musl, os: ubuntu-latest, musl: true}
-          - {target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, musl: true}
+          - {target: x86_64-unknown-linux-musl, os: ubuntu-latest}
+          - {target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: legacy-sources
           path: legacy
-      - uses: dtolnay/rust-toolchain@stable
-        if: ${{ !matrix.job.musl }}
-        with:
-          targets: ${{ matrix.job.target }}
-      - name: Install native GNU build dependencies
-        if: ${{ runner.os == 'Linux' && !matrix.job.musl }}
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
-      - uses: Swatinem/rust-cache@v2
-        if: ${{ !matrix.job.musl }}
-        with:
-          workspaces: legacy/ex_turso/native/ex_turso
-          key: ${{ matrix.job.target }}
-      - name: Install cross for non-native targets
-        if: ${{ matrix.job.cross }}
-        run: |
-          curl --fail --location --retry 3 \
-            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-gnu.tar.gz \
-            -o "$RUNNER_TEMP/cross.tar.gz"
-          tar -xzf "$RUNNER_TEMP/cross.tar.gz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Build original supported targets
-        if: ${{ !matrix.job.musl }}
-        shell: bash
-        env:
-          TARGET: ${{ matrix.job.target }}
-          USE_CROSS: ${{ matrix.job.cross || false }}
-          RUSTLER_NIF_VERSION: '2.15'
-        run: |
-          builder=cargo
-          if [[ "$USE_CROSS" == true ]]; then
-            builder=cross
-          fi
-          "$builder" build --manifest-path legacy/ex_turso/native/ex_turso/Cargo.toml \
-            --target "$TARGET" --release --locked --features rustler/nif_version_2_15
-          prefix=lib
-          suffix=.so
-          final_suffix=.so
-          case "$TARGET" in
-            *-apple-*) suffix=.dylib ;;
-            *-pc-windows-*) prefix=; suffix=.dll; final_suffix=.dll ;;
-          esac
-          name="${prefix}ex_turso-v0.3.2-nif-2.15-${TARGET}${final_suffix}"
-          mkdir -p artifacts
-          cp "legacy/ex_turso/native/ex_turso/target/$TARGET/release/${prefix}ex_turso${suffix}" \
-            "artifacts/$name"
-          (cd artifacts && tar -czf "$name.tar.gz" "$name" && rm "$name")
       - name: Build native Alpine shared library
-        if: ${{ matrix.job.musl }}
         env:
           TARGET: ${{ matrix.job.target }}
         run: |
@@ -108,6 +72,7 @@ jobs:
             -v "$PWD/artifacts:/artifacts" \
             -e TARGET -e RUSTLER_NIF_VERSION=2.15 \
             -e RUSTFLAGS='-C target-feature=-crt-static' \
+            -e CFLAGS='-ftls-model=local-dynamic' \
             -w /crate rust:alpine sh -ec '
               apk add --no-cache build-base perl pkgconf
               cargo build --release --locked --features rustler/nif_version_2_15
@@ -126,7 +91,7 @@ jobs:
 
   package:
     name: Package legacy sources with all native checksums
-    needs: native
+    needs: [native, retained-native]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
