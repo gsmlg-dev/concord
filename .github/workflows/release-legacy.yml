@@ -28,6 +28,7 @@ jobs:
         with:
           name: legacy-sources
           path: legacy
+          include-hidden-files: true
 
   retained-native:
     name: Verify and retain the six unchanged platform binaries
@@ -141,6 +142,7 @@ jobs:
         with:
           name: legacy-checked-sources
           path: legacy
+          include-hidden-files: true
       - uses: actions/upload-artifact@v4
         with:
           name: legacy-hex-packages
