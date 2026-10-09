@@ -5,9 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.5] - 2026-10-09
 
 ### Changed
+- Refresh Hex dependencies, including the HTTP client packages to 0.17.1,
+  and update the development environment inputs to use OTP 28.
+- Synchronize all umbrella package versions and exact Hex requirements at 3.0.5.
 - Publish every umbrella package to Hex.pm at the Concord release version.
 - Version replicated Concord command envelopes while retaining replay support
   and frozen legacy semantics for the exact pre-versioning envelope. Unknown
@@ -36,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   includes the read-barrier and durable-recovery runtime used by Concord 3.
 
 ### Fixed
+- Resolve shared E2E support sources with an absolute compile path.
+- Accept `turso://` remote database URLs and normalize URL scheme case.
 - Decode valid checksummed WAL records containing atoms that have not yet been
   loaded in a restarted VM, preserving committed application values.
 - Retransmit uncommitted VSR prepares so dropped `Prepare` or `PrepareOk`
