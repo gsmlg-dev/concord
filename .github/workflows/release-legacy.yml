@@ -62,19 +62,41 @@ jobs:
         if: ${{ !matrix.job.musl }}
         with:
           workspaces: legacy/ex_turso/native/ex_turso
+          key: ${{ matrix.job.target }}
+      - name: Install cross for non-native targets
+        if: ${{ matrix.job.cross }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-gnu.tar.gz \
+            -o "$RUNNER_TEMP/cross.tar.gz"
+          tar -xzf "$RUNNER_TEMP/cross.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Build original supported targets
         if: ${{ !matrix.job.musl }}
-        id: native
-        uses: philss/rustler-precompiled-action@v1.1.5
-        with:
-          project-name: ex_turso
-          project-version: '0.3.2'
-          target: ${{ matrix.job.target }}
-          nif-version: '2.15'
-          use-cross: ${{ matrix.job.cross || false }}
-          cross-version: 'v0.2.5'
-          project-dir: legacy/ex_turso/native/ex_turso
-          cargo-args: '--locked'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.job.target }}
+          USE_CROSS: ${{ matrix.job.cross || false }}
+          RUSTLER_NIF_VERSION: '2.15'
+        run: |
+          builder=cargo
+          if [[ "$USE_CROSS" == true ]]; then
+            builder=cross
+          fi
+          "$builder" build --manifest-path legacy/ex_turso/native/ex_turso/Cargo.toml \
+            --target "$TARGET" --release --locked --features rustler/nif_version_2_15
+          prefix=lib
+          suffix=.so
+          final_suffix=.so
+          case "$TARGET" in
+            *-apple-*) suffix=.dylib ;;
+            *-pc-windows-*) prefix=; suffix=.dll; final_suffix=.dll ;;
+          esac
+          name="${prefix}ex_turso-v0.3.2-nif-2.15-${TARGET}${final_suffix}"
+          mkdir -p artifacts
+          cp "legacy/ex_turso/native/ex_turso/target/$TARGET/release/${prefix}ex_turso${suffix}" \
+            "artifacts/$name"
+          (cd artifacts && tar -czf "$name.tar.gz" "$name" && rm "$name")
       - name: Build native Alpine shared library
         if: ${{ matrix.job.musl }}
         env:
@@ -99,7 +121,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: precompiled-${{ matrix.job.target }}
-          path: ${{ matrix.job.musl && 'artifacts/*.tar.gz' || steps.native.outputs.file-path }}
+          path: artifacts/*.tar.gz
           if-no-files-found: error
 
   package:
