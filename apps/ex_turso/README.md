@@ -138,6 +138,17 @@ The adapter supports regular `Ecto.Repo` schema/query operations and
 `ecto_sql` migrations using Turso's SQLite-compatible SQL dialect. Streaming
 and multi-result queries are not supported by the current native connection.
 
+### Large CHECK expressions
+
+Native SQL execution uses a dedicated stack so large, balanced CHECK
+expressions can run with the default BEAM dirty IO scheduler stack settings.
+No larger `+sssdio` setting is required.
+
+Turso 0.8.2 still enforces a maximum expression tree depth of 100. Schema
+authors must group long chains of predicates into balanced expressions to
+stay within that limit. ExTurso does not rewrite application SQL or lift the
+parser limit.
+
 ### Rebuilding a table for unsupported column changes
 
 Turso does not safely support every `ALTER COLUMN` operation. For changes that

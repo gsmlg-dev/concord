@@ -49,7 +49,22 @@ fn internal_error(err: impl std::fmt::Display) -> NifError {
 }
 
 /// Global multi-threaded Tokio runtime used to drive turso's async API.
-static RT: Lazy<Runtime> = Lazy::new(|| Runtime::new().expect("failed to start Tokio runtime"));
+static RT: Lazy<Runtime> = Lazy::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("failed to start Tokio runtime")
+});
+
+/// `block_on` polls on its caller's stack. Keep Turso's recursive schema and
+/// statement compilation on owned worker threads, outside BEAM's dirty IO stack.
+fn on_worker<T: Send + 'static>(
+    operation: impl FnOnce() -> Result<T, NifError> + Send + 'static,
+) -> Result<T, NifError> {
+    RT.block_on(RT.spawn_blocking(operation))
+        .map_err(internal_error)?
+}
 
 /// Resource wrapping an open `turso::Database`.
 struct DbResource {
@@ -170,60 +185,63 @@ fn fetch_rows(
     sql: String,
     values: Vec<Value>,
 ) -> Result<(Vec<String>, Vec<Vec<SqlValue>>), NifError> {
-    let guard = conn.inner.lock().map_err(internal_error)?;
-    let conn = guard
-        .as_ref()
-        .ok_or_else(|| internal_error("connection is closed"))?;
+    on_worker(move || {
+        let guard = conn.inner.lock().map_err(internal_error)?;
+        let conn = guard
+            .as_ref()
+            .ok_or_else(|| internal_error("connection is closed"))?;
 
-    RT.block_on(async {
-        let mut rows = conn.query(&sql, values).await.map_err(classify)?;
-        let columns = rows.column_names();
-        let mut acc = Vec::new();
+        RT.block_on(async {
+            let mut rows = conn.query(&sql, values).await.map_err(classify)?;
+            let columns = rows.column_names();
+            let mut acc = Vec::new();
 
-        while let Some(row) = rows.next().await.map_err(classify)? {
-            let mut values = Vec::with_capacity(columns.len());
-            for idx in 0..columns.len() {
-                let value = row.get_value(idx).map_err(classify)?;
-                values.push(SqlValue::from(value));
+            while let Some(row) = rows.next().await.map_err(classify)? {
+                let mut values = Vec::with_capacity(columns.len());
+                for idx in 0..columns.len() {
+                    let value = row.get_value(idx).map_err(classify)?;
+                    values.push(SqlValue::from(value));
+                }
+                acc.push(values);
             }
-            acc.push(values);
-        }
 
-        Ok::<_, NifError>((columns, acc))
+            Ok::<_, NifError>((columns, acc))
+        })
     })
 }
 
 /// Open (or create) a local database file at `path`. `":memory:"` is supported.
 #[rustler::nif(schedule = "DirtyIo")]
 fn open(path: String) -> Result<ResourceArc<DbResource>, NifError> {
-    let result = RT.block_on(async {
-        Builder::new_local(&path)
-            .experimental_index_method(true)
-            .build()
-            .await
-    });
-    match result {
-        Ok(db) => Ok(ResourceArc::new(DbResource {
+    on_worker(move || {
+        let db = RT
+            .block_on(async {
+                Builder::new_local(&path)
+                    .experimental_index_method(true)
+                    .build()
+                    .await
+            })
+            .map_err(classify)?;
+        Ok(ResourceArc::new(DbResource {
             inner: Mutex::new(Some(db)),
-        })),
-        Err(e) => Err(classify(e)),
-    }
+        }))
+    })
 }
 
 /// Open a connection against a previously opened database.
 #[rustler::nif(schedule = "DirtyIo")]
 fn connect(db: ResourceArc<DbResource>) -> Result<ResourceArc<ConnResource>, NifError> {
-    let guard = db.inner.lock().map_err(internal_error)?;
-    let db = guard
-        .as_ref()
-        .ok_or_else(|| internal_error("database is closed"))?;
+    on_worker(move || {
+        let guard = db.inner.lock().map_err(internal_error)?;
+        let db = guard
+            .as_ref()
+            .ok_or_else(|| internal_error("database is closed"))?;
 
-    match db.connect() {
-        Ok(conn) => Ok(ResourceArc::new(ConnResource {
+        let conn = db.connect().map_err(classify)?;
+        Ok(ResourceArc::new(ConnResource {
             inner: Mutex::new(Some(conn)),
-        })),
-        Err(e) => Err(classify(e)),
-    }
+        }))
+    })
 }
 
 /// Open (or create) a local database synced with a remote database.
@@ -239,53 +257,58 @@ fn open_sync(
         None => remote_url.to_string(),
     };
 
-    let result = RT.block_on(async {
-        turso::sync::Builder::new_remote(&path)
-            .with_remote_url(&normalized_url)
-            .with_auth_token(&auth_token)
-            .build()
-            .await
-    });
-    match result {
-        Ok(db) => Ok(ResourceArc::new(SyncDbResource {
+    on_worker(move || {
+        let db = RT
+            .block_on(async {
+                turso::sync::Builder::new_remote(&path)
+                    .with_remote_url(&normalized_url)
+                    .with_auth_token(&auth_token)
+                    .build()
+                    .await
+            })
+            .map_err(classify)?;
+        Ok(ResourceArc::new(SyncDbResource {
             inner: Mutex::new(Some(db)),
-        })),
-        Err(e) => Err(classify(e)),
-    }
+        }))
+    })
 }
 
 /// Open a connection against a synced database.
 #[rustler::nif(schedule = "DirtyIo")]
 fn connect_sync(db: ResourceArc<SyncDbResource>) -> Result<ResourceArc<ConnResource>, NifError> {
-    let db_clone = {
-        let guard = db.inner.lock().map_err(internal_error)?;
-        guard
-            .as_ref()
-            .ok_or_else(|| internal_error("database is closed"))?
-            .clone()
-    };
-    let conn = RT.block_on(async { db_clone.connect().await.map_err(classify) })?;
-    Ok(ResourceArc::new(ConnResource {
-        inner: Mutex::new(Some(conn)),
-    }))
+    on_worker(move || {
+        let db_clone = {
+            let guard = db.inner.lock().map_err(internal_error)?;
+            guard
+                .as_ref()
+                .ok_or_else(|| internal_error("database is closed"))?
+                .clone()
+        };
+        let conn = RT.block_on(async { db_clone.connect().await.map_err(classify) })?;
+        Ok(ResourceArc::new(ConnResource {
+            inner: Mutex::new(Some(conn)),
+        }))
+    })
 }
 
 /// Run bidirectional sync.
 #[rustler::nif(schedule = "DirtyIo")]
 fn sync(db: ResourceArc<SyncDbResource>) -> Result<Atom, NifError> {
-    let db_clone = {
-        let guard = db.inner.lock().map_err(internal_error)?;
-        guard
-            .as_ref()
-            .ok_or_else(|| internal_error("database is closed"))?
-            .clone()
-    };
-    RT.block_on(async {
-        db_clone.pull().await.map_err(classify)?;
-        db_clone.push().await.map_err(classify)?;
-        Ok::<(), NifError>(())
-    })?;
-    Ok(atoms::ok())
+    on_worker(move || {
+        let db_clone = {
+            let guard = db.inner.lock().map_err(internal_error)?;
+            guard
+                .as_ref()
+                .ok_or_else(|| internal_error("database is closed"))?
+                .clone()
+        };
+        RT.block_on(async {
+            db_clone.pull().await.map_err(classify)?;
+            db_clone.push().await.map_err(classify)?;
+            Ok::<(), NifError>(())
+        })?;
+        Ok(atoms::ok())
+    })
 }
 
 /// Run a query and return its rows as a list of maps keyed by column name.
@@ -326,41 +349,52 @@ fn execute<'a>(
     params: Vec<Term<'a>>,
 ) -> Result<u64, NifError> {
     let values = decode_params(&params)?;
-    let guard = conn.inner.lock().map_err(internal_error)?;
-    let conn = guard
-        .as_ref()
-        .ok_or_else(|| internal_error("connection is closed"))?;
+    on_worker(move || {
+        let guard = conn.inner.lock().map_err(internal_error)?;
+        let conn = guard
+            .as_ref()
+            .ok_or_else(|| internal_error("connection is closed"))?;
 
-    RT.block_on(async { conn.execute(&sql, values).await.map_err(classify) })
+        RT.block_on(async { conn.execute(&sql, values).await.map_err(classify) })
+    })
 }
 
 /// Close a connection. turso closes the underlying connection when the resource
 /// is dropped, so this releases held buffers best-effort and returns `:ok`.
 #[rustler::nif(schedule = "DirtyIo")]
 fn close(conn: ResourceArc<ConnResource>) -> rustler::types::atom::Atom {
-    if let Ok(mut guard) = conn.inner.lock() {
-        if let Some(conn) = guard.take() {
-            let _ = conn.cacheflush();
+    let _ = on_worker(move || {
+        if let Ok(mut guard) = conn.inner.lock() {
+            if let Some(conn) = guard.take() {
+                let _ = conn.cacheflush();
+            }
         }
-    }
+        Ok(())
+    });
     atoms::ok()
 }
 
 /// Close a local database handle by dropping the resource contents eagerly.
 #[rustler::nif(schedule = "DirtyIo")]
 fn close_db(db: ResourceArc<DbResource>) -> rustler::types::atom::Atom {
-    if let Ok(mut guard) = db.inner.lock() {
-        let _ = guard.take();
-    }
+    let _ = on_worker(move || {
+        if let Ok(mut guard) = db.inner.lock() {
+            let _ = guard.take();
+        }
+        Ok(())
+    });
     atoms::ok()
 }
 
 /// Close a synced database handle by dropping the resource contents eagerly.
 #[rustler::nif(schedule = "DirtyIo")]
 fn close_sync_db(db: ResourceArc<SyncDbResource>) -> rustler::types::atom::Atom {
-    if let Ok(mut guard) = db.inner.lock() {
-        let _ = guard.take();
-    }
+    let _ = on_worker(move || {
+        if let Ok(mut guard) = db.inner.lock() {
+            let _ = guard.take();
+        }
+        Ok(())
+    });
     atoms::ok()
 }
 
