@@ -4,7 +4,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_turso.svg)](https://hex.pm/packages/ex_turso)
 
 An Elixir library that wraps the [`turso`](https://crates.io/crates/turso) Rust
-crate (v0.5) via [Rustler](https://github.com/rusterlium/rustler) NIFs, exposed
+crate (v0.8.2) via [Rustler](https://github.com/rusterlium/rustler) NIFs, exposed
 through a [`DBConnection`](https://hexdocs.pm/db_connection) pool.
 
 It supports **local file databases** (and `":memory:"`), **Turso Cloud sync**
@@ -215,8 +215,21 @@ databases. Use Turso's FTS index syntax:
 
 SQLite's FTS5 virtual table syntax, such as
 `CREATE VIRTUAL TABLE docs_fts USING fts5(content)`, is not exposed by the
-embedded `turso` crate v0.5 API. Use `CREATE INDEX ... USING fts` with `MATCH`
+embedded `turso` crate v0.8.2 API. Use `CREATE INDEX ... USING fts` with `MATCH`
 queries instead.
+
+Turso 0.8.2 uses a new FTS storage format. FTS indexes created by older
+versions such as 0.7.2 must be rebuilt explicitly from their base tables;
+they are not migrated automatically. Recreate each affected index with its
+original columns and options:
+
+```elixir
+{:ok, _} = Turso.execute(MyApp.DB, "DROP INDEX docs_fts")
+{:ok, _} = Turso.execute(MyApp.DB, "CREATE INDEX docs_fts ON docs USING fts (content)")
+```
+
+The base table's rows are preserved. Rebuilding enables MATCH queries and
+writes that maintain the index with the new storage format.
 
 ## Turso Cloud sync
 

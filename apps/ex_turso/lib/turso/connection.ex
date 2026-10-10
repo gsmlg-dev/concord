@@ -273,7 +273,7 @@ defmodule Turso.Connection do
          conn
        ) do
     with %{"table" => table, "columns" => columns} <-
-           Regex.named_captures(~r/^(?<table>.+)\.\((?<columns>.+)\) \(\d+\)$/, message),
+           Regex.named_captures(~r/^(?<table>.+)\.\((?<columns>.+?)\)(?: \(\d+\))?$/, message),
          columns <- String.split(columns, ", "),
          {:ok, index_name} <- find_unique_index(conn, table, columns) do
       {:constraint, "UNIQUE constraint failed: index '#{index_name}'"}

@@ -73,6 +73,46 @@ defmodule TursoTest do
              Turso.query(db, "SELECT score FROM users WHERE id = ?", [1])
   end
 
+  test "constraint failures can be rolled back before subsequent writes", %{db: db} do
+    assert {:ok, _} =
+             Turso.execute(
+               db,
+               "CREATE TABLE transaction_uniques (id INTEGER PRIMARY KEY, value TEXT UNIQUE)"
+             )
+
+    assert {:ok, _} =
+             Turso.execute(db, "INSERT INTO transaction_uniques VALUES (?, ?)", [1, "existing"])
+
+    assert {:error, :constraint_violation} =
+             DBConnection.transaction(db, fn conn ->
+               assert {:ok, _} =
+                        Turso.execute(conn, "INSERT INTO transaction_uniques VALUES (?, ?)", [
+                          2,
+                          "temporary"
+                        ])
+
+               assert {:error, %Turso.Error{code: :constraint}} =
+                        Turso.execute(conn, "INSERT INTO transaction_uniques VALUES (?, ?)", [
+                          3,
+                          "existing"
+                        ])
+
+               DBConnection.rollback(conn, :constraint_violation)
+             end)
+
+    assert {:ok, %Result{rows: [%{"id" => 1, "value" => "existing"}]}} =
+             Turso.query(db, "SELECT id, value FROM transaction_uniques ORDER BY id")
+
+    assert {:ok, _} =
+             Turso.execute(db, "INSERT INTO transaction_uniques VALUES (?, ?)", [2, "committed"])
+
+    assert {:ok,
+            %Result{
+              rows: [%{"id" => 1, "value" => "existing"}, %{"id" => 2, "value" => "committed"}]
+            }} =
+             Turso.query(db, "SELECT id, value FROM transaction_uniques ORDER BY id")
+  end
+
   test "blob parameters bind and return as binary", %{db: db} do
     {:ok, _} = Turso.execute(db, "CREATE TABLE blobs (id INTEGER, data BLOB)")
     blob = <<0, 1, 2, 255>>
@@ -93,6 +133,7 @@ defmodule TursoTest do
 
     assert {:ok, state} = Turso.Connection.connect(database: db_path)
     assert {:ok, _} = Turso.Native.execute(state.conn, "CREATE TABLE released (id INTEGER)", [])
+    assert {:ok, 1} = Turso.Native.execute(state.conn, "INSERT INTO released VALUES (?)", [42])
 
     assert :ok = Turso.Connection.disconnect(:normal, state)
 
@@ -109,6 +150,9 @@ defmodule TursoTest do
                "SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = 'released'",
                []
              )
+
+    assert {:ok, {["id"], [[42]]}} =
+             Turso.Native.query_rows(reopened.conn, "SELECT id FROM released", [])
 
     assert :ok = Turso.Connection.disconnect(:normal, reopened)
   end
