@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-11
+
+### Changed
+- Upgrade the embedded `turso` and `turso_core` crates to 0.8.2, retaining
+  cloud sync and full-text search support.
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.0.
+- Require an explicit rebuild of FTS indexes created by older Turso versions,
+  including 0.7.2, for the new FTS storage format. Base table rows are preserved;
+  see the ExTurso README for the rebuild procedure.
+
+### Fixed
+- Run native Turso operations on Rust blocking workers with 8 MiB stacks so
+  large, balanced JSON CHECK constraints do not overflow the BEAM scheduler
+  stack. Turso's existing parser depth limit still applies to flat expressions.
+- Recognize unique-constraint errors with or without a numeric SQLite suffix,
+  preserving typed errors and transaction rollback after constraint failures.
+
 ## [3.0.6] - 2026-10-10
 
 ### Fixed
@@ -227,6 +244,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix early formatting, lint, coverage, and release workflow failures.
 
 [Unreleased]: https://github.com/gsmlg-dev/concord/compare/v3.0.0-beta.0...HEAD
+[3.1.0]: https://github.com/gsmlg-dev/concord/compare/v3.0.6...v3.1.0
 [3.0.0-beta.0]: https://github.com/gsmlg-dev/concord/compare/v2.0.1...v3.0.0-beta.0
 [2.0.1]: https://github.com/gsmlg-dev/concord/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/gsmlg-dev/concord/compare/v1.1.0...v2.0.0

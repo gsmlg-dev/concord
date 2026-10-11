@@ -2,7 +2,7 @@ defmodule Turso.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/gsmlg-dev/concord/tree/main/apps/ex_turso"
-  @version "3.0.6"
+  @version "3.1.0"
 
   def project do
     [
