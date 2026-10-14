@@ -140,14 +140,23 @@ and multi-result queries are not supported by the current native connection.
 
 ### Large CHECK expressions
 
-Native SQL execution uses a dedicated stack so large, balanced CHECK
-expressions can run with the default BEAM dirty IO scheduler stack settings.
-No larger `+sssdio` setting is required.
+ExTurso 3.1.0 and later run native SQL execution on Rust blocking workers with
+8 MiB stacks, so large, balanced CHECK expressions can run with the default
+BEAM dirty IO scheduler stack settings. No larger `+sssdio` setting is required.
+
+Update the application's locked dependencies to adopt this repair. Concord
+applications must update `concord`, `ex_turso`, and `viewstamped_replication`
+together because Concord requires its companion packages at the exact same
+version.
 
 Turso 0.8.2 still enforces a maximum expression tree depth of 100. Schema
 authors must group long chains of predicates into balanced expressions to
 stay within that limit. ExTurso does not rewrite application SQL or lift the
 parser limit.
+
+Existing tables retain their stored CHECK definitions. Apply constraint changes
+through a reviewed migration or offline export/rebuild; editing an already
+applied historical migration does not update an installed schema.
 
 ### Rebuilding a table for unsupported column changes
 

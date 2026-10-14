@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-10-14
+
+### Changed
+- Document ExTurso 3.1.0 as the minimum version for the large CHECK native
+  stack repair and explain how Concord applications adopt the exact paired
+  dependencies through their lockfiles.
+- Clarify that existing CHECK definitions require an explicit migration or
+  offline export/rebuild; historical migration edits only affect fresh schemas.
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.1.
+
 ## [3.1.0] - 2026-10-11
 
 ### Changed
@@ -244,6 +254,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix early formatting, lint, coverage, and release workflow failures.
 
 [Unreleased]: https://github.com/gsmlg-dev/concord/compare/v3.0.0-beta.0...HEAD
+[3.1.1]: https://github.com/gsmlg-dev/concord/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/gsmlg-dev/concord/compare/v3.0.6...v3.1.0
 [3.0.0-beta.0]: https://github.com/gsmlg-dev/concord/compare/v2.0.1...v3.0.0-beta.0
 [2.0.1]: https://github.com/gsmlg-dev/concord/compare/v2.0.0...v2.0.1
