@@ -172,14 +172,22 @@ defmodule ViewstampedReplication.Replica do
     end
   end
 
-  @spec status(term(), term()) :: {:ok, map()} | {:error, :not_found}
+  @spec status(term(), term()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def status(group_id, replica_id) do
     call_if_running(group_id, replica_id, :status)
   end
 
-  @spec primary(term(), term()) :: {:ok, term()} | {:error, :not_found}
-  def primary(group_id, replica_id) do
-    call_if_running(group_id, replica_id, :primary)
+  @doc """
+  Discovers the current primary through this replica.
+
+  The `:timeout` option defaults to 5000 milliseconds and accepts `:infinity`.
+  An unavailable replica returns `{:error, :not_found}`; an expired call returns
+  `{:error, :timeout}`.
+  """
+  @spec primary(term(), term()) :: {:ok, term()} | {:error, :not_found | :timeout}
+  @spec primary(term(), term(), keyword()) :: {:ok, term()} | {:error, :not_found | :timeout}
+  def primary(group_id, replica_id, opts \\ []) do
+    call_if_running(group_id, replica_id, :primary, Keyword.get(opts, :timeout, 5_000))
   end
 
   @spec snapshot(term(), term()) :: :ok | {:error, term()}
@@ -799,9 +807,10 @@ defmodule ViewstampedReplication.Replica do
 
   defp remote_read(node, group_id, replica_id, operation, opts) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    :erpc.call(node, __MODULE__, :read, [{group_id, replica_id}, operation, opts], timeout + 100)
+    :erpc.call(node, __MODULE__, :read, [{group_id, replica_id}, operation, opts], timeout)
   catch
     :exit, _reason -> {:error, :not_found}
+    :error, {:erpc, :timeout} -> {:error, :quorum_unavailable}
     :error, _reason -> {:error, :not_found}
   end
 
@@ -811,15 +820,16 @@ defmodule ViewstampedReplication.Replica do
     |> String.contains?("@")
   end
 
-  defp call_if_running(group_id, replica_id, request) do
+  defp call_if_running(group_id, replica_id, request, timeout \\ 5_000) do
     case whereis(group_id, replica_id) do
       nil ->
         {:error, :not_found}
 
       pid ->
         try do
-          GenServer.call(pid, request)
+          GenServer.call(pid, request, timeout)
         catch
+          :exit, {:timeout, _details} -> {:error, :timeout}
           :exit, {:noproc, _details} -> {:error, :not_found}
           :exit, {:normal, _details} -> {:error, :not_found}
         end

@@ -37,10 +37,11 @@ defmodule ViewstampedReplication do
     end
   end
 
-  @spec status(term(), term()) :: {:ok, map()} | {:error, :not_found}
+  @spec status(term(), term()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def status(group_id, replica_id), do: Replica.status(group_id, replica_id)
 
-  @spec primary(term(), term()) :: {:ok, term()} | {:error, :not_found}
+  @doc "Discovers the primary, returning `{:error, :timeout}` if the replica does not answer within 5000 milliseconds."
+  @spec primary(term(), term()) :: {:ok, term()} | {:error, :not_found | :timeout}
   def primary(group_id, replica_id), do: Replica.primary(group_id, replica_id)
 
   @spec snapshot(term(), term()) :: :ok | {:error, term()}
@@ -65,16 +66,23 @@ defmodule ViewstampedReplication do
 
   The current primary confirms its view with a quorum before evaluating the
   read. Singleton groups satisfy that quorum locally.
+
+  The `:timeout` option (default: 5000 milliseconds) bounds primary discovery,
+  the quorum-confirmed read, and any redirect with one shared deadline.
+  Use `:infinity` to wait without a deadline.
   """
   @spec read(term(), term(), keyword()) :: {:ok, term()} | {:error, term()}
   def read(group_id, operation, opts) do
+    deadline = read_deadline(Keyword.get(opts, :timeout, 5_000))
+
     with {:ok, replica_id} <- Keyword.fetch(opts, :replica_id),
          {:ok, replicas} <- Keyword.fetch(opts, :replicas),
-         {:ok, primary_id} <- primary(group_id, replica_id),
+         {:ok, timeout} <- remaining_timeout(deadline),
+         {:ok, primary_id} <- Replica.primary(group_id, replica_id, timeout: timeout),
          {:ok, primary} <- find_replica(replicas, primary_id) do
       primary
-      |> then(&Replica.read({group_id, &1}, operation, timeout: Keyword.get(opts, :timeout, 5_000)))
-      |> maybe_retry_read(group_id, replicas, operation, opts)
+      |> read_primary(group_id, operation, deadline)
+      |> maybe_retry_read(group_id, replicas, operation, deadline)
     else
       :error -> {:error, :replica_identity_and_members_required}
       {:error, _reason} = error -> error
@@ -86,14 +94,32 @@ defmodule ViewstampedReplication do
          group_id,
          replicas,
          operation,
-         opts
+         deadline
        ) do
     with {:ok, primary} <- find_replica(replicas, primary_id) do
-      Replica.read({group_id, primary}, operation, timeout: Keyword.get(opts, :timeout, 5_000))
+      read_primary(primary, group_id, operation, deadline)
     end
   end
 
-  defp maybe_retry_read(result, _group_id, _replicas, _operation, _opts), do: result
+  defp maybe_retry_read(result, _group_id, _replicas, _operation, _deadline), do: result
+
+  defp read_primary(primary, group_id, operation, deadline) do
+    with {:ok, timeout} <- remaining_timeout(deadline) do
+      Replica.read({group_id, primary}, operation, timeout: timeout)
+    end
+  end
+
+  defp read_deadline(:infinity), do: :infinity
+  defp read_deadline(timeout), do: System.monotonic_time(:millisecond) + timeout
+
+  defp remaining_timeout(:infinity), do: {:ok, :infinity}
+
+  defp remaining_timeout(deadline) do
+    case deadline - System.monotonic_time(:millisecond) do
+      remaining when remaining > 0 -> {:ok, remaining}
+      _expired -> {:error, :quorum_unavailable}
+    end
+  end
 
   defp find_replica(replicas, replica_id) when is_list(replicas) do
     case Enum.find(replicas, &(&1.id == replica_id)) do
