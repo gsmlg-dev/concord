@@ -141,6 +141,112 @@ defmodule ViewstampedReplication.Protocol.ContractsTest do
     end
   end
 
+  test "committed-prefix validation scales with retained entries, not their square", %{
+    state: state
+  } do
+    small = retained_state(state, 0, 1_000)
+    large = retained_state(state, 0, 10_000)
+    small_cost = reductions(fn -> Protocol.assert_transition!(small, small) end)
+    large_cost = reductions(fn -> Protocol.assert_transition!(large, large) end)
+
+    assert large_cost < small_cost * 20
+    assert large_cost < 1_000_000
+
+    appended = %{
+      large
+      | log: Log.append!(large.log, entry(10_001, :fixture, 10_001)),
+        op_number: 10_001
+    }
+
+    assert reductions(fn -> Protocol.assert_transition!(large, appended) end) < 1_000_000
+    assert reductions(fn -> Protocol.step(large, {:storage_failed, :fixture}) end) < 1_000_000
+  end
+
+  test "compaction validation does not traverse historical operation numbers", %{state: state} do
+    previous = retained_state(state, 1_000_000, 100)
+    {:ok, log} = Log.compact(previous.log, 1_000_050)
+    current = %{previous | log: log, snapshot_op_number: log.base_op_number}
+
+    assert reductions(fn -> Protocol.assert_transition!(previous, current) end) < 100_000
+  end
+
+  test "retained committed corruption is rejected across compaction boundaries", %{state: state} do
+    previous = retained_state(state, 100, 10)
+    {:ok, compacted} = Log.compact(previous.log, 105)
+
+    for position <- [106, 110] do
+      entries =
+        Enum.map(compacted.entries, fn entry ->
+          if entry.op_number == position, do: %{entry | metadata: %{corrupt: true}}, else: entry
+        end)
+
+      current = %{previous | log: %{compacted | entries: entries}, snapshot_op_number: 105}
+
+      assert_raise ArgumentError, ~r/committed_entry_replaced, #{position}/, fn ->
+        Protocol.assert_transition!(previous, current)
+      end
+    end
+  end
+
+  test "unchanged malformed retained logs cannot bypass validation", %{state: state} do
+    previous = retained_state(state, 100, 10)
+    log = %{previous.log | entries: Enum.reject(previous.log.entries, &(&1.op_number == 105))}
+    corrupted = %{previous | log: log}
+
+    assert_raise ArgumentError, fn -> Protocol.assert_transition!(corrupted, corrupted) end
+  end
+
+  test "only committed positions must be preserved when replacing a suffix", %{state: state} do
+    previous = %{retained_state(state, 100, 10) | commit_number: 105, applied_number: 105}
+
+    entries =
+      Enum.map(previous.log.entries, fn entry ->
+        if entry.op_number > 105, do: %{entry | operation: :replacement}, else: entry
+      end)
+
+    current = %{previous | log: %{previous.log | entries: entries}}
+    assert current == Protocol.assert_transition!(previous, current)
+  end
+
+  test "compacted uniqueness checks exclude the unapplied suffix", %{state: state} do
+    log = %Log{base_op_number: 100, entries: [entry(101, :client, 1), entry(102, :client, 1)]}
+
+    current = %{
+      state
+      | log: log,
+        op_number: 102,
+        commit_number: 101,
+        applied_number: 101,
+        snapshot_op_number: 100
+    }
+
+    assert current == Protocol.assert_invariants!(current)
+
+    assert_raise ArgumentError, ~r/client_request_applied_more_than_once/, fn ->
+      Protocol.assert_invariants!(%{current | commit_number: 102, applied_number: 102})
+    end
+  end
+
+  defp retained_state(state, base, count) do
+    entries = for number <- (base + 1)..(base + count), do: entry(number, :fixture, number)
+
+    %{
+      state
+      | log: %Log{base_op_number: base, entries: entries},
+        op_number: base + count,
+        commit_number: base + count,
+        applied_number: base + count,
+        snapshot_op_number: base
+    }
+  end
+
+  defp reductions(fun) do
+    {:reductions, before_count} = Process.info(self(), :reductions)
+    fun.()
+    {:reductions, after_count} = Process.info(self(), :reductions)
+    after_count - before_count
+  end
+
   defp entry(op_number, client_id, request_number) do
     %LogEntry{
       view_number: 0,

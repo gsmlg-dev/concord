@@ -113,6 +113,22 @@ must be deterministic and free of arbitrary external side effects.
 
 ## Performance benchmark
 
+Committed-prefix validation reuses an equal immutable log and otherwise compares
+the retained overlap in a single ordered pass. It never iterates through
+compacted historical operation numbers or performs a list-index lookup for each
+committed position. Changed logs still reject missing, reordered, or rewritten
+retained committed entries, including metadata changes. Snapshot-compacted
+positions retain their existing snapshot trust boundary; quorum rules are
+unchanged.
+
+The complete protocol invariant check remains linear in retained log size:
+it validates contiguity and the uniqueness of retained applied requests. Log
+append and indexed fetch also remain linear with the current list representation.
+This removes quadratic committed-prefix validation, but does not make protocol
+transitions constant-time or introduce automatic retention. Reduction-based
+regressions cover 10,000 retained entries and compaction after a large historical
+operation number without relying on machine-specific timing deadlines.
+
 Run the explicit local-memory benchmark to compare command throughput and
 p50/p95/p99 latency across all supported cluster sizes:
 

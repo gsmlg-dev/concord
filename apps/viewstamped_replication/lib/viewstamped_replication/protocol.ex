@@ -57,6 +57,7 @@ defmodule ViewstampedReplication.Protocol do
     assert!(Log.last_op_number(state.log) == state.op_number, :log_op_number_mismatch)
     assert!(state.log.base_op_number == state.snapshot_op_number, :log_snapshot_mismatch)
     assert!(state.snapshot_op_number <= state.applied_number, :snapshot_ahead_of_applied)
+    assert_contiguous_log!(state.log.entries, state.log.base_op_number + 1)
     assert_applying_number!(state)
     assert_applied_requests_are_unique!(state)
     state
@@ -1706,14 +1707,7 @@ defmodule ViewstampedReplication.Protocol do
 
   defp install_preserves_committed_prefix?(state, %Log{} = log) do
     Log.last_op_number(log) >= state.commit_number and
-      Enum.all?(1..state.commit_number//1, fn op_number ->
-        case {Log.fetch(state.log, op_number), Log.fetch(log, op_number)} do
-          {{:ok, entry}, {:ok, entry}} -> true
-          {_local, :compacted} -> true
-          {:compacted, _remote} -> true
-          _mismatch -> false
-        end
-      end)
+      is_nil(committed_prefix_mismatch(state.log, log, state.commit_number))
   end
 
   defp install_preserves_committed_prefix?(_state, _log), do: false
@@ -2049,22 +2043,50 @@ defmodule ViewstampedReplication.Protocol do
   end
 
   defp assert_committed_prefix!(previous, current) do
-    Enum.each(1..previous.commit_number//1, fn op_number ->
-      assert!(
-        committed_position_preserved?(previous.log, current.log, op_number),
-        {:committed_entry_replaced, op_number}
-      )
-    end)
-  end
-
-  defp committed_position_preserved?(previous, current, op_number) do
-    case {Log.fetch(previous, op_number), Log.fetch(current, op_number)} do
-      {{:ok, entry}, {:ok, entry}} -> true
-      {_previous, :compacted} -> true
-      {:compacted, _current} -> true
-      _mismatch -> false
+    case committed_prefix_mismatch(previous.log, current.log, previous.commit_number) do
+      nil -> :ok
+      op_number -> assert!(false, {:committed_entry_replaced, op_number})
     end
   end
+
+  # Equal immutable logs cannot replace a committed entry. Changed logs need only
+  # compare their retained overlap, walking each list once rather than fetching
+  # every absolute historical position through Enum.at/2.
+  defp committed_prefix_mismatch(log, log, _commit_number), do: nil
+
+  defp committed_prefix_mismatch(previous, current, commit_number) do
+    first = max(previous.base_op_number, current.base_op_number) + 1
+
+    if first > commit_number do
+      nil
+    else
+      previous_entries = Enum.drop(previous.entries, first - previous.base_op_number - 1)
+      current_entries = Enum.drop(current.entries, first - current.base_op_number - 1)
+      retained_prefix_mismatch(previous_entries, current_entries, first, commit_number)
+    end
+  end
+
+  defp retained_prefix_mismatch(_previous, _current, position, commit_number)
+       when position > commit_number,
+       do: nil
+
+  defp retained_prefix_mismatch(
+         [%LogEntry{op_number: position} = entry | previous],
+         [entry | current],
+         position,
+         commit_number
+       ),
+       do: retained_prefix_mismatch(previous, current, position + 1, commit_number)
+
+  defp retained_prefix_mismatch(_previous, _current, position, _commit_number), do: position
+
+  defp assert_contiguous_log!([], _position), do: :ok
+
+  defp assert_contiguous_log!([%LogEntry{op_number: position} | entries], position),
+    do: assert_contiguous_log!(entries, position + 1)
+
+  defp assert_contiguous_log!(_entries, position),
+    do: assert!(false, {:non_contiguous_log, position})
 
   defp assert_applying_number!(%State{applying_number: nil}), do: :ok
 
@@ -2080,7 +2102,7 @@ defmodule ViewstampedReplication.Protocol do
     applied_requests =
       state.log
       |> Log.to_list()
-      |> Enum.take(state.applied_number)
+      |> Enum.take(state.applied_number - state.log.base_op_number)
       |> Enum.map(&{&1.client_id, &1.request_number})
 
     assert!(
