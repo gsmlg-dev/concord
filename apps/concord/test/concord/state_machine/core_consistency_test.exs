@@ -167,7 +167,13 @@ defmodule Concord.StateMachine.CoreConsistencyTest do
 
     {_, upgraded} = Core.apply(context(5), {:put, "other", "accepted", nil}, reconciled)
     assert {:ok, snapshot} = Core.snapshot(upgraded)
-    assert {:ok, ^upgraded} = Core.restore(snapshot)
+    assert {:ok, restored} = Core.restore(snapshot)
+    assert {:ok, ^snapshot} = Core.snapshot(restored)
+
+    for revision <- [nil, 1, 2, 3] do
+      query = {:list, {:prefix, ""}, %{revision: revision}}
+      assert Core.query(query, restored, context(6)) == Core.query(query, upgraded, context(6))
+    end
   end
 
   test "versioned envelopes enforce reconciliation while version zero keeps the atom as a no-op" do

@@ -105,6 +105,29 @@ defmodule Concord.Engine.LocalSafetyTest do
     assert {:ok, {:ok, "value"}} = Local.query({:get, "permanent"})
   end
 
+  test "public Local list pages retain their revision across mutations" do
+    for key <- ["local/page/c", "local/page/a", "local/page/b"] do
+      assert {:ok, %{revision: _}} = Concord.KV.put(key, key, engine: :local)
+    end
+
+    assert {:ok, revision} = Concord.KV.revision(engine: :local)
+
+    assert {:ok, [first], %{has_more: true, last_key: "local/page/a"}} =
+             Concord.KV.list(engine: :local, prefix: "local/page/", revision: revision, limit: 1)
+
+    assert {:ok, %{revision: _}} = Concord.KV.delete("local/page/b", engine: :local)
+
+    assert {:ok, remaining, %{has_more: false, last_key: "local/page/c"}} =
+             Concord.KV.list(
+               engine: :local,
+               range: {first.key <> <<0>>, "local/page0"},
+               revision: revision,
+               limit: 2
+             )
+
+    assert Enum.map(remaining, & &1.key) == ["local/page/b", "local/page/c"]
+  end
+
   defp assert_local_unchanged(pid, before) do
     assert Process.alive?(pid)
     assert Process.whereis(Local) == pid

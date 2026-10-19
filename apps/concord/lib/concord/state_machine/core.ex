@@ -46,6 +46,8 @@ defmodule Concord.StateMachine.Core.State do
   defstruct store: %{},
             current: %{},
             history: %{},
+            current_keys: {0, nil},
+            history_keys: {0, nil},
             leases: %{},
             indexes: %{},
             index_entries: %{},
@@ -60,6 +62,8 @@ defmodule Concord.StateMachine.Core.State do
           store: map(),
           current: map(),
           history: map(),
+          current_keys: :gb_trees.tree(),
+          history_keys: :gb_trees.tree(),
           leases: map(),
           indexes: map(),
           index_entries: map(),
@@ -89,6 +93,7 @@ defmodule Concord.StateMachine.Core do
   alias Concord.Txn.Result
 
   @snapshot_version 4
+  @derived_state_fields [:current_keys, :history_keys]
   @idempotency_cache_size 100_000
   @idempotency_retention_revisions 10_000
   @representation_conflict_sample_size 100
@@ -926,7 +931,7 @@ defmodule Concord.StateMachine.Core do
         next_lease_id: 1
     }
 
-    {:ok, rebuild_indexes_deterministic(state)}
+    {:ok, state |> rebuild_listing_indexes() |> rebuild_indexes_deterministic()}
   end
 
   defp ensure_current_representation({:drop_index, name}, state) do
@@ -1008,6 +1013,7 @@ defmodule Concord.StateMachine.Core do
       state
       |> Map.put(:revision, revision)
       |> Map.put(:representation, :current)
+      |> rebuild_listing_indexes()
       |> rebuild_lease_memberships()
       |> rebuild_indexes_deterministic()
 
@@ -1432,12 +1438,7 @@ defmodule Concord.StateMachine.Core do
     else
       entries =
         state
-        |> records_at_revision(revision)
-        |> Enum.filter(fn {key, record} ->
-          selector_match?(selector, key) and not Record.tombstone?(record) and
-            not Record.expired?(record, now)
-        end)
-        |> Enum.sort_by(&elem(&1, 0))
+        |> list_entries(selector, revision, now, limit + 1)
 
       has_more = length(entries) > limit
       entries = Enum.take(entries, limit)
@@ -1474,14 +1475,18 @@ defmodule Concord.StateMachine.Core do
   @spec snapshot(State.t()) :: {:ok, map()} | {:error, term()}
   def snapshot(%State{} = state) do
     with :ok <- validate_snapshot_state(state) do
-      {:ok, %{__concord_snapshot_version__: @snapshot_version, state: state}}
+      {:ok,
+       %{
+         __concord_snapshot_version__: @snapshot_version,
+         state: Map.drop(state, @derived_state_fields)
+       }}
     end
   end
 
   @spec restore(term()) :: {:ok, State.t()} | {:error, term()}
   def restore(%{__concord_snapshot_version__: @snapshot_version, state: %State{} = state}) do
     state = normalize_restored_state(state)
-    with :ok <- validate_snapshot_state(state), do: {:ok, state}
+    with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_listing_indexes(state)}
   end
 
   def restore(%{__concord_snapshot_version__: @snapshot_version}),
@@ -1507,14 +1512,14 @@ defmodule Concord.StateMachine.Core do
 
   def restore(%State{} = state) do
     state = normalize_restored_state(state)
-    with :ok <- validate_snapshot_state(state), do: {:ok, state}
+    with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_listing_indexes(state)}
   end
 
   def restore(data) when is_map(data) do
     if complete_plain_state_map?(data) do
       representation = Map.get(data, :representation, :legacy)
       state = struct(State, Map.put(data, :representation, representation))
-      with :ok <- validate_snapshot_state(state), do: {:ok, state}
+      with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_listing_indexes(state)}
     else
       {:error, :invalid_snapshot}
     end
@@ -1586,7 +1591,7 @@ defmodule Concord.StateMachine.Core do
            })
            |> then(&struct(State, &1)),
          :ok <- validate_legacy_v4_state(state) do
-      {:ok, state}
+      {:ok, rebuild_listing_indexes(state)}
     else
       {:error, {:invalid_snapshot, _reason}} = error -> error
       {:error, reason} -> {:error, {:invalid_snapshot, reason}}
@@ -1630,8 +1635,8 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp complete_plain_state_map?(data) do
-    fields = Map.keys(Map.from_struct(%State{}))
-    keys = Map.keys(data)
+    fields = Map.keys(Map.drop(Map.from_struct(%State{}), @derived_state_fields))
+    keys = Map.keys(Map.drop(data, @derived_state_fields))
     legacy_fields = List.delete(fields, :representation)
 
     (length(keys) == length(fields) and Enum.all?(fields, &Map.has_key?(data, &1))) or
@@ -1686,7 +1691,27 @@ defmodule Concord.StateMachine.Core do
         representation: :legacy
     }
 
-    state
+    rebuild_listing_indexes(state)
+  end
+
+  # These ordered lookup structures are derived solely from authoritative maps.
+  # They are rebuilt at ingress, never on reads, and omitted from v4 snapshots.
+  defp rebuild_listing_indexes(state) do
+    current_keys = state.current |> Map.keys() |> Enum.sort() |> Enum.map(&{&1, true})
+
+    history_keys =
+      state.history
+      |> Enum.group_by(fn {{key, _revision}, _record} -> key end, fn
+        {{_key, revision}, _record} -> {-revision, true}
+      end)
+      |> Enum.map(fn {key, revisions} -> {key, :gb_trees.from_orddict(Enum.sort(revisions))} end)
+      |> Enum.sort()
+
+    %{
+      state
+      | current_keys: :gb_trees.from_orddict(current_keys),
+        history_keys: :gb_trees.from_orddict(history_keys)
+    }
   end
 
   defp normalize_state_map(data) do
@@ -1838,6 +1863,7 @@ defmodule Concord.StateMachine.Core do
     %{
       state
       | current: Map.put(state.current, key, record),
+        current_keys: :gb_trees.enter(key, true, state.current_keys),
         store: Map.put(state.store, key, %{value: record.value, expires_at: record.expires_at})
     }
   end
@@ -1846,6 +1872,7 @@ defmodule Concord.StateMachine.Core do
     %{
       state
       | current: Map.delete(state.current, key),
+        current_keys: :gb_trees.delete_any(key, state.current_keys),
         store: Map.delete(state.store, key)
     }
   end
@@ -1857,11 +1884,37 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp put_history(state, key, revision, record) do
-    %{state | history: Map.put(state.history, {key, revision}, record)}
+    revisions =
+      case :gb_trees.lookup(key, state.history_keys) do
+        :none -> :gb_trees.empty()
+        {:value, revisions} -> revisions
+      end
+
+    history_keys =
+      :gb_trees.enter(key, :gb_trees.enter(-revision, true, revisions), state.history_keys)
+
+    %{
+      state
+      | history: Map.put(state.history, {key, revision}, record),
+        history_keys: history_keys
+    }
   end
 
   defp delete_history(state, key, revision) do
-    %{state | history: Map.delete(state.history, {key, revision})}
+    history_keys =
+      case :gb_trees.lookup(key, state.history_keys) do
+        :none ->
+          state.history_keys
+
+        {:value, revisions} ->
+          revisions = :gb_trees.delete_any(-revision, revisions)
+
+          if :gb_trees.is_empty(revisions),
+            do: :gb_trees.delete(key, state.history_keys),
+            else: :gb_trees.update(key, revisions, state.history_keys)
+      end
+
+    %{state | history: Map.delete(state.history, {key, revision}), history_keys: history_keys}
   end
 
   defp attach_to_lease(state, _key, nil), do: state
@@ -2039,30 +2092,110 @@ defmodule Concord.StateMachine.Core do
   defp selector_match?({:range, start_key, end_key}, key), do: key >= start_key and key < end_key
 
   defp find_record_at_revision(state, key, target_revision) do
-    state.history
-    |> Enum.filter(fn
-      {{^key, revision}, _record} -> revision <= target_revision
-      _ -> false
-    end)
-    |> Enum.max_by(fn {{_key, revision}, _record} -> revision end, fn -> nil end)
-    |> case do
+    case historical_record(state, key, target_revision) do
       nil ->
         {:error, :not_found}
 
-      {_key, record} ->
+      record ->
         if Record.tombstone?(record), do: {:error, :not_found}, else: {:ok, record.value}
     end
   end
 
-  defp records_at_revision(state, nil), do: state.current
-
-  defp records_at_revision(state, target_revision) do
-    (Map.to_list(state.current) ++
-       Enum.map(state.history, fn {{key, _revision}, record} -> {key, record} end))
-    |> Enum.filter(fn {_key, record} -> record.mod_revision <= target_revision end)
-    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-    |> Map.new(fn {key, records} -> {key, Enum.max_by(records, & &1.mod_revision)} end)
+  defp historical_record(state, key, revision) do
+    with {:value, revisions} <- :gb_trees.lookup(key, state.history_keys),
+         {negative_revision, _present, _iterator} <-
+           :gb_trees.next(:gb_trees.iterator_from(-revision, revisions)) do
+      Map.fetch!(state.history, {key, -negative_revision})
+    else
+      :none -> nil
+    end
   end
+
+  defp listing_record(state, key, nil), do: Map.get(state.current, key)
+
+  defp listing_record(state, key, revision) do
+    current =
+      case Map.get(state.current, key) do
+        %Record{mod_revision: modified} = record when modified <= revision -> record
+        _newer_or_absent -> nil
+      end
+
+    case {current, historical_record(state, key, revision)} do
+      {nil, historical} -> historical
+      {current, nil} -> current
+      {current, historical} when current.mod_revision >= historical.mod_revision -> current
+      {_current, historical} -> historical
+    end
+  end
+
+  defp list_entries(state, selector, revision, now, remaining) do
+    start_key = selector_start(selector)
+    current = :gb_trees.next(:gb_trees.iterator_from(start_key, state.current_keys))
+
+    historical =
+      if is_nil(revision),
+        do: :none,
+        else: :gb_trees.next(:gb_trees.iterator_from(start_key, state.history_keys))
+
+    collect_list_entries({current, historical}, state, selector, revision, now, remaining, [])
+  end
+
+  defp selector_start({:key, key}), do: key
+  defp selector_start({:prefix, prefix}), do: prefix
+  defp selector_start({:range, start_key, _end_key}), do: start_key
+
+  defp collect_list_entries(_iterators, _state, _selector, _revision, _now, 0, entries),
+    do: Enum.reverse(entries)
+
+  defp collect_list_entries(iterators, state, selector, revision, now, remaining, entries) do
+    case next_listing_key(iterators) do
+      :none ->
+        Enum.reverse(entries)
+
+      {key, next_iterators} ->
+        if selector_match?(selector, key) do
+          record = listing_record(state, key, revision)
+
+          if record && not Record.tombstone?(record) && not Record.expired?(record, now) do
+            collect_list_entries(next_iterators, state, selector, revision, now, remaining - 1, [
+              {key, record} | entries
+            ])
+          else
+            collect_list_entries(
+              next_iterators,
+              state,
+              selector,
+              revision,
+              now,
+              remaining,
+              entries
+            )
+          end
+        else
+          Enum.reverse(entries)
+        end
+    end
+  end
+
+  defp next_listing_key({:none, :none}), do: :none
+
+  defp next_listing_key({{key, _value, iterator}, :none}),
+    do: {key, {:gb_trees.next(iterator), :none}}
+
+  defp next_listing_key({:none, {key, _value, iterator}}),
+    do: {key, {:none, :gb_trees.next(iterator)}}
+
+  defp next_listing_key({{key, _current_value, current}, {key, _history_value, historical}}),
+    do: {key, {:gb_trees.next(current), :gb_trees.next(historical)}}
+
+  defp next_listing_key(
+         {{current_key, _value, iterator}, {historical_key, _value2, _iterator} = historical}
+       )
+       when current_key < historical_key,
+       do: {current_key, {:gb_trees.next(iterator), historical}}
+
+  defp next_listing_key({current, {key, _value, iterator}}),
+    do: {key, {current, :gb_trees.next(iterator)}}
 
   defp mutating_op?({:put, _, _, _}), do: true
   defp mutating_op?({:delete, _, _}), do: true

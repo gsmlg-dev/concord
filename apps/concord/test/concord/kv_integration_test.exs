@@ -203,5 +203,27 @@ defmodule Concord.KV.IntegrationTest do
                {"/snapshot/2", "second"}
              ]
     end
+
+    test "public quorum-confirmed list pages continue at the same revision" do
+      for key <- ["/cursor/c", "/cursor/a", "/cursor/b"] do
+        assert {:ok, %{revision: _}} = Concord.KV.put(key, key)
+      end
+
+      assert {:ok, revision} = Concord.KV.revision()
+
+      assert {:ok, [first], %{has_more: true, last_key: "/cursor/a"}} =
+               Concord.KV.list(prefix: "/cursor/", revision: revision, limit: 1)
+
+      assert {:ok, %{revision: _}} = Concord.KV.delete("/cursor/b")
+
+      assert {:ok, remaining, %{has_more: false, last_key: "/cursor/c"}} =
+               Concord.KV.list(
+                 range: {first.key <> <<0>>, "/cursor0"},
+                 revision: revision,
+                 limit: 2
+               )
+
+      assert Enum.map(remaining, & &1.key) == ["/cursor/b", "/cursor/c"]
+    end
   end
 end

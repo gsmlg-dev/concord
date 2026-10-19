@@ -135,6 +135,22 @@ defmodule Concord.KV do
   ## Returns
 
   `{:ok, [Record.t()], %{has_more: boolean, last_key: binary | nil}}`
+
+  Local and VSR engines seek an ordered key index and inspect only matching
+  candidates until they find `limit + 1` visible records. They do not materialize
+  or sort unrelated current or historical keys. Expired records and historical
+  tombstones inside the selected range may still need to be visited. VSR reads
+  retain the same quorum-confirmed barrier.
+
+  Continue a range using its original exclusive upper bound and an inclusive
+  start of `last_key <> <<0>>` for keys shorter than the 4096-byte boundary limit.
+  For maximum-length keys, use a valid binary successor within that limit.
+  Keep the same `:revision` on every page when a consistent historical view is
+  required; without it, each page observes its own current read.
+
+  This bound applies to `list/1` on Local and VSR. Legacy `prefix_scan`/`get_all`
+  queries and the compatibility `Concord.StateMachine.query/2` wrapper can still
+  traverse the full inventory. The Turso engine uses its separate SQL path.
   """
   @spec list(keyword()) :: {:ok, [Record.t()], map()} | {:error, term()}
   def list(opts \\ []) do
