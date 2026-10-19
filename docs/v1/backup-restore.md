@@ -92,6 +92,23 @@ Features:
 - Atomic logical snapshots through VSR
 - Compatible across cluster nodes
 
+New backups identify their checksum as `:sha256_deterministic_etf_v1` in
+`metadata.checksum_scheme`. SHA-256 covers the logical snapshot encoded with
+`:erlang.term_to_binary(data, [:deterministic])`; compression does not affect
+verification. The logical snapshot and `metadata.format_version` remain version 2.
+
+This scheme verifies across independent BEAM VMs with different atom initialization
+histories on the same Erlang/OTP major release. OTP does not guarantee identical
+deterministic encoding across major releases. Cross-major verification is accepted
+when the checksum matches; test a verified restore before changing OTP major versions.
+
+Backups without `metadata.checksum_scheme` use the original SHA-256 over default
+Erlang term encoding. That encoding can differ between VMs for unchanged maps.
+Legacy checksum mismatches remain invalid, and restore rejects them before changing
+cluster data. After upgrading Concord, verify and recreate legacy backups on their
+originating VM before retiring it. Unknown checksum schemes are rejected explicitly;
+verification never retries a different scheme after a mismatch.
+
 ## Automated Backups
 
 ### Cron-based

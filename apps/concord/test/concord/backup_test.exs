@@ -4,6 +4,69 @@ defmodule Concord.BackupTest do
   alias Concord.Engine
   alias Concord.StateMachine
 
+  @tag :tmp_dir
+  test "backups verify and restore in independent VMs with opposite atom histories", %{
+    tmp_dir: tmp_dir
+  } do
+    elixir = System.find_executable("elixir")
+    assert is_binary(elixir)
+    code_paths = Enum.flat_map(:code.get_path(), &["-pa", to_string(&1)])
+    fixture = Path.expand("../support/backup_checksum_vm.exs", __DIR__)
+
+    for mode <- ["write", "read"] do
+      {output, status} =
+        System.cmd(elixir, code_paths ++ [fixture, mode, tmp_dir], stderr_to_stdout: true)
+
+      assert status == 0, output
+      assert output =~ "backup checksum #{mode} passed"
+    end
+  end
+
+  describe "checksum scheme verification" do
+    @tag :tmp_dir
+    test "rejects corruption and unsupported schemes before restoring", %{tmp_dir: tmp_dir} do
+      fields = Map.new(1..1000, &{String.to_atom("backup_integrity_field_#{&1}"), &1})
+
+      data = %{
+        version: 2,
+        kv_data: [{"integrity", %{value: fields, expires_at: nil}}],
+        indexes: %{}
+      }
+
+      metadata = %{
+        timestamp: DateTime.utc_now(),
+        entry_count: 1,
+        checksum_scheme: :sha256_deterministic_etf_v1,
+        checksum: :crypto.hash(:sha256, :erlang.term_to_binary(data, [:deterministic]))
+      }
+
+      backup = %{metadata: metadata, data: data}
+      path = Path.join(tmp_dir, "integrity.backup")
+      File.write!(path, :erlang.term_to_binary(backup))
+      assert {:ok, :valid} = Concord.Backup.verify(path)
+
+      for invalid <- [
+            put_in(backup.data.kv_data, []),
+            put_in(backup.metadata.checksum, <<0::256>>),
+            put_in(backup.metadata.checksum, :crypto.hash(:sha256, :erlang.term_to_binary(data))),
+            %{backup | metadata: Map.delete(backup.metadata, :checksum_scheme)}
+          ] do
+        File.write!(path, :erlang.term_to_binary(invalid))
+        assert {:ok, :invalid} = Concord.Backup.verify(path)
+        assert {:error, :invalid_backup} = Concord.Backup.restore(path, engine: RejectRestore)
+      end
+
+      for scheme <- [:unknown_checksum_scheme, nil] do
+        unknown = put_in(backup.metadata.checksum_scheme, scheme)
+        File.write!(path, :erlang.term_to_binary(unknown))
+        assert {:error, {:unsupported_checksum_scheme, ^scheme}} = Concord.Backup.verify(path)
+
+        assert {:error, {:verification_failed, {:unsupported_checksum_scheme, ^scheme}}} =
+                 Concord.Backup.restore(path, engine: RejectRestore)
+      end
+    end
+  end
+
   describe "Backup V2 format — state machine restore" do
     setup do
       state = StateMachine.init(%{})

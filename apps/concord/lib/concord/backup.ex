@@ -16,6 +16,16 @@ defmodule Concord.Backup do
   - Full snapshot of all key-value pairs
   - Checksum for integrity verification
 
+  New backups use versioned deterministic Erlang term encoding for their SHA-256
+  checksum. Verification is portable across independent VMs running the same
+  Erlang/OTP major release, including VMs with different atom initialization
+  histories. Erlang does not guarantee identical deterministic encoding across
+  major releases; verification still succeeds across versions when hashes match.
+
+  Legacy backups without a checksum scheme retain their original verification
+  rules. A mismatch is rejected, even when caused by a different VM's map encoding.
+  Recreate such backups on their originating VM after upgrading Concord.
+
   ## Examples
 
       # Create a backup
@@ -37,9 +47,11 @@ defmodule Concord.Backup do
 
   @backup_extension ".backup"
   @default_backup_dir "./backups"
+  @checksum_scheme :sha256_deterministic_etf_v1
 
   @typedoc "Backup metadata"
   @type metadata :: %{
+          optional(:checksum_scheme) => :sha256_deterministic_etf_v1,
           timestamp: DateTime.t(),
           node: node(),
           cluster_name: atom(),
@@ -309,7 +321,8 @@ defmodule Concord.Backup do
       memory_bytes: :erlang.external_size(snapshot_data),
       version: Application.spec(:concord, :vsn) |> to_string(),
       format_version: 2,
-      checksum: compute_checksum(snapshot_data)
+      checksum_scheme: @checksum_scheme,
+      checksum: compute_checksum(snapshot_data, [:deterministic])
     }
 
     backup = %{
@@ -387,18 +400,27 @@ defmodule Concord.Backup do
   end
 
   defp verify_checksum(%{metadata: metadata, data: data}) do
-    expected = metadata.checksum
-    actual = compute_checksum(data)
+    with {:ok, options} <- checksum_options(metadata) do
+      expected = metadata.checksum
+      actual = compute_checksum(data, options)
 
-    if expected == actual do
-      {:ok, :valid}
-    else
-      {:ok, :invalid}
+      if expected == actual do
+        {:ok, :valid}
+      else
+        {:ok, :invalid}
+      end
     end
   end
 
-  defp compute_checksum(data) do
-    :crypto.hash(:sha256, :erlang.term_to_binary(data))
+  defp checksum_options(%{checksum_scheme: @checksum_scheme}), do: {:ok, [:deterministic]}
+
+  defp checksum_options(%{checksum_scheme: scheme}),
+    do: {:error, {:unsupported_checksum_scheme, scheme}}
+
+  defp checksum_options(_metadata), do: {:ok, []}
+
+  defp compute_checksum(data, options) do
+    :crypto.hash(:sha256, :erlang.term_to_binary(data, options))
   end
 
   defp maybe_verify(_path, false), do: {:verify, {:ok, :valid}}
