@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.3] - 2026-10-19
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.3.
+- Confirm that the quadratic committed-prefix validation reported in #98 was
+  repaired in 3.1.2. Growing retained-log benchmarks verify linear validation
+  while the existing corruption and committed-prefix safety tests still pass.
+
 ## [3.1.2] - 2026-10-19
 
 ### Fixed
