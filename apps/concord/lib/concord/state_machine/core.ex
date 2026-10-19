@@ -101,7 +101,9 @@ defmodule Concord.StateMachine.Core do
   @type query_context :: %{required(:timestamp_ms) => non_neg_integer()} | Context.t()
 
   @spec init(keyword()) :: State.t()
-  def init(_opts \\ []), do: %State{}
+  def init(_opts \\ []) do
+    %State{current_keys: :gb_trees.empty(), history_keys: :gb_trees.empty()}
+  end
 
   @spec apply(Context.t(), term(), State.t()) :: {term(), State.t()}
   def apply(%Context{} = context, command, %State{} = state) do

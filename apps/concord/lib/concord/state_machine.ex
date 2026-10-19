@@ -122,6 +122,7 @@ defmodule Concord.StateMachine do
     end
   end
 
+  @spec external(State.t()) :: {:concord_kv, map()}
   defp external(%State{} = state), do: {:concord_kv, Map.from_struct(state)}
 
   defp telemetry_metadata(command, result, context) do
