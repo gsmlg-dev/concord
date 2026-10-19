@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2] - 2026-10-19
+
+### Fixed
+- Validate VSR committed prefixes in linear time over retained log entries,
+  skipping compacted history while preserving corruption and quorum checks.
+- Make new backup checksums portable across independent VMs on the same OTP
+  major release using versioned deterministic Erlang term encoding. Legacy
+  checksum mismatches remain invalid; unknown checksum schemes are rejected.
+- Share a single read timeout across VSR primary discovery, guarded reads,
+  and redirects, returning structured errors when discovery times out.
+- Seek prefix/range pages through maintained ordered indexes in the Local
+  and VSR engines without materializing or sorting unrelated keys. Preserve
+  ordering, revision reads, expiry, tombstones, and snapshot compatibility.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.2.
+
 ## [3.1.1] - 2026-10-14
 
 ### Changed
