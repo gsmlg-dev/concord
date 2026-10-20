@@ -195,6 +195,47 @@ defmodule Concord.StateMachine do
     :ok
   end
 
+  @doc false
+  def materialize(%State{} = state, :all), do: materialize(state)
+
+  def materialize(%State{} = state, %MapSet{} = changes) do
+    tables = [:store, :current, :history, :leases, :index_registry]
+
+    if Enum.any?(tables, &(:ets.whereis(table(&1)) == :undefined)) do
+      # Initialization, including a cold adapter invocation, needs complete views.
+      materialize(state)
+    else
+      changes
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+      |> Enum.each(fn
+        {{:index, name}, keys} when is_binary(name) ->
+          entries = Map.get(state.index_entries, name, %{})
+
+          case StorageScope.index_table_name(name) do
+            :undefined -> replace_table(ensure_index_table(name), entries)
+            index_table -> update_rows(index_table, entries, keys)
+          end
+
+        {{:index, _legacy_name}, _keys} ->
+          :ok
+
+        {name, keys} ->
+          update_rows(table(name), Map.fetch!(state, name), keys)
+      end)
+
+      :ok
+    end
+  end
+
+  defp update_rows(table, entries, keys) do
+    Enum.each(keys, fn key ->
+      case Map.fetch(entries, key) do
+        {:ok, value} -> :ets.insert(table, {key, value})
+        :error -> :ets.delete(table, key)
+      end
+    end)
+  end
+
   defp merge_legacy_index_views(%State{} = state) do
     entries =
       Enum.reduce(state.indexes, state.index_entries, fn

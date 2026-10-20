@@ -128,6 +128,47 @@ defmodule Concord.StateMachine.Core do
     {result, %{state | representation: :legacy}}
   end
 
+  # Change tracking is adapter-local working metadata, never authoritative state or
+  # snapshot data. Admission and frozen replay still use the ordinary Core paths.
+  @doc false
+  def apply_with_changes(version, context, command, state) do
+    if incremental_command?(command) do
+      working = Map.put(state, :__concord_changes__, MapSet.new())
+      {result, next} = apply_version(version, context, command, working)
+      {changes, next} = Map.pop(next, :__concord_changes__)
+      {result, next, changes}
+    else
+      {result, next} = apply_version(version, context, command, state)
+      {result, next, :all}
+    end
+  end
+
+  defp apply_version(0, context, command, state), do: apply_legacy(context, command, state)
+  defp apply_version(1, context, command, state), do: __MODULE__.apply(context, command, state)
+
+  defp incremental_command?(command)
+       when is_tuple(command) and tuple_size(command) in [3, 4] and elem(command, 0) == :put,
+       do: true
+
+  defp incremental_command?(command)
+       when is_tuple(command) and tuple_size(command) in [2, 3] and elem(command, 0) == :delete,
+       do: true
+
+  defp incremental_command?({:put_if, _, _, _, _}), do: true
+  defp incremental_command?({:delete_if, _, _, _}), do: true
+  defp incremental_command?({:touch, _, _}), do: true
+  defp incremental_command?(_command), do: false
+
+  defp track_change(state, table, key) do
+    case state do
+      %{__concord_changes__: changes} ->
+        Map.put(state, :__concord_changes__, MapSet.put(changes, {table, key}))
+
+      _ ->
+        state
+    end
+  end
+
   defp finalize_apply(result, original_state) do
     case result do
       {{:error, :unsupported_command} = result, _next_state} ->
@@ -316,6 +357,7 @@ defmodule Concord.StateMachine.Core do
       state =
         state
         |> Map.update!(:store, &Map.delete(&1, key))
+        |> track_change(:store, key)
         |> update_indexes(key, old_value, nil)
 
       {:ok, state}
@@ -1807,6 +1849,7 @@ defmodule Concord.StateMachine.Core do
 
   defp put_legacy(state, key, value, expires_at) do
     %{state | store: Map.put(state.store, key, %{value: value, expires_at: expires_at})}
+    |> track_change(:store, key)
   end
 
   defp put_current_at_revision(state, key, value, expires_at, revision) do
@@ -1868,6 +1911,8 @@ defmodule Concord.StateMachine.Core do
         current_keys: :gb_trees.enter(key, true, state.current_keys),
         store: Map.put(state.store, key, %{value: record.value, expires_at: record.expires_at})
     }
+    |> track_change(:store, key)
+    |> track_change(:current, key)
   end
 
   defp delete_key(state, key) do
@@ -1877,6 +1922,8 @@ defmodule Concord.StateMachine.Core do
         current_keys: :gb_trees.delete_any(key, state.current_keys),
         store: Map.delete(state.store, key)
     }
+    |> track_change(:store, key)
+    |> track_change(:current, key)
   end
 
   defp save_previous(state, _key, nil), do: state
@@ -1900,6 +1947,7 @@ defmodule Concord.StateMachine.Core do
       | history: Map.put(state.history, {key, revision}, record),
         history_keys: history_keys
     }
+    |> track_change(:history, {key, revision})
   end
 
   defp delete_history(state, key, revision) do
@@ -1925,7 +1973,9 @@ defmodule Concord.StateMachine.Core do
     case Map.fetch(state.leases, id) do
       {:ok, lease} ->
         keys = if key in lease.keys, do: lease.keys, else: [key | lease.keys]
+
         %{state | leases: Map.put(state.leases, id, %{lease | keys: keys})}
+        |> track_change(:leases, id)
 
       :error ->
         state
@@ -1933,24 +1983,26 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp detach_from_all_leases(state, key) do
-    leases =
-      Map.new(state.leases, fn {id, lease} ->
-        {id, %{lease | keys: List.delete(lease.keys, key)}}
-      end)
-
-    %{state | leases: leases}
+    Enum.reduce(state.leases, state, fn {id, lease}, acc ->
+      keys = List.delete(lease.keys, key)
+      acc = %{acc | leases: Map.put(acc.leases, id, %{lease | keys: keys})}
+      if keys == lease.keys, do: acc, else: track_change(acc, :leases, id)
+    end)
   end
 
   defp update_indexes(state, key, old_value, new_value) do
-    entries =
-      Enum.reduce(state.indexes, state.index_entries, fn {name, extractor}, acc ->
-        index = Map.get(acc, name, %{})
-        index = remove_index_values(index, Extractor.extract(extractor, old_value), key)
-        index = add_index_values(index, Extractor.extract(extractor, new_value), key)
-        Map.put(acc, name, index)
-      end)
+    Enum.reduce(state.indexes, state, fn {name, extractor}, acc ->
+      index = Map.get(acc.index_entries, name, %{})
+      old_values = Extractor.extract(extractor, old_value)
+      index = remove_index_values(index, old_values, key)
+      new_values = Extractor.extract(extractor, new_value)
+      index = add_index_values(index, new_values, key)
+      acc = %{acc | index_entries: Map.put(acc.index_entries, name, index)}
 
-    %{state | index_entries: entries}
+      Enum.reduce(List.wrap(old_values) ++ List.wrap(new_values), acc, fn value, acc ->
+        track_change(acc, {:index, name}, value)
+      end)
+    end)
   end
 
   defp update_one_index(state, name, key, value) do

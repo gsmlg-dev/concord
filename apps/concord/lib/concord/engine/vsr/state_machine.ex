@@ -41,9 +41,9 @@ defmodule Concord.Engine.VSR.StateMachine do
     with {:ok, version, timestamp_ms, command} <- CommandEnvelope.unwrap(operation),
          :ok <- CommandSchema.validate_replay(version, command) do
       context = %Context{op_number: op_number, timestamp_ms: timestamp_ms}
-      {result, next_state} = apply_versioned(version, context, command, state)
-      Concord.StateMachine.materialize(next_state)
-      Observer.committed(context, command, state, next_state, {:vsr, group_id})
+      {result, next_state, changes} = Core.apply_with_changes(version, context, command, state)
+      Concord.StateMachine.materialize(next_state, changes)
+      Observer.committed(context, command, state, next_state, {:vsr, group_id}, changes)
       {result, next_state}
     else
       {:error, reason} -> {{:error, reason}, state}
@@ -92,9 +92,4 @@ defmodule Concord.Engine.VSR.StateMachine do
       {:error, reason} -> {:error, {:invalid_query, reason}}
     end
   end
-
-  defp apply_versioned(0, context, command, state),
-    do: Core.apply_legacy(context, command, state)
-
-  defp apply_versioned(1, context, command, state), do: Core.apply(context, command, state)
 end

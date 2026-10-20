@@ -13,10 +13,21 @@ defmodule Concord.StateMachine.Observer do
         %Core.State{} = current,
         source_id
       ) do
+    committed(context, nil, previous, current, source_id, :all)
+  end
+
+  @doc false
+  def committed(context, _command, previous, current, source_id, changes) do
+    if Process.whereis(Dispatcher) do
+      dispatch(context, previous, current, source_id, changes)
+    end
+
+    :ok
+  end
+
+  defp dispatch(context, previous, current, source_id, changes) do
     events =
-      previous.current
-      |> Map.keys()
-      |> Kernel.++(Map.keys(current.current))
+      changed_keys(changes, previous, current)
       |> Enum.uniq()
       |> Enum.sort()
       |> Enum.reduce([], fn key, events ->
@@ -35,8 +46,15 @@ defmodule Concord.StateMachine.Observer do
         %{event | id: {source_id, context.op_number, index}}
       end)
 
-    if events != [] and Process.whereis(Dispatcher), do: Dispatcher.dispatch(events)
+    if events != [], do: Dispatcher.dispatch(events)
     :ok
+  end
+
+  defp changed_keys(:all, previous, current),
+    do: Map.keys(previous.current) ++ Map.keys(current.current)
+
+  defp changed_keys(changes, _previous, _current) do
+    for {:current, key} <- changes, do: key
   end
 
   defp event(key, previous_record, nil, state) do
