@@ -137,12 +137,35 @@ defmodule Concord.StateMachine.IncrementalWriteTest do
       )
 
     :ok = StateMachine.materialize(legacy)
+    :ets.delete(StorageScope.index_table_name("tags"))
     command = {:put, "other", "blocked"}
 
     assert {{:error, {:legacy_state_requires_reconciliation, %{count: 1}}}, ^legacy} =
              Adapter.apply(metadata(30), CommandEnvelope.wrap(1_000, command, 1), legacy)
 
     assert_views(legacy)
+  end
+
+  test "missing index views bootstrap when ordinary writes have no index changes" do
+    initial = fixture(8)
+
+    for version <- [0, 1],
+        command <- [
+          {:touch, "fixture-1", 10},
+          {:delete, "missing"},
+          {:put_if, "fixture-1", "refused", nil, :wrong},
+          {:put, "new", %{other: "no indexed value"}}
+        ] do
+      :ok = StateMachine.materialize(initial)
+      :ets.delete(StorageScope.index_table_name("tags"))
+      expected = apply_core(version, context(30), command, initial)
+
+      assert ^expected =
+               Adapter.apply(metadata(30), CommandEnvelope.wrap(1_000, command, version), initial)
+
+      {_, next} = expected
+      assert_views(next)
+    end
   end
 
   test "fixed writes avoid growing adapter overhead with absent and active dispatcher" do

@@ -223,6 +223,16 @@ defmodule Concord.StateMachine do
           update_rows(table(name), Map.fetch!(state, name), keys)
       end)
 
+      Enum.each(state.indexes, fn
+        {name, _extractor} when is_binary(name) ->
+          if StorageScope.index_table_name(name) == :undefined do
+            replace_table(ensure_index_table(name), Map.get(state.index_entries, name, %{}))
+          end
+
+        {_legacy_name, _extractor} ->
+          :ok
+      end)
+
       :ok
     end
   end
