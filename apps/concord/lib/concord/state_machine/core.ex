@@ -58,7 +58,13 @@ defmodule Concord.StateMachine.Core.State do
             compact_revision: 0,
             next_lease_id: 1
 
-  @type t :: %__MODULE__{
+  # The adapter may attach working change metadata without extending the struct
+  # or the persisted state. Every authoritative field remains required.
+  @type t :: %{
+          optional(:__concord_changes__) => %{
+            optional({atom() | {:index, term()}, term()}) => true
+          },
+          __struct__: __MODULE__,
           store: map(),
           current: map(),
           history: map(),
@@ -133,10 +139,10 @@ defmodule Concord.StateMachine.Core do
   @doc false
   def apply_with_changes(version, context, command, state) do
     if incremental_command?(command) do
-      working = Map.put(state, :__concord_changes__, MapSet.new())
+      working = Map.put(state, :__concord_changes__, %{})
       {result, next} = apply_version(version, context, command, working)
       {changes, next} = Map.pop(next, :__concord_changes__)
-      {result, next, changes}
+      {result, next, Map.keys(changes)}
     else
       {result, next} = apply_version(version, context, command, state)
       {result, next, :all}
@@ -162,7 +168,7 @@ defmodule Concord.StateMachine.Core do
   defp track_change(state, table, key) do
     case state do
       %{__concord_changes__: changes} ->
-        Map.put(state, :__concord_changes__, MapSet.put(changes, {table, key}))
+        Map.put(state, :__concord_changes__, Map.put(changes, {table, key}, true))
 
       _ ->
         state

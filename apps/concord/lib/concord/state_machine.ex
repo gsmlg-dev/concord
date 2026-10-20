@@ -198,7 +198,7 @@ defmodule Concord.StateMachine do
   @doc false
   def materialize(%State{} = state, :all), do: materialize(state)
 
-  def materialize(%State{} = state, %MapSet{} = changes) do
+  def materialize(%State{} = state, changes) when is_list(changes) do
     tables = [:store, :current, :history, :leases, :index_registry]
 
     if Enum.any?(tables, &(:ets.whereis(table(&1)) == :undefined)) do
