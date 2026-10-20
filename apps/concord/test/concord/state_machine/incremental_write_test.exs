@@ -8,6 +8,22 @@ defmodule Concord.StateMachine.IncrementalWriteTest do
   alias Concord.Sync.Dispatcher
   alias ViewstampedReplication.ApplyMetadata
 
+  setup do
+    owner = self()
+
+    on_exit(fn ->
+      # ExUnit can report completion before the test exits. DOWN guarantees its
+      # ETS views and registered dispatcher name are gone before the next test.
+      reference = Process.monitor(owner)
+
+      receive do
+        {:DOWN, ^reference, :process, ^owner, _reason} -> :ok
+      end
+    end)
+
+    :ok
+  end
+
   for version <- [0, 1], active <- [false, true] do
     test "version #{version} preserves full views and events with dispatcher #{active}" do
       version = unquote(version)
