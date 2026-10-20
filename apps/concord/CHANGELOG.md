@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.4] - 2026-10-20
+
+### Fixed
+- Update only affected compatibility ETS rows and observer records after ordinary
+  VSR writes. Preserve bulk reconstruction and rebuild missing views; skip event
+  construction when no dispatcher exists. Version-one representation admission
+  retains its full-state safety scan.
+- Bound ready singleton-read heap allocation with an untrusted derived request
+  index verified against every retained applied log entry. Preserve corruption,
+  duplicate-request, recovery, snapshot, and committed-prefix checks. Reads still
+  traverse the retained log; the index uses memory proportional to retained
+  applied requests and is excluded from storage and wire payloads.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.4.
+
 ## [3.1.3] - 2026-10-19
 
 ### Changed
