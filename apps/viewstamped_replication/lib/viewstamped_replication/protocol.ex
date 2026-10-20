@@ -34,8 +34,28 @@ defmodule ViewstampedReplication.Protocol do
   def step(%State{} = state, event) do
     assert_invariants!(state)
     validate_event!(event)
+    checked_step(state, event)
+  end
+
+  # The complete input check above also validates this unchanged output. No
+  # transition or committed-prefix check can add information for this read.
+  defp checked_step(
+         %State{
+           status: :normal,
+           replica_id: replica_id,
+           configuration: %Configuration{members: [%{id: replica_id}]},
+           applied_number: number,
+           commit_number: number,
+           applying_number: nil
+         } = state,
+         {:read_request, route, operation}
+       ),
+       do: {state, [{:read, route, operation}]}
+
+  defp checked_step(state, event) do
     {next_state, effects} = transition(state, event)
-    {assert_transition!(state, next_state), effects}
+    assert_transition!(state, next_state)
+    {refresh_applied_request_index(state, next_state), effects}
   end
 
   @spec assert_invariants!(State.t()) :: State.t()
@@ -2098,7 +2118,71 @@ defmodule ViewstampedReplication.Protocol do
     )
   end
 
+  # This index is untrusted derived data, never a validation certificate. Every
+  # retained applied entry must match its exact position: duplicate request pairs
+  # at different positions cannot both match, even with a forged index. Missing
+  # or stale metadata falls back to the canonical uniqueness check.
+  # Reads still traverse O(retained log) entries, but allocate no per-entry terms.
   defp assert_applied_requests_are_unique!(state) do
+    unless applied_requests_indexed?(
+             state.log.entries,
+             state.applied_number,
+             Map.get(state, :applied_request_index)
+           ) do
+      assert_applied_requests_are_unique_canonical!(state)
+    end
+  end
+
+  defp applied_requests_indexed?([], _applied_number, _index), do: true
+
+  defp applied_requests_indexed?([%LogEntry{op_number: op_number} | _], applied_number, _index)
+       when op_number > applied_number,
+       do: true
+
+  defp applied_requests_indexed?(
+         [
+           %LogEntry{client_id: client_id, request_number: request_number, op_number: op_number}
+           | entries
+         ],
+         applied_number,
+         index
+       ) do
+    case index do
+      %{^client_id => %{^request_number => ^op_number}} ->
+        applied_requests_indexed?(entries, applied_number, index)
+
+      _ ->
+        false
+    end
+  end
+
+  defp refresh_applied_request_index(previous, current)
+       when previous.log === current.log and previous.applied_number == current.applied_number,
+       do: current
+
+  defp refresh_applied_request_index(_previous, current) do
+    # Build only after full transition validation. The retained index is O(retained entries)
+    # memory and is omitted from persisted and peer-transfer state payloads.
+    Map.put(
+      current,
+      :applied_request_index,
+      index_applied_requests(current.log.entries, current.applied_number, %{})
+    )
+  end
+
+  defp index_applied_requests([], _applied_number, index), do: index
+
+  defp index_applied_requests([%LogEntry{op_number: op_number} | _], applied_number, index)
+       when op_number > applied_number,
+       do: index
+
+  defp index_applied_requests([entry | entries], applied_number, index) do
+    requests = Map.get(index, entry.client_id, %{})
+    requests = Map.put(requests, entry.request_number, entry.op_number)
+    index_applied_requests(entries, applied_number, Map.put(index, entry.client_id, requests))
+  end
+
+  defp assert_applied_requests_are_unique_canonical!(state) do
     applied_requests =
       state.log
       |> Log.to_list()

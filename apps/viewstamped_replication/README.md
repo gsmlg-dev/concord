@@ -129,6 +129,20 @@ transitions constant-time or introduce automatic retention. Reduction-based
 regressions cover 10,000 retained entries and compaction after a large historical
 operation number without relying on machine-specific timing deadlines.
 
+Ready singleton reads use a derived index of retained applied requests to bound
+process-heap allocation independently of log length. Each read still validates
+every retained log entry and checks each applied request against its exact indexed
+operation number. The index is untrusted: missing, malformed, or stale entries
+fall back to the complete uniqueness check, and a forged index cannot conceal
+duplicate applied requests. The returned state and read effect remain unchanged.
+
+The index takes memory proportional to retained applied requests and is rebuilt
+after validated log or applied-position changes, including recovery and snapshot
+compaction. Preparation and fallback validation can allocate in proportion to the
+log; warm reads retain linear CPU work. The index is absent from storage and wire
+payloads, so this optimization changes neither the persistence format nor quorum
+requirements.
+
 Run the explicit local-memory benchmark to compare command throughput and
 p50/p95/p99 latency across all supported cluster sizes:
 
