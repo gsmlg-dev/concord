@@ -67,6 +67,11 @@ defmodule ViewstampedReplication do
   The current primary confirms its view with a quorum before evaluating the
   read. Singleton groups satisfy that quorum locally.
 
+  A ready singleton replica evaluates the read from its exclusively owned,
+  previously validated protocol state without traversing retained log history.
+  Recovery, mutations, and other read states retain complete protocol validation.
+  State-machine query work and time waiting in the replica mailbox are separate.
+
   The `:timeout` option (default: 5000 milliseconds) bounds primary discovery,
   the quorum-confirmed read, and any redirect with one shared deadline.
   Use `:infinity` to wait without a deadline.

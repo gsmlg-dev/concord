@@ -373,6 +373,26 @@ defmodule ViewstampedReplication.Replica do
     end
   end
 
+  # Only initialization and validated Protocol.step/2 results assign protocol_state.
+  # Effects finish synchronously before the next mailbox event; failures stop the
+  # replica. This unchanged read can therefore reuse the owned state's validity.
+  # Keep the public pure-state API exhaustive: no caller-supplied flag certifies it.
+  defp run_transition(
+         %__MODULE__{
+           protocol_state: %State{
+             status: :normal,
+             replica_id: replica_id,
+             configuration: %Configuration{members: [%{id: replica_id}]},
+             applied_number: number,
+             commit_number: number,
+             applying_number: nil
+           }
+         } = state,
+         {:read_request, route, operation}
+       ) do
+    execute_effects(state, [{:read, route, operation}])
+  end
+
   defp run_transition(state, event) do
     {protocol_state, effects} = Protocol.step(state.protocol_state, event)
     execute_effects(%{state | protocol_state: protocol_state}, effects)

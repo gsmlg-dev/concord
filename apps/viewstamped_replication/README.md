@@ -129,19 +129,31 @@ transitions constant-time or introduce automatic retention. Reduction-based
 regressions cover 10,000 retained entries and compaction after a large historical
 operation number without relying on machine-specific timing deadlines.
 
-Ready singleton reads use a derived index of retained applied requests to bound
-process-heap allocation independently of log length. Each read still validates
-every retained log entry and checks each applied request against its exact indexed
-operation number. The index is untrusted: missing, malformed, or stale entries
-fall back to the complete uniqueness check, and a forged index cannot conceal
-duplicate applied requests. The returned state and read effect remain unchanged.
+Public runtime reads on a ready singleton avoid retained-history traversal.
+The replica process exclusively owns its immutable protocol state: initialization
+starts recovering, and every state-changing event passes the complete protocol
+validation before synchronous effects finish. A normal singleton with all
+committed operations applied and no apply in progress can therefore interpret
+the existing read effect without revalidating unchanged state. No validation
+flag or caller-provided certificate is trusted. Recovery, snapshots, mutations,
+heartbeats, not-ready states, and multi-member quorum reads retain the validated
+protocol path. The optimization requires no snapshot or log compaction.
+
+The pure `Protocol.step/2` API accepts caller-constructed state and remains
+exhaustive. Its ready singleton reads use a derived index to bound process-heap
+allocation, but still validate every retained log entry and each applied request's
+exact indexed operation number. Missing, malformed, or stale indexes fall back
+to the complete uniqueness check; forged metadata cannot conceal duplicates.
+Administrative `:sys.replace_state/2` calls and direct OTP callback invocation
+bypass runtime state ownership and are not supported protocol-state ingress.
 
 The index takes memory proportional to retained applied requests and is rebuilt
 after validated log or applied-position changes, including recovery and snapshot
 compaction. Preparation and fallback validation can allocate in proportion to the
-log; warm reads retain linear CPU work. The index is absent from storage and wire
-payloads, so this optimization changes neither the persistence format nor quorum
-requirements.
+log; pure-state reads retain linear CPU work. The index is absent from storage and
+wire payloads. Runtime singleton protocol work is bounded independently of retained
+history; state-machine query work and waiting behind other mailbox events remain
+separate costs. Persistence formats and quorum requirements are unchanged.
 
 Run the explicit local-memory benchmark to compare command throughput and
 p50/p95/p99 latency across all supported cluster sizes:
