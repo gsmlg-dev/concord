@@ -163,6 +163,7 @@ defmodule Concord.StateMachine.Core do
   defp incremental_command?({:put_if, _, _, _, _}), do: true
   defp incremental_command?({:delete_if, _, _, _}), do: true
   defp incremental_command?({:touch, _, _}), do: true
+  defp incremental_command?({:txn, spec}) when is_map(spec), do: true
   defp incremental_command?(_command), do: false
 
   defp track_change(state, table, key) do
@@ -1957,6 +1958,11 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp delete_history(state, key, revision) do
+    state =
+      if Map.has_key?(state.history, {key, revision}),
+        do: track_change(state, :history, {key, revision}),
+        else: state
+
     history_keys =
       case :gb_trees.lookup(key, state.history_keys) do
         :none ->
@@ -2369,10 +2375,7 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp execute_txn_legacy({:delete, selector, opts}, state, revision, _context) do
-    keys =
-      state.current
-      |> Map.keys()
-      |> Enum.filter(&selector_match?(selector, &1))
+    keys = txn_delete_keys(selector, state.current)
 
     {previous_records, state} =
       Enum.reduce(keys, {[], state}, fn key, {records, acc} ->
@@ -2442,9 +2445,8 @@ defmodule Concord.StateMachine.Core do
 
   defp execute_txn({:delete, selector, opts}, state, revision, _context) do
     keys =
-      state.current
-      |> Map.keys()
-      |> Enum.filter(&selector_match?(selector, &1))
+      selector
+      |> txn_delete_keys(state.current)
       |> Enum.sort()
 
     {previous_records, state} =
@@ -2481,6 +2483,17 @@ defmodule Concord.StateMachine.Core do
 
   defp execute_txn(_operation, state, _revision, _context) do
     {{:error, :unsupported_op}, state}
+  end
+
+  # Legacy nonbinary selectors retain == matching, including both 1 and 1.0.
+  defp txn_delete_keys({:key, key}, current) when is_binary(key) do
+    if Map.has_key?(current, key), do: [key], else: []
+  end
+
+  defp txn_delete_keys(selector, current) do
+    current
+    |> Map.keys()
+    |> Enum.filter(&selector_match?(selector, &1))
   end
 
   defp execute_txn_get({:key, key} = selector, _opts, state, context, _representation) do
