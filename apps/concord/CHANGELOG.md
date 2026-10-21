@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.5] - 2026-10-22
+
+### Fixed
+- Track affected compatibility ETS rows and observer records for atomic
+  transactions, including selected branches, history deletion, leases, indexes,
+  and idempotent outcomes. Use direct lookup for binary exact-key transaction
+  deletes while preserving legacy selector equality and transaction semantics.
+  Version-one representation admission and range/fanout/cache work retain their
+  existing costs.
+- Avoid retained-log traversal for ready singleton reads in the runtime that
+  exclusively owns previously validated protocol state. Preserve complete
+  validation for mutations, recovery, snapshots, non-ready states, multi-member
+  reads, and caller-constructed states passed to the pure protocol API. No
+  snapshot, compaction, persistence-format, or quorum change is required.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.5.
+
 ## [3.1.4] - 2026-10-20
 
 ### Fixed
