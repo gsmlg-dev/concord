@@ -1,7 +1,7 @@
 defmodule ViewstampedReplication.BoundedRuntimeReadTest do
   use ExUnit.Case, async: false
 
-  alias ViewstampedReplication.{Client, Configuration, Member, Protocol, Replica}
+  alias ViewstampedReplication.{Client, Configuration, Log, Member, Protocol, Replica}
 
   defmodule MapStateMachine do
     @behaviour ViewstampedReplication.StateMachine
@@ -57,7 +57,7 @@ defmodule ViewstampedReplication.BoundedRuntimeReadTest do
         assert after_read.protocol_state.commit_number == last
         assert after_read.protocol_state.applied_number == last
         assert after_read.protocol_state.log.base_op_number == 0
-        assert length(after_read.protocol_state.log.entries) == last
+        assert length(Log.to_list(after_read.protocol_state.log)) == last
 
         %{entries: last, reductions: Enum.sort(samples), protocol_reads: protocol_reads}
       end

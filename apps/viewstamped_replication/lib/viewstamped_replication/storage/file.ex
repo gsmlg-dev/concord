@@ -130,7 +130,8 @@ defmodule ViewstampedReplication.Storage.File do
     with {:ok, memory} <- apply_operation_safely(state.memory, operation),
          updated = %{state | memory: memory, sequence: next_sequence},
          {:ok, wal_record} <- encode({next_sequence, operation}, state.write_version),
-         {:ok, checkpoint} <- encode({next_sequence, memory}, state.write_version),
+         {:ok, checkpoint} <-
+           encode({next_sequence, Memory.canonical(memory)}, state.write_version),
          :ok <- append_record(state.wal_path, wal_record),
          :ok <- write_checkpoint(updated, checkpoint) do
       {:ok, updated}
@@ -199,7 +200,7 @@ defmodule ViewstampedReplication.Storage.File do
   end
 
   defp write_checkpoint(state) do
-    payload = {state.sequence, state.memory}
+    payload = {state.sequence, Memory.canonical(state.memory)}
 
     with {:ok, encoded} <- encode(payload, state.write_version),
          :ok <- write_checkpoint(state, encoded) do

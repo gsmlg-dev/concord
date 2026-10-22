@@ -341,25 +341,26 @@ defmodule ViewstampedReplication.StorageTest do
     checkpoint_path = Path.join(tmp_dir, "checkpoint.vsr")
 
     assert {:ok, storage} = File.open(opts)
+    canonical_memory = Memory.canonical(storage.memory)
 
     Elixir.File.write!(checkpoint_path, frame_term(:not_a_checkpoint, 2))
     assert {:error, {:invalid_checkpoint, :invalid_checkpoint_structure}} = File.recover(storage)
 
-    missing_log = Map.delete(storage.memory, :log)
+    missing_log = Map.delete(canonical_memory, :log)
     Elixir.File.write!(checkpoint_path, frame_term({0, missing_log}, 2))
     assert {:error, {:invalid_checkpoint, :invalid_checkpoint_structure}} = File.recover(storage)
 
-    invalid_memory = %{storage.memory | commit_number: 1}
+    invalid_memory = %{canonical_memory | commit_number: 1}
     Elixir.File.write!(checkpoint_path, frame_term({0, invalid_memory}, 2))
 
     assert {:error, {:invalid_checkpoint, :invalid_checkpoint_commit_number}} =
              File.recover(storage)
 
-    invalid_log_memory = %{storage.memory | log: %Log{base_op_number: :invalid, entries: []}}
+    invalid_log_memory = %{canonical_memory | log: %Log{base_op_number: :invalid, entries: []}}
     Elixir.File.write!(checkpoint_path, frame_term({0, invalid_log_memory}, 2))
     assert {:error, {:invalid_checkpoint, :invalid_checkpoint_log}} = File.recover(storage)
 
-    Elixir.File.write!(checkpoint_path, frame_term({1, storage.memory}, 2))
+    Elixir.File.write!(checkpoint_path, frame_term({1, canonical_memory}, 2))
 
     assert {:error, {:invalid_checkpoint, {:sequence_ahead_of_wal, 1, 0}}} =
              File.recover(storage)
@@ -418,7 +419,7 @@ defmodule ViewstampedReplication.StorageTest do
     assert {:ok, storage} = File.open(opts)
 
     for version <- [1, 2] do
-      complete = frame_term({0, storage.memory}, version)
+      complete = frame_term({0, Memory.canonical(storage.memory)}, version)
       incomplete = binary_part(complete, 0, byte_size(complete) - 1)
       Elixir.File.write!(checkpoint_path, incomplete)
 
@@ -684,7 +685,7 @@ defmodule ViewstampedReplication.StorageTest do
     assert {:ok, reopened} = File.open(opts)
     assert {:ok, recovered, _reopened} = File.recover(reopened)
     assert recovered.snapshot == previous_snapshot
-    assert recovered.log == storage.memory.log
+    assert recovered.log == Log.canonical(storage.memory.log)
   end
 
   @tag :tmp_dir

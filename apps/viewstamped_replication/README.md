@@ -121,39 +121,51 @@ retained committed entries, including metadata changes. Snapshot-compacted
 positions retain their existing snapshot trust boundary; quorum rules are
 unchanged.
 
-The complete protocol invariant check remains linear in retained log size:
-it validates contiguity and the uniqueness of retained applied requests. Log
-append and indexed fetch also remain linear with the current list representation.
-This removes quadratic committed-prefix validation, but does not make protocol
-transitions constant-time or introduce automatic retention. Reduction-based
-regressions cover 10,000 retained entries and compaction after a large historical
-operation number without relying on machine-specific timing deadlines.
+The public pure `Protocol.step/2` API accepts caller-constructed states and
+remains exhaustive. It validates retained log contiguity, applied-request
+uniqueness, and committed-prefix preservation. Its ready singleton reads use an
+untrusted derived index to bound process-heap allocation, but still check every
+retained entry's exact indexed operation number. Missing, malformed, or stale
+indexes fall back to the complete uniqueness check; forged metadata cannot
+conceal duplicates. Pure transitions retain linear history validation and list
+append/fetch costs. Constructing a canonical log from a list now validates it in
+one pass.
 
-Public runtime reads on a ready singleton avoid retained-history traversal.
-The replica process exclusively owns its immutable protocol state: initialization
-starts recovering, and every state-changing event passes the complete protocol
-validation before synchronous effects finish. A normal singleton with all
-committed operations applied and no apply in progress can therefore interpret
-the existing read effect without revalidating unchanged state. No validation
-flag or caller-provided certificate is trusted. Recovery, snapshots, mutations,
-heartbeats, not-ready states, and multi-member quorum reads retain the validated
-protocol path. The optimization requires no snapshot or log compaction.
+The supervised replica owns an event-only transition closure. Its initial state
+receives full validation and a freshly built applied-request index; callers
+cannot substitute state or supply a validation flag. Ready singleton writes use
+immutable indexed logs and update only the new applied request's index entry.
+The existing protocol handlers still produce the ordered append, commit, apply,
+applied-state persistence, and reply effects. Scalar and changed-entry checks
+preserve their operation-number and duplicate-request invariants without
+revisiting unrelated committed history. Exact retries reuse their recorded
+result. Ready singleton reads reuse the unchanged owned state's validity.
 
-The pure `Protocol.step/2` API accepts caller-constructed state and remains
-exhaustive. Its ready singleton reads use a derived index to bound process-heap
-allocation, but still validate every retained log entry and each applied request's
-exact indexed operation number. Missing, malformed, or stale indexes fall back
-to the complete uniqueness check; forged metadata cannot conceal duplicates.
-Administrative `:sys.replace_state/2` calls and direct OTP callback invocation
-bypass runtime state ownership and are not supported protocol-state ingress.
+The write path applies to normal singleton replicas with all previous operations
+committed and applied, and their exact subsequent application acknowledgement.
+Recovery, snapshots, peer events, view changes, non-ready states, and multi-member
+paths convert to the canonical representation and use the exhaustive protocol
+kernel. Administrative `:sys.replace_state/2` calls and direct OTP callback
+invocation bypass runtime state ownership and are not supported protocol-state
+ingress.
 
-The index takes memory proportional to retained applied requests and is rebuilt
-after validated log or applied-position changes, including recovery and snapshot
-compaction. Preparation and fallback validation can allocate in proportion to the
-log; pure-state reads retain linear CPU work. The index is absent from storage and
-wire payloads. Runtime singleton protocol work is bounded independently of retained
-history; state-machine query work and waiting behind other mailbox events remain
-separate costs. Persistence formats and quorum requirements are unchanged.
+The private indexed log and applied-request index occupy memory proportional to
+retained history. Immutable map insertion and lookup replace full-list copying
+and scans on ordinary runtime writes; they do not imply literal constant-time
+map work or automatic retention. Built-in Memory storage and File storage's
+in-memory mirror also use indexed logs. Recovery results, wire/state-transfer
+payloads, and both File checkpoint writers retain canonical ordered-list logs.
+WAL operations, checkpoint formats, quorum requirements, and rollback
+compatibility are unchanged. Snapshot and recovery boundaries may rebuild these
+private representations in proportion to retained history.
+
+The ordinary singleton runtime path therefore avoids history-wide protocol and
+built-in storage-mirror work without requiring compaction. The original pure
+protocol diagnostic still has linear CPU work because its arbitrary input state
+must be checked on every call. State-machine admission/materialization, fsync,
+network latency, multi-member quorum work, and mailbox waiting remain separate
+costs. Reduction-based runtime regressions retain 1,000/2,000/4,000 entries and
+trace history-validation functions separately from their timing samples.
 
 Run the explicit local-memory benchmark to compare command throughput and
 p50/p95/p99 latency across all supported cluster sizes:

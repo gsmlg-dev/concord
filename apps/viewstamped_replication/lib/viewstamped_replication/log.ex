@@ -4,6 +4,7 @@ defmodule ViewstampedReplication.Log do
   """
 
   alias ViewstampedReplication.LogEntry
+  alias ViewstampedReplication.Log.Indexed
 
   defstruct base_op_number: 0, entries: []
 
@@ -11,6 +12,8 @@ defmodule ViewstampedReplication.Log do
           base_op_number: non_neg_integer(),
           entries: [LogEntry.t()]
         }
+
+  @type runtime_log :: t() | Indexed.t()
 
   @spec new() :: t()
   def new, do: %__MODULE__{}
@@ -23,16 +26,54 @@ defmodule ViewstampedReplication.Log do
   @spec new(non_neg_integer(), [LogEntry.t()]) :: {:ok, t()} | {:error, term()}
   def new(base_op_number, entries)
       when is_integer(base_op_number) and base_op_number >= 0 and is_list(entries) do
-    Enum.reduce_while(entries, {:ok, %__MODULE__{base_op_number: base_op_number}}, fn
-      entry, {:ok, log} ->
-        case append(log, entry) do
-          {:ok, updated_log} -> {:cont, {:ok, updated_log}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-    end)
+    with :ok <- validate_entries(entries, base_op_number + 1) do
+      {:ok, %__MODULE__{base_op_number: base_op_number, entries: entries}}
+    end
   end
 
-  @spec append(t(), LogEntry.t()) :: {:ok, t()} | {:error, term()}
+  @doc false
+  @spec indexed(t()) :: Indexed.t()
+  def indexed(%__MODULE__{base_op_number: base, entries: entries}) do
+    %Indexed{
+      base_op_number: base,
+      last_op_number: base + length(entries),
+      entries: Map.new(entries, &{&1.op_number, &1})
+    }
+  end
+
+  @doc false
+  @spec canonical(runtime_log()) :: t()
+  def canonical(%__MODULE__{} = log), do: log
+
+  def canonical(%Indexed{base_op_number: base, last_op_number: last, entries: entries}) do
+    valid? =
+      is_integer(base) and base >= 0 and is_integer(last) and last >= base and
+        is_map(entries) and map_size(entries) == last - base and
+        Enum.all?(entries, fn
+          {position, %LogEntry{op_number: position}} ->
+            is_integer(position) and position > base and position <= last
+
+          _entry ->
+            false
+        end)
+
+    unless valid?, do: raise(ArgumentError, "invalid indexed log")
+
+    %__MODULE__{
+      base_op_number: base,
+      entries: for(position <- (base + 1)..last//1, do: Map.fetch!(entries, position))
+    }
+  end
+
+  @spec append(runtime_log(), LogEntry.t()) :: {:ok, runtime_log()} | {:error, term()}
+  def append(%Indexed{last_op_number: last} = log, %LogEntry{op_number: op_number} = entry) do
+    if op_number == last + 1 do
+      {:ok, %{log | last_op_number: op_number, entries: Map.put(log.entries, op_number, entry)}}
+    else
+      {:error, {:non_contiguous_op_number, last + 1, op_number}}
+    end
+  end
+
   def append(%__MODULE__{} = log, %LogEntry{op_number: op_number} = entry) do
     expected_op_number = last_op_number(log) + 1
 
@@ -43,15 +84,20 @@ defmodule ViewstampedReplication.Log do
     end
   end
 
-  @spec append!(t(), LogEntry.t()) :: t()
-  def append!(%__MODULE__{} = log, %LogEntry{} = entry) do
+  @spec append!(runtime_log(), LogEntry.t()) :: runtime_log()
+  def append!(log, %LogEntry{} = entry) do
     case append(log, entry) do
       {:ok, updated_log} -> updated_log
       {:error, reason} -> raise ArgumentError, "cannot append log entry: #{inspect(reason)}"
     end
   end
 
-  @spec fetch(t(), pos_integer()) :: {:ok, LogEntry.t()} | :compacted | :error
+  @spec fetch(runtime_log(), pos_integer()) :: {:ok, LogEntry.t()} | :compacted | :error
+  def fetch(%Indexed{base_op_number: base, entries: entries}, op_number)
+      when is_integer(op_number) and op_number > 0 do
+    if op_number <= base, do: :compacted, else: Map.fetch(entries, op_number)
+  end
+
   def fetch(%__MODULE__{base_op_number: base, entries: entries}, op_number)
       when is_integer(op_number) and op_number > 0 do
     case op_number do
@@ -60,8 +106,8 @@ defmodule ViewstampedReplication.Log do
     end
   end
 
-  @spec fetch!(t(), pos_integer()) :: LogEntry.t()
-  def fetch!(%__MODULE__{} = log, op_number) do
+  @spec fetch!(runtime_log(), pos_integer()) :: LogEntry.t()
+  def fetch!(log, op_number) do
     case fetch(log, op_number) do
       {:ok, entry} -> entry
       :compacted -> raise KeyError, key: op_number, term: log
@@ -69,10 +115,13 @@ defmodule ViewstampedReplication.Log do
     end
   end
 
-  @spec last(t()) :: LogEntry.t() | nil
+  @spec last(runtime_log()) :: LogEntry.t() | nil
+  def last(%Indexed{last_op_number: last, entries: entries}), do: Map.get(entries, last)
   def last(%__MODULE__{entries: entries}), do: List.last(entries)
 
-  @spec last_op_number(t()) :: non_neg_integer()
+  @spec last_op_number(runtime_log()) :: non_neg_integer()
+  def last_op_number(%Indexed{last_op_number: last}), do: last
+
   def last_op_number(%__MODULE__{base_op_number: base_op_number} = log) do
     case last(log) do
       nil -> base_op_number
@@ -80,22 +129,33 @@ defmodule ViewstampedReplication.Log do
     end
   end
 
-  @spec to_list(t()) :: [LogEntry.t()]
+  @spec to_list(runtime_log()) :: [LogEntry.t()]
+  def to_list(%Indexed{} = log), do: canonical(log).entries
   def to_list(%__MODULE__{entries: entries}), do: entries
 
-  @spec suffix(t(), non_neg_integer()) :: [LogEntry.t()]
+  @spec suffix(runtime_log(), non_neg_integer()) :: [LogEntry.t()]
+  def suffix(%Indexed{} = log, after_op_number), do: suffix(canonical(log), after_op_number)
+
   def suffix(%__MODULE__{base_op_number: base, entries: entries}, after_op_number)
       when is_integer(after_op_number) and after_op_number >= 0 do
     Enum.drop(entries, max(after_op_number - base, 0))
   end
 
-  @spec truncate_suffix(t(), non_neg_integer()) :: t()
+  @spec truncate_suffix(runtime_log(), non_neg_integer()) :: runtime_log()
+  def truncate_suffix(%Indexed{} = log, last_op_number),
+    do: log |> canonical() |> truncate_suffix(last_op_number) |> indexed()
+
   def truncate_suffix(%__MODULE__{base_op_number: base, entries: entries} = log, last_op_number)
       when is_integer(last_op_number) and last_op_number >= 0 do
     %{log | entries: Enum.take(entries, max(last_op_number - base, 0))}
   end
 
-  @spec compact(t(), non_neg_integer()) :: {:ok, t()} | {:error, term()}
+  @spec compact(runtime_log(), non_neg_integer()) :: {:ok, runtime_log()} | {:error, term()}
+  def compact(%Indexed{} = log, through_op_number) do
+    with {:ok, compacted} <- compact(canonical(log), through_op_number),
+         do: {:ok, indexed(compacted)}
+  end
+
   def compact(%__MODULE__{base_op_number: base} = log, through_op_number)
       when is_integer(through_op_number) and through_op_number >= 0 do
     cond do
@@ -114,6 +174,16 @@ defmodule ViewstampedReplication.Log do
          }}
     end
   end
+
+  defp validate_entries([], _expected), do: :ok
+
+  defp validate_entries([%LogEntry{op_number: expected} | entries], expected),
+    do: validate_entries(entries, expected + 1)
+
+  defp validate_entries([%LogEntry{op_number: actual} | _entries], expected),
+    do: {:error, {:non_contiguous_op_number, expected, actual}}
+
+  defp validate_entries([entry | _entries], _expected), do: {:error, {:invalid_log_entry, entry}}
 
   defp fetch_entry(entries, op_number) do
     case entries do

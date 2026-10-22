@@ -8,6 +8,7 @@ defmodule ViewstampedReplication.Protocol do
   """
 
   alias ViewstampedReplication.{Configuration, Log, LogEntry, Reply, Request}
+  alias ViewstampedReplication.Log.Indexed
 
   alias ViewstampedReplication.Protocol.{
     Commit,
@@ -32,6 +33,7 @@ defmodule ViewstampedReplication.Protocol do
 
   @spec step(State.t(), Event.t()) :: {State.t(), [Effect.t()]}
   def step(%State{} = state, event) do
+    state = canonical_state(state)
     assert_invariants!(state)
     validate_event!(event)
     checked_step(state, event)
@@ -58,7 +60,136 @@ defmodule ViewstampedReplication.Protocol do
     {refresh_applied_request_index(state, next_state), effects}
   end
 
+  @doc false
+  @spec runtime(State.t()) :: {State.t(), function()}
+  def runtime(%State{} = state) do
+    state = state |> canonical_state() |> assert_invariants!() |> runtime_state()
+    {state, advance_runtime(state)}
+  end
+
+  # The event-only closure owns the validated immutable state. It never accepts
+  # replacement state or a caller-supplied validation certificate. Cold events
+  # return through the exhaustive public kernel before becoming owned again.
+  defp advance_runtime(state) do
+    fn event ->
+      validate_event!(event)
+      {next, effects} = runtime_step(state, event)
+      {next, effects, advance_runtime(next)}
+    end
+  end
+
+  defp runtime_step(
+         %State{
+           status: :normal,
+           replica_id: replica_id,
+           configuration: %Configuration{members: [%{id: replica_id}]},
+           op_number: number,
+           commit_number: number,
+           applied_number: number,
+           applying_number: nil
+         } = state,
+         {:client_request, route, %Request{} = request}
+       ) do
+    {next, effects} = handle_client_request(state, route, request)
+    assert_runtime_base!(state, next)
+    assert!(next.applied_number == number, :invalid_operation_numbers)
+
+    case next.op_number do
+      ^number ->
+        assert!(
+          next.commit_number == number and is_nil(next.applying_number),
+          :invalid_operation_numbers
+        )
+
+      appended when appended == number + 1 ->
+        assert!(
+          next.commit_number == appended and next.applying_number == appended,
+          :invalid_operation_numbers
+        )
+
+        entry = Log.fetch!(next.log, appended)
+
+        assert!(
+          entry.client_id == request.client_id and entry.request_number == request.request_number,
+          :invalid_appended_request
+        )
+
+      _other ->
+        assert!(false, :invalid_operation_numbers)
+    end
+
+    {next, effects}
+  end
+
+  defp runtime_step(
+         %State{
+           status: :normal,
+           replica_id: replica_id,
+           configuration: %Configuration{members: [%{id: replica_id}]},
+           op_number: number,
+           commit_number: number,
+           applying_number: number,
+           applied_number: applied
+         } = state,
+         {:state_machine_applied, number, result}
+       )
+       when number == applied + 1 do
+    entry = Log.fetch!(state.log, number)
+    requests = Map.get(state.applied_request_index, entry.client_id, %{})
+
+    assert!(
+      not Map.has_key?(requests, entry.request_number),
+      :client_request_applied_more_than_once
+    )
+
+    {next, effects} = handle_applied(state, number, result)
+    assert_runtime_base!(state, next)
+
+    assert!(
+      next.op_number == number and next.commit_number == number and
+        next.applied_number == number and is_nil(next.applying_number),
+      :invalid_operation_numbers
+    )
+
+    requests = Map.put(requests, entry.request_number, number)
+    index = Map.put(state.applied_request_index, entry.client_id, requests)
+    {%{next | applied_request_index: index}, effects}
+  end
+
+  defp runtime_step(state, event) do
+    {next, effects} = step(canonical_state(state), event)
+    {runtime_state(next), effects}
+  end
+
+  # Shared handlers append without replacing any old indexed entry, and the
+  # acknowledgement handler never changes the log. Validate the changed scalar
+  # facts instead of comparing whole immutable logs or revisiting their prefix.
+  defp assert_runtime_base!(previous, current) do
+    assert!(current.status == :normal, :invalid_status)
+    assert!(current.view_number == previous.view_number, :view_number_changed)
+    assert!(current.last_normal_view == previous.last_normal_view, :last_normal_view_changed)
+    assert!(current.snapshot_op_number == previous.snapshot_op_number, :log_snapshot_mismatch)
+    assert!(current.log.base_op_number == previous.log.base_op_number, :log_snapshot_mismatch)
+    assert!(Log.last_op_number(current.log) == current.op_number, :log_op_number_mismatch)
+  end
+
+  defp runtime_state(state) do
+    %{
+      state
+      | log: Log.indexed(state.log),
+        applied_request_index:
+          index_applied_requests(state.log.entries, state.applied_number, %{})
+    }
+  end
+
+  defp canonical_state(%State{} = state), do: %{state | log: Log.canonical(state.log)}
+
   @spec assert_invariants!(State.t()) :: State.t()
+  def assert_invariants!(%State{log: %Indexed{}} = state) do
+    assert_invariants!(canonical_state(state))
+    state
+  end
+
   def assert_invariants!(%State{} = state) do
     assert!(state.status in [:normal, :view_change, :recovering], :invalid_status)
     assert_non_negative!(state.view_number, :view_number)
@@ -85,12 +216,15 @@ defmodule ViewstampedReplication.Protocol do
 
   @spec assert_transition!(State.t(), State.t()) :: State.t()
   def assert_transition!(%State{} = previous, %State{} = current) do
+    original = current
+    previous = canonical_state(previous)
+    current = canonical_state(current)
     assert_invariants!(current)
     assert!(current.view_number >= previous.view_number, :view_number_decreased)
     assert!(current.commit_number >= previous.commit_number, :commit_number_decreased)
     assert!(current.applied_number >= previous.applied_number, :applied_number_decreased)
     assert_committed_prefix!(previous, current)
-    current
+    original
   end
 
   defp transition(state, {:client_request, route, %Request{} = request}),

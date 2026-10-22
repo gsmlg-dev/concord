@@ -26,6 +26,7 @@ defmodule ViewstampedReplication.Replica do
   @enforce_keys [
     :configuration,
     :protocol_state,
+    :protocol_advance,
     :state_machine,
     :state_machine_state,
     :storage,
@@ -36,6 +37,7 @@ defmodule ViewstampedReplication.Replica do
   defstruct [
     :configuration,
     :protocol_state,
+    :protocol_advance,
     :state_machine,
     :state_machine_state,
     :storage,
@@ -223,9 +225,12 @@ defmodule ViewstampedReplication.Replica do
 
       register_endpoint(configuration)
 
+      {protocol_state, protocol_advance} = Protocol.runtime(State.new(configuration))
+
       state = %__MODULE__{
         configuration: configuration,
-        protocol_state: State.new(configuration),
+        protocol_state: protocol_state,
+        protocol_advance: protocol_advance,
         state_machine: state_machine,
         state_machine_state: state_machine_state,
         storage: storage,
@@ -373,7 +378,7 @@ defmodule ViewstampedReplication.Replica do
     end
   end
 
-  # Only initialization and validated Protocol.step/2 results assign protocol_state.
+  # Only initialization and the event-only protocol closure assign protocol_state.
   # Effects finish synchronously before the next mailbox event; failures stop the
   # replica. This unchanged read can therefore reuse the owned state's validity.
   # Keep the public pure-state API exhaustive: no caller-supplied flag certifies it.
@@ -394,8 +399,14 @@ defmodule ViewstampedReplication.Replica do
   end
 
   defp run_transition(state, event) do
-    {protocol_state, effects} = Protocol.step(state.protocol_state, event)
-    execute_effects(%{state | protocol_state: protocol_state}, effects)
+    {protocol_state, effects, protocol_advance} = state.protocol_advance.(event)
+
+    # An apply effect re-enters here synchronously, so publish the next closure
+    # together with its state before interpreting any effect.
+    execute_effects(
+      %{state | protocol_state: protocol_state, protocol_advance: protocol_advance},
+      effects
+    )
   end
 
   defp execute_effects(state, effects) do

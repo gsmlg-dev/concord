@@ -17,7 +17,7 @@ defmodule ViewstampedReplication.Protocol.State do
           op_number: non_neg_integer(),
           commit_number: non_neg_integer(),
           applied_number: non_neg_integer(),
-          log: Log.t(),
+          log: Log.runtime_log(),
           client_table: map(),
           applied_request_index: map() | nil,
           prepare_acks: map(),

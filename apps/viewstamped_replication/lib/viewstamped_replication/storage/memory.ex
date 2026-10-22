@@ -6,6 +6,7 @@ defmodule ViewstampedReplication.Storage.Memory do
   @behaviour ViewstampedReplication.Storage
 
   alias ViewstampedReplication.{Log, LogEntry, Storage}
+  alias ViewstampedReplication.Log.Indexed
 
   @enforce_keys [:configuration_hash, :replica_id]
   defstruct [
@@ -26,7 +27,8 @@ defmodule ViewstampedReplication.Storage.Memory do
       {:ok,
        %__MODULE__{
          configuration_hash: configuration_hash,
-         replica_id: replica_id
+         replica_id: replica_id,
+         log: Log.indexed(Log.new())
        }}
     else
       :error -> {:error, :storage_identity_required}
@@ -35,12 +37,20 @@ defmodule ViewstampedReplication.Storage.Memory do
 
   @impl true
   def recover(%__MODULE__{} = state) do
-    recovered = recovered(state)
+    canonical = canonical(state)
+    recovered = recovered(canonical)
 
     with :ok <- Storage.validate_recovered(recovered) do
-      {:ok, recovered, state}
+      {:ok, recovered, %{state | log: Log.indexed(canonical.log)}}
     end
+  rescue
+    _error in [ArgumentError, FunctionClauseError] ->
+      {:error, {:invalid_recovered_state, :invalid_log}}
   end
+
+  @doc false
+  @spec canonical(%__MODULE__{}) :: %__MODULE__{}
+  def canonical(%__MODULE__{} = state), do: %{state | log: Log.canonical(state.log)}
 
   @impl true
   def persist_hard_state(%__MODULE__{} = state, hard_state) when is_map(hard_state),
@@ -50,7 +60,7 @@ defmodule ViewstampedReplication.Storage.Memory do
   def append(%__MODULE__{} = state, %LogEntry{} = entry), do: append(state, [entry])
 
   def append(%__MODULE__{} = state, entries) when is_list(entries) do
-    with {:ok, log} <- append_entries(state.log, entries) do
+    with {:ok, log} <- append_entries(indexed_log(state.log), entries) do
       {:ok, %{state | log: log}}
     end
   end
@@ -135,7 +145,7 @@ defmodule ViewstampedReplication.Storage.Memory do
        %{
          state
          | hard_state: hard_state,
-           log: log,
+           log: Log.indexed(log),
            commit_number: commit_number,
            applied_number: applied_number,
            client_table: Map.get(durable_state, :client_table, %{})
@@ -174,4 +184,7 @@ defmodule ViewstampedReplication.Storage.Memory do
 
   defp validate_log(%Log{base_op_number: base, entries: entries}),
     do: Log.new(base, entries)
+
+  defp indexed_log(%Indexed{} = log), do: log
+  defp indexed_log(%Log{} = log), do: Log.indexed(log)
 end
