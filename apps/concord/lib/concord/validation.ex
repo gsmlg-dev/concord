@@ -9,6 +9,7 @@ defmodule Concord.Validation do
 
   alias Concord.CommandSchema
   alias Concord.Compression
+  alias Concord.Engine
   alias Concord.KV.Selector
 
   @max_depth 100
@@ -37,14 +38,18 @@ defmodule Concord.Validation do
   but never raise, the immutable version-one protocol maximum. Size is
   measured from the logical Erlang term, so compression settings cannot alter
   whether the value is admitted.
+
+  An explicitly selected in-memory Local engine also accepts PIDs in values.
+  Every other engine retains deterministic term validation.
   """
-  @spec validate_value(term()) :: :ok | {:error, atom()}
-  def validate_value(value) do
+  @spec validate_value(term(), keyword()) :: :ok | {:error, atom()}
+  def validate_value(value, opts \\ []) do
     max = max_value_bytes()
+    local? = Engine.engine(opts) == Concord.Engine.Local
 
     with {:ok, _size} <- CommandSchema.raw_external_size_v1(value, max),
          {:ok, _size} <- CommandSchema.logical_external_size_v1(value, max),
-         :ok <- validate_term(value) do
+         :ok <- walk(value, 0, @max_depth, local?) do
       :ok
     else
       {:error, reason} when reason in [:size_limit, :value_too_large] ->
@@ -92,70 +97,72 @@ defmodule Concord.Validation do
   """
   @spec validate_term(term(), non_neg_integer()) :: :ok | {:error, atom()}
   def validate_term(term, max_depth \\ @max_depth) do
-    walk(term, 0, max_depth)
+    walk(term, 0, max_depth, false)
   end
 
-  defp walk(_term, depth, max_depth) when depth > max_depth do
+  defp walk(_term, depth, max_depth, _local?) when depth > max_depth do
     {:error, :depth_exceeded}
   end
 
-  defp walk(term, _depth, _max_depth) when is_function(term) do
+  defp walk(term, _depth, _max_depth, _local?) when is_function(term) do
     {:error, :function_in_spec}
   end
 
-  defp walk(term, _depth, _max_depth) when is_pid(term) do
+  defp walk(term, _depth, _max_depth, true) when is_pid(term), do: :ok
+
+  defp walk(term, _depth, _max_depth, false) when is_pid(term) do
     {:error, :pid_in_spec}
   end
 
-  defp walk(term, _depth, _max_depth) when is_reference(term) do
+  defp walk(term, _depth, _max_depth, _local?) when is_reference(term) do
     {:error, :ref_in_spec}
   end
 
-  defp walk(term, _depth, _max_depth) when is_port(term) do
+  defp walk(term, _depth, _max_depth, _local?) when is_port(term) do
     {:error, :port_in_spec}
   end
 
   # Atoms, numbers, and bitstrings are always safe. The bitstring guard keeps
   # non-byte-aligned bitstrings valid as well as ordinary binaries.
-  defp walk(term, _depth, _max_depth)
+  defp walk(term, _depth, _max_depth, _local?)
        when is_atom(term) or is_number(term) or is_bitstring(term) do
     :ok
   end
 
-  defp walk([], _depth, _max_depth), do: :ok
+  defp walk([], _depth, _max_depth, _local?), do: :ok
 
   # Match cons cells instead of guarding with is_list/1 so improper-list tails
   # cannot bypass validation. List length does not count as nesting depth.
-  defp walk([head | tail], depth, max_depth) do
-    with :ok <- walk(head, depth + 1, max_depth) do
-      walk_list_tail(tail, depth, max_depth)
+  defp walk([head | tail], depth, max_depth, local?) do
+    with :ok <- walk(head, depth + 1, max_depth, local?) do
+      walk_list_tail(tail, depth, max_depth, local?)
     end
   end
 
-  defp walk({:compressed, algorithm, compressed_binary} = compressed, depth, max_depth)
+  defp walk({:compressed, algorithm, compressed_binary} = compressed, depth, max_depth, local?)
        when algorithm in [:zlib, :gzip, :none] and is_binary(compressed_binary) do
     with {:ok, value} <- Compression.safe_decompress(compressed) do
-      walk(value, depth + 1, max_depth)
+      walk(value, depth + 1, max_depth, local?)
     end
   end
 
-  defp walk(tuple, _depth, _max_depth)
+  defp walk(tuple, _depth, _max_depth, _local?)
        when is_tuple(tuple) and tuple_size(tuple) > 0 and elem(tuple, 0) == :compressed do
     {:error, :invalid_compressed_value}
   end
 
-  defp walk(tuple, depth, max_depth) when is_tuple(tuple) do
+  defp walk(tuple, depth, max_depth, local?) when is_tuple(tuple) do
     tuple
     |> Tuple.to_list()
-    |> walk(depth + 1, max_depth)
+    |> walk(depth + 1, max_depth, local?)
   end
 
-  defp walk(map, depth, max_depth) when is_map(map) do
+  defp walk(map, depth, max_depth, local?) when is_map(map) do
     map
     |> Map.to_list()
     |> Enum.reduce_while(:ok, fn {key, value}, :ok ->
-      with :ok <- walk(key, depth + 1, max_depth),
-           :ok <- walk(value, depth + 1, max_depth) do
+      with :ok <- walk(key, depth + 1, max_depth, local?),
+           :ok <- walk(value, depth + 1, max_depth, local?) do
         {:cont, :ok}
       else
         error -> {:halt, error}
@@ -165,16 +172,16 @@ defmodule Concord.Validation do
 
   # Every Erlang term type is handled above. Fail closed if a future runtime
   # introduces another type instead of silently accepting it for replication.
-  defp walk(_term, _depth, _max_depth), do: {:error, :unsupported_term}
+  defp walk(_term, _depth, _max_depth, _local?), do: {:error, :unsupported_term}
 
-  defp walk_list_tail([], _depth, _max_depth), do: :ok
+  defp walk_list_tail([], _depth, _max_depth, _local?), do: :ok
 
-  defp walk_list_tail([_head | _tail] = tail, depth, max_depth) do
-    walk(tail, depth, max_depth)
+  defp walk_list_tail([_head | _tail] = tail, depth, max_depth, local?) do
+    walk(tail, depth, max_depth, local?)
   end
 
-  defp walk_list_tail(tail, depth, max_depth) do
-    walk(tail, depth + 1, max_depth)
+  defp walk_list_tail(tail, depth, max_depth, local?) do
+    walk(tail, depth + 1, max_depth, local?)
   end
 
   # ──────────────────────────────────────────────

@@ -38,7 +38,7 @@ defmodule Concord.Engine.LocalSafetyTest do
     before = :sys.get_state(pid)
 
     invalid_commands = [
-      {{:put, "unsafe", self(), %{}}, {:error, {:invalid_command, :pid_in_spec}}},
+      {{:put, "unsafe", make_ref(), %{}}, {:error, {:invalid_command, :ref_in_spec}}},
       {{:put, "oversized", oversized_value, %{}}, {:error, {:invalid_command, :value_too_large}}},
       {{:unknown_command, :payload}, {:error, :unsupported_command}}
     ]

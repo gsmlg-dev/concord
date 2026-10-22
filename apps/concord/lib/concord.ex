@@ -42,7 +42,7 @@ defmodule Concord do
   """
   def put(key, value, opts \\ []) do
     with :ok <- validate_key(key),
-         :ok <- Validation.validate_value(value),
+         :ok <- Validation.validate_value(value, opts),
          :ok <- validate_ttl_option(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       ttl_option = Keyword.get(opts, :ttl)
@@ -183,7 +183,7 @@ defmodule Concord do
   """
   def put_if(key, value, opts) do
     with :ok <- validate_key(key),
-         :ok <- Validation.validate_value(value),
+         :ok <- Validation.validate_value(value, opts),
          :ok <- validate_ttl_option(opts),
          :ok <- validate_condition_opts(opts),
          :ok <- validate_expected_value(opts) do
@@ -552,7 +552,7 @@ defmodule Concord do
   """
   def put_many(operations, opts \\ []) when is_list(operations) do
     with :ok <- validate_batch_size(operations),
-         :ok <- validate_put_operations(operations) do
+         :ok <- validate_put_operations(operations, opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       start_time = System.monotonic_time()
 
@@ -854,42 +854,43 @@ defmodule Concord do
     end
   end
 
-  defp validate_put_operations(operations) when is_list(operations) do
+  defp validate_put_operations(operations, opts) when is_list(operations) do
     Enum.reduce_while(operations, :ok, fn operation, :ok ->
-      case validate_put_operation(operation) do
+      case validate_put_operation(operation, opts) do
         :ok -> {:cont, :ok}
         {:error, _reason} = error -> {:halt, error}
       end
     end)
   end
 
-  defp validate_put_operation({key, value}) when is_binary(key) and byte_size(key) > 0 do
+  defp validate_put_operation({key, value}, opts) when is_binary(key) and byte_size(key) > 0 do
     with :ok <- validate_key(key) do
-      Validation.validate_value(value)
+      Validation.validate_value(value, opts)
     end
   end
 
-  defp validate_put_operation({key, value, ttl}) when is_binary(key) and byte_size(key) > 0 do
+  defp validate_put_operation({key, value, ttl}, opts)
+       when is_binary(key) and byte_size(key) > 0 do
     with :ok <- validate_key(key),
-         :ok <- Validation.validate_value(value),
+         :ok <- Validation.validate_value(value, opts),
          :ok <- TTL.validate_ttl(ttl) do
       :ok
     end
   end
 
-  defp validate_put_operation({key, value, expires_at})
+  defp validate_put_operation({key, value, expires_at}, opts)
        when is_binary(key) and byte_size(key) > 0 do
     with :ok <- validate_key(key),
-         :ok <- Validation.validate_value(value) do
+         :ok <- Validation.validate_value(value, opts) do
       if expires_at == nil or is_integer(expires_at),
         do: :ok,
         else: {:error, :invalid_expires_at}
     end
   end
 
-  defp validate_put_operation({_key, _value}), do: {:error, :invalid_key}
-  defp validate_put_operation({_key, _value, _ttl}), do: {:error, :invalid_key}
-  defp validate_put_operation(_), do: {:error, :invalid_operation_format}
+  defp validate_put_operation({_key, _value}, _opts), do: {:error, :invalid_key}
+  defp validate_put_operation({_key, _value, _ttl}, _opts), do: {:error, :invalid_key}
+  defp validate_put_operation(_, _opts), do: {:error, :invalid_operation_format}
 
   defp validate_keys(keys) when is_list(keys) do
     Enum.reduce_while(keys, :ok, fn key, :ok ->
@@ -937,7 +938,7 @@ defmodule Concord do
 
   defp validate_expected_value(opts) do
     case Keyword.fetch(opts, :expected) do
-      {:ok, expected} when not is_nil(expected) -> Validation.validate_value(expected)
+      {:ok, expected} when not is_nil(expected) -> Validation.validate_value(expected, opts)
       _missing_or_nil -> :ok
     end
   end

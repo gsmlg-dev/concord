@@ -1,5 +1,10 @@
 defmodule Concord.Local.KV do
-  @moduledoc "Node-local `Concord.KV` API."
+  @moduledoc """
+  Node-local `Concord.KV` API.
+
+  See `Concord.Local` for transient PID value support in `put/3` and the
+  deterministic validation retained by transaction-backed operations.
+  """
 
   alias Concord.{APIOptions, KV}
 

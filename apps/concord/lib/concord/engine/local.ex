@@ -5,6 +5,9 @@ defmodule Concord.Engine.Local do
   This engine runs the protocol-independent state-machine core without starting
   a replication protocol. It is intentionally local to the current BEAM node:
   data is not replicated and does not participate in quorum writes.
+
+  Basic KV values and conditional expected values may contain transient PIDs.
+  Command metadata, transactions, and backup export remain deterministic.
   """
 
   use GenServer
@@ -98,7 +101,7 @@ defmodule Concord.Engine.Local do
             timestamp_ms: System.system_time(:millisecond)
           })
 
-        {:reply, {:ok, result}, state}
+        {:reply, query_reply(query, result), state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -154,11 +157,70 @@ defmodule Concord.Engine.Local do
   end
 
   defp validate_command(command) do
-    with :ok <- Validation.validate_command_size(command),
-         :ok <- CommandSchema.validate_emission(command) do
-      :ok
+    with :ok <- Validation.validate_command_size(command) do
+      case local_value_command(command) do
+        {structural_command, values} ->
+          with :ok <- CommandSchema.validate_emission(structural_command) do
+            validate_local_values(values)
+          end
+
+        :strict ->
+          CommandSchema.validate_emission(command)
+      end
     end
   end
+
+  # Validate the complete original command's size above, each actual value
+  # below, and the remaining command fields with the frozen writer schema.
+  # Values are never replaced in the command applied to the in-memory Core.
+  defp local_value_command({:put, key, value}), do: {{:put, key, nil}, [value]}
+
+  defp local_value_command({:put, key, value, options}),
+    do: {{:put, key, nil, options}, [value]}
+
+  defp local_value_command({:put_if, key, value, expiry, expected}),
+    do: {{:put_if, key, nil, expiry, nil}, [value, expected]}
+
+  defp local_value_command({:delete_if, key, expected, condition}),
+    do: {{:delete_if, key, nil, condition}, [expected]}
+
+  defp local_value_command({:put_many, operations}) when is_list(operations) do
+    case local_batch_values(operations, [], []) do
+      {structural_operations, values} -> {{:put_many, structural_operations}, values}
+      :strict -> :strict
+    end
+  end
+
+  defp local_value_command(_command), do: :strict
+
+  defp local_batch_values([], operations, values),
+    do: {Enum.reverse(operations), Enum.reverse(values)}
+
+  defp local_batch_values([{key, value} | rest], operations, values),
+    do: local_batch_values(rest, [{key, nil} | operations], [value | values])
+
+  defp local_batch_values([{key, value, expiry} | rest], operations, values),
+    do: local_batch_values(rest, [{key, nil, expiry} | operations], [value | values])
+
+  defp local_batch_values(_operations, _structural, _values), do: :strict
+
+  defp validate_local_values(values) do
+    Enum.reduce_while(values, :ok, fn value, :ok ->
+      case Validation.validate_value(value, engine: __MODULE__) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:invalid_command, reason}}}
+      end
+    end)
+  end
+
+  defp query_reply(:backup_snapshot, {:ok, snapshot} = result) do
+    case Validation.validate_term(snapshot) do
+      :ok -> {:ok, result}
+      {:error, reason} -> {:error, {:invalid_snapshot, reason}}
+    end
+  end
+
+  defp query_reply(_query, result), do: {:ok, result}
 
   defp validate_query(query) do
     with :ok <- validate_safe_query(query),

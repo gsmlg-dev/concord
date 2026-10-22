@@ -212,7 +212,7 @@ defmodule Concord.KV do
           {:ok, map()} | :ok | {:error, term()}
   def put(key, value, opts \\ []) do
     with :ok <- validate_key(key),
-         :ok <- Validation.validate_value(value),
+         :ok <- Validation.validate_value(value, opts),
          :ok <- validate_ttl_option(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       compressed_value = maybe_compress(value, opts)
