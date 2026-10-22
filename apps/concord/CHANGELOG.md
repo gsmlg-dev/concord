@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.6] - 2026-10-22
+
+### Fixed
+- Restore nested PID values for transient `Concord.Local` key-value writes,
+  including conditional and batch operations. Keep replicated and Turso value
+  validation strict, and reject local backup exports containing process references.
+- Avoid retained-history scans and request-index rebuilding for ordinary ready
+  singleton runtime writes using an owned transition closure and indexed in-memory
+  logs. Preserve exhaustive pure-state validation, cold-path checks, effect ordering,
+  and the existing canonical storage and wire formats. Pure protocol validation,
+  multi-member replication, and state-machine work retain their existing costs.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.6.
+
 ## [3.1.5] - 2026-10-22
 
 ### Fixed
