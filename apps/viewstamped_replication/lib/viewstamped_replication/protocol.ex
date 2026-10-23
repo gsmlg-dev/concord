@@ -79,34 +79,18 @@ defmodule ViewstampedReplication.Protocol do
   end
 
   defp runtime_step(
-         %State{
-           status: :normal,
-           replica_id: replica_id,
-           configuration: %Configuration{members: [%{id: replica_id}]},
-           op_number: number,
-           commit_number: number,
-           applied_number: number,
-           applying_number: nil
-         } = state,
+         %State{status: :normal, op_number: number} = state,
          {:client_request, route, %Request{} = request}
        ) do
     {next, effects} = handle_client_request(state, route, request)
     assert_runtime_base!(state, next)
-    assert!(next.applied_number == number, :invalid_operation_numbers)
+    assert!(next.applied_number == state.applied_number, :invalid_operation_numbers)
 
     case next.op_number do
       ^number ->
-        assert!(
-          next.commit_number == number and is_nil(next.applying_number),
-          :invalid_operation_numbers
-        )
+        :ok
 
       appended when appended == number + 1 ->
-        assert!(
-          next.commit_number == appended and next.applying_number == appended,
-          :invalid_operation_numbers
-        )
-
         entry = Log.fetch!(next.log, appended)
 
         assert!(
@@ -124,10 +108,6 @@ defmodule ViewstampedReplication.Protocol do
   defp runtime_step(
          %State{
            status: :normal,
-           replica_id: replica_id,
-           configuration: %Configuration{members: [%{id: replica_id}]},
-           op_number: number,
-           commit_number: number,
            applying_number: number,
            applied_number: applied
          } = state,
@@ -146,8 +126,9 @@ defmodule ViewstampedReplication.Protocol do
     assert_runtime_base!(state, next)
 
     assert!(
-      next.op_number == number and next.commit_number == number and
-        next.applied_number == number and is_nil(next.applying_number),
+      next.op_number == state.op_number and next.commit_number == state.commit_number and
+        next.applied_number == number and
+        next.applying_number == if(number < next.commit_number, do: number + 1),
       :invalid_operation_numbers
     )
 
@@ -156,7 +137,73 @@ defmodule ViewstampedReplication.Protocol do
     {%{next | applied_request_index: index}, effects}
   end
 
-  defp runtime_step(state, event) do
+  defp runtime_step(
+         %State{status: :normal} = state,
+         {:peer_message, sender, %Envelope{payload: payload} = envelope} = event
+       ) do
+    if runtime_normal_message?(state, payload) do
+      {next, effects} = handle_envelope(state, sender, envelope)
+      assert_runtime_base!(state, next)
+
+      assert!(
+        next.applied_number == state.applied_number and
+          next.op_number in [state.op_number, state.op_number + 1],
+        :invalid_operation_numbers
+      )
+
+      {next, effects}
+    else
+      exhaustive_runtime_step(state, event)
+    end
+  end
+
+  defp runtime_step(
+         %State{
+           status: :normal,
+           op_number: number,
+           commit_number: number
+         } = state,
+         {:timeout, :heartbeat, token} = event
+       ) do
+    if timer_current?(state, :heartbeat, token) and primary?(state) do
+      {next, effects} = handle_timeout(state, :heartbeat, token)
+      assert_runtime_base!(state, next)
+      {next, effects}
+    else
+      exhaustive_runtime_step(state, event)
+    end
+  end
+
+  defp runtime_step(state, event), do: exhaustive_runtime_step(state, event)
+
+  # A normal append or exact duplicate preserves every old entry. Messages that
+  # can request state transfer or change views stay on the exhaustive path.
+  # Cumulative acknowledgements may visit the pending suffix, never applied history.
+  defp runtime_normal_message?(state, %Prepare{
+         view_number: view,
+         op_number: number,
+         commit_number: commit,
+         entry: %LogEntry{} = entry
+       }) do
+    view == state.view_number and is_integer(number) and number > 0 and
+      is_integer(commit) and commit >= 0 and commit <= max(state.op_number, number) and
+      valid_prepare_entry?(entry, view, number) and
+      (number == state.op_number + 1 or Log.fetch(state.log, number) == {:ok, entry})
+  end
+
+  defp runtime_normal_message?(state, %PrepareOk{view_number: view, op_number: number}),
+    do:
+      view == state.view_number and is_integer(number) and number > 0 and
+        number <= state.op_number
+
+  defp runtime_normal_message?(state, %Commit{view_number: view, commit_number: number}),
+    do:
+      view == state.view_number and is_integer(number) and number >= 0 and
+        number <= state.op_number
+
+  defp runtime_normal_message?(_state, _message), do: false
+
+  defp exhaustive_runtime_step(state, event) do
     {next, effects} = step(canonical_state(state), event)
     {runtime_state(next), effects}
   end
@@ -171,6 +218,15 @@ defmodule ViewstampedReplication.Protocol do
     assert!(current.snapshot_op_number == previous.snapshot_op_number, :log_snapshot_mismatch)
     assert!(current.log.base_op_number == previous.log.base_op_number, :log_snapshot_mismatch)
     assert!(Log.last_op_number(current.log) == current.op_number, :log_op_number_mismatch)
+
+    assert!(
+      previous.commit_number <= current.commit_number and
+        current.applied_number <= current.commit_number and
+        current.commit_number <= current.op_number,
+      :invalid_operation_numbers
+    )
+
+    assert_applying_number!(current)
   end
 
   defp runtime_state(state) do

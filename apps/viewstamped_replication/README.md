@@ -133,21 +133,30 @@ one pass.
 
 The supervised replica owns an event-only transition closure. Its initial state
 receives full validation and a freshly built applied-request index; callers
-cannot substitute state or supply a validation flag. Ready singleton writes use
-immutable indexed logs and update only the new applied request's index entry.
-The existing protocol handlers still produce the ordered append, commit, apply,
-applied-state persistence, and reply effects. Scalar and changed-entry checks
-preserve their operation-number and duplicate-request invariants without
-revisiting unrelated committed history. Exact retries reuse their recorded
-result. Ready singleton reads reuse the unchanged owned state's validity.
+cannot substitute state or supply a validation flag. Normal singleton and
+multi-voter client writes use immutable indexed logs. Exact sequential apply
+acknowledgements check and update only the newly applied request's index entry,
+including when another committed operation is ready to apply. The existing
+protocol handlers still produce the ordered append, commit, apply, applied-state
+persistence, and reply effects. Scalar and changed-entry checks preserve their
+operation-number and duplicate-request invariants without revisiting unrelated
+committed history. Exact retries reuse their recorded result. Ready singleton
+reads reuse the unchanged owned state's validity.
 
-The write path applies to normal singleton replicas with all previous operations
-committed and applied, and their exact subsequent application acknowledgement.
-Recovery, snapshots, peer events, view changes, non-ready states, and multi-member
-paths convert to the canonical representation and use the exhaustive protocol
-kernel. Administrative `:sys.replace_state/2` calls and direct OTP callback
-invocation bypass runtime state ownership and are not supported protocol-state
-ingress.
+The owned normal path also handles current-view Prepare appends and exact retained
+duplicates, PrepareOk acknowledgements within the local log, and Commit messages
+within the local operation bound. All envelope identity and membership checks
+remain in the shared handlers. Pipelined client appends and cumulative
+acknowledgements may visit the uncommitted suffix; their work does not scan the
+retained applied prefix. An idle normal primary's heartbeat uses the current
+emitted token and reschedules without rebuilding its history, for any membership
+size. Heartbeats with uncommitted retries remain on the exhaustive path.
+
+Recovery, snapshots, view changes, state-transfer gaps, future-view messages, and
+other events outside these guards convert to the canonical representation and
+use the exhaustive protocol kernel. Administrative `:sys.replace_state/2` calls
+and direct OTP callback invocation bypass runtime state ownership and are not
+supported protocol-state ingress.
 
 The private indexed log and applied-request index occupy memory proportional to
 retained history. Immutable map insertion and lookup replace full-list copying
@@ -159,13 +168,16 @@ WAL operations, checkpoint formats, quorum requirements, and rollback
 compatibility are unchanged. Snapshot and recovery boundaries may rebuild these
 private representations in proportion to retained history.
 
-The ordinary singleton runtime path therefore avoids history-wide protocol and
-built-in storage-mirror work without requiring compaction. The original pure
-protocol diagnostic still has linear CPU work because its arbitrary input state
-must be checked on every call. State-machine admission/materialization, fsync,
-network latency, multi-member quorum work, and mailbox waiting remain separate
-costs. Reduction-based runtime regressions retain 1,000/2,000/4,000 entries and
-trace history-validation functions separately from their timing samples.
+The ordinary runtime paths therefore avoid history-wide protocol and built-in
+storage-mirror work without requiring compaction. The original pure protocol
+diagnostic still has linear CPU work because its arbitrary input state must be
+checked on every call. State-machine admission/materialization, client-table
+persistence, fsync, network latency, pending quorum work, and mailbox waiting
+remain separate costs. Singleton runtime regressions retain 1,000/2,000/4,000
+entries; legal three-voter protocol flows and emitted idle heartbeat tokens are
+also checked at 1,000/10,000 entries. History traversal traces are measured
+separately from exhaustive parity checks. These diagnostics do not establish
+HTTP timeout causes or downstream throughput acceptance.
 
 Run the explicit local-memory benchmark to compare command throughput and
 p50/p95/p99 latency across all supported cluster sizes:
