@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.7] - 2026-10-23
+
+### Fixed
+- Avoid retained-history conversions and applied-request index rebuilding for
+  ordinary owned normal multi-voter writes and idle primary heartbeats. Reuse
+  existing handlers for pipelined appends, Prepare/PrepareOk/Commit messages, and
+  sequential or chained apply acknowledgements while preserving effect order.
+  Keep exhaustive public validation and recovery, view-change, corruption, and
+  exceptional-event checks. Cumulative acknowledgements may visit pending work;
+  storage and wire formats remain unchanged.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.7.
+
 ## [3.1.6] - 2026-10-22
 
 ### Fixed
