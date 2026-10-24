@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.8] - 2026-10-25
+
+### Fixed
+- Read Turso key-only pages from a covering metadata index without fetching or
+  decoding stored values. Preserve record metadata and filter expired/deleted
+  rows before page limits and continuation lookahead. Existing databases backfill
+  the projection in a one-time transaction; original record/history blobs and
+  revision counters remain unchanged. The projection and index add storage and
+  write work proportional to metadata size.
+- Apply one finite timeout budget across Turso list readiness and querying.
+  All Turso list calls now fail promptly with `{:error, :timeout}` when the pool
+  is busy, including with the default timeout or `:infinity`. Synchronous native
+  work cannot be forcibly interrupted; finish large database upgrades before
+  serving requests, using an infinite-timeout list call if needed.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.8.
+
 ## [3.1.7] - 2026-10-23
 
 ### Fixed
