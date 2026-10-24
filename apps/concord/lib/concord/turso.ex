@@ -75,6 +75,29 @@ defmodule Concord.Turso do
     do: Concord.touch_many(operations, APIOptions.turso(opts))
 
   def revision(opts \\ []), do: Concord.revision(APIOptions.turso(opts))
+
+  @doc """
+  Lists current records in lexical prefix or range order.
+
+  Accepts the selector, limit, cursor continuation, and timeout options described
+  by `Concord.KV.list/1`. With `keys_only: true`, the SQL query reads a covering
+  index containing keys and value-free record metadata. Stored values are neither
+  fetched nor decoded after database readiness completes. Application metadata is
+  preserved, so its size still contributes to read and index costs.
+
+  Existing databases automatically add and backfill the metadata projection on
+  their first engine operation. This one-time transaction reads and decodes each
+  existing current record; original record and history blobs remain unchanged.
+  Plan an upgrade window for large stores. Before serving requests, a call such
+  as `list(prefix: "", limit: 1, keys_only: true, timeout: :infinity)` can finish
+  this migration without a finite operation deadline.
+
+  List calls return `{:error, :timeout}` immediately when the connection pool is
+  busy, including with the default timeout or `:infinity`. A finite timeout is a
+  shared maximum budget for readiness and querying; synchronous native database
+  work cannot be forcibly interrupted. Both value and key-only pages filter
+  expired/deleted rows before applying the limit and continuation lookahead.
+  """
   def list(opts), do: Concord.list(APIOptions.turso(opts))
   def txn(spec, opts \\ []), do: Concord.txn(spec, APIOptions.turso(opts))
 

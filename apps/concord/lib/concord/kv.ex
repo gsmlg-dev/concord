@@ -150,7 +150,10 @@ defmodule Concord.KV do
 
   This bound applies to `list/1` on Local and VSR. Legacy `prefix_scan`/`get_all`
   queries and the compatibility `Concord.StateMachine.query/2` wrapper can still
-  traverse the full inventory. The Turso engine uses its separate SQL path.
+  traverse the full inventory. Turso lists read current state through SQL and
+  use a value-free covering index for `keys_only: true` after database readiness.
+  See `Concord.Turso.list/1` for its one-time database migration and pool
+  contention behavior.
   """
   @spec list(keyword()) :: {:ok, [Record.t()], map()} | {:error, term()}
   def list(opts \\ []) do

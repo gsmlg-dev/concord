@@ -381,24 +381,20 @@ defmodule Concord.Engine.Turso do
   end
 
   def query({:list, selector, list_opts}, opts) do
-    with_db(opts, fn conn ->
+    with_list_db(opts, fn conn, db_opts ->
       limit = Map.get(list_opts, :limit, 1_000)
       keys_only = Map.get(list_opts, :keys_only, false)
       now = now_seconds()
       {start_key, end_key} = selector_range(selector)
 
-      with {:ok, records} <- current_records(conn, start_key, end_key, limit + 1) do
-        visible =
-          records
-          |> Enum.reject(fn {_key, record} -> hidden?(record, now) end)
-
-        has_more = length(visible) > limit
-        trimmed = Enum.take(visible, limit)
+      with {:ok, records} <-
+             list_records(conn, start_key, end_key, limit + 1, keys_only, now, db_opts) do
+        has_more = length(records) > limit
+        trimmed = Enum.take(records, limit)
 
         result =
           Enum.map(trimmed, fn {key, record} ->
-            value = if keys_only, do: nil, else: record.value
-            record |> Map.put(:value, value) |> Map.put(:key, key)
+            Map.put(record, :key, key)
           end)
 
         last_key =
@@ -871,6 +867,33 @@ defmodule Concord.Engine.Turso do
 
   defp decode_record_rows({:error, reason}), do: {:error, reason}
 
+  defp list_records(conn, start_key, end_key, limit, keys_only, now, opts) do
+    column = if keys_only, do: "record_metadata", else: "record"
+    # A table-row projection can still read the record's overflow pages in Turso.
+    # Keep key-only projection and visibility checks on the value-free index.
+    index = if keys_only, do: " INDEXED BY concord_turso_current_metadata", else: ""
+
+    with {:ok, rows} <-
+           query_rows(
+             conn,
+             "SELECT key, #{column} FROM concord_turso_current#{index}
+             WHERE key >= ? AND key < ? AND version != 0
+             AND (expires_at IS NULL OR expires_at >= ?) ORDER BY key LIMIT ?",
+             [start_key, end_key, now, limit],
+             opts
+           ) do
+      {:ok,
+       Enum.map(rows, fn row ->
+         record =
+           if keys_only,
+             do: Codec.decode_record_metadata(row[column]),
+             else: Codec.decode_record(row[column])
+
+         {row["key"], record}
+       end)}
+    end
+  end
+
   defp record_at_revision(conn, key, revision) do
     with {:ok, current} <- fetch_current(conn, key) do
       if current && current.mod_revision <= revision do
@@ -930,13 +953,14 @@ defmodule Concord.Engine.Turso do
 
   defp upsert_current(conn, key, %Record{} = record) do
     execute(conn, "INSERT OR REPLACE INTO concord_turso_current
-      (key, record, expires_at, mod_revision, version)
-      VALUES (?, ?, ?, ?, ?)", [
+      (key, record, expires_at, mod_revision, version, record_metadata)
+      VALUES (?, ?, ?, ?, ?, ?)", [
       key,
       Codec.encode_record(record),
       record.expires_at,
       record.mod_revision,
-      record.version
+      record.version,
+      Codec.encode_record_metadata(record)
     ])
   end
 
@@ -982,6 +1006,72 @@ defmodule Concord.Engine.Turso do
     end
   end
 
+  defp with_list_db(opts, fun) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
+    db_opts =
+      if timeout == :infinity,
+        do: [timeout: :infinity, queue: false],
+        else: [
+          timeout: timeout,
+          deadline: System.monotonic_time(:millisecond) + timeout,
+          queue: false
+        ]
+
+    run_list_db(db_opts, fun)
+  end
+
+  defp run_list_db(db_opts, fun) do
+    result =
+      case Process.whereis(@db) do
+        nil ->
+          {:error, :engine_not_started}
+
+        _pid ->
+          DBConnection.run(
+            @db,
+            fn conn ->
+              with :ok <- Migrations.migrate(conn, db_opts) do
+                fun.(conn, db_opts)
+              end
+            end,
+            db_opts
+          )
+      end
+
+    list_result(result, db_opts)
+  rescue
+    error in DBConnection.ConnectionError -> list_result({:error, error}, db_opts)
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  defp list_result(result, opts) do
+    deadline = Keyword.get(opts, :deadline)
+
+    cond do
+      deadline && System.monotonic_time(:millisecond) >= deadline ->
+        {:error, :timeout}
+
+      match?({:error, %DBConnection.ConnectionError{reason: :queue_timeout}}, result) ->
+        {:error, :timeout}
+
+      true ->
+        normalize_list_result(result)
+    end
+  end
+
+  defp normalize_list_result(
+         {:error,
+          %DBConnection.ConnectionError{
+            message: "connection not available and queuing is disabled"
+          }}
+       ),
+       do: {:error, :timeout}
+
+  defp normalize_list_result({:error, error}), do: {:error, normalize_error(error)}
+  defp normalize_list_result(result), do: result
+
   defp with_transaction(timeout, fun) do
     with :ok <- ensure_ready(timeout: timeout) do
       case DBConnection.transaction(
@@ -1021,8 +1111,8 @@ defmodule Concord.Engine.Turso do
     end
   end
 
-  defp query_rows(conn, sql, params \\ []) do
-    case Elixir.Turso.query(conn, sql, params) do
+  defp query_rows(conn, sql, params \\ [], opts \\ []) do
+    case Elixir.Turso.query(conn, sql, params, opts) do
       {:ok, %Elixir.Turso.Result{rows: rows}} -> {:ok, rows}
       {:error, error} -> {:error, normalize_error(error)}
     end

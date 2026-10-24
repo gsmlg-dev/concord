@@ -94,6 +94,22 @@ leases, watches, or secondary indexes. If `remote_url` (supporting `turso://`,
 `libsql://`, or `https://` schemes) and `auth_token` are configured,
 `Concord.Turso.sync/1` triggers Turso Cloud sync.
 
+Use key-only pages to enumerate keys without loading stored values:
+
+```elixir
+Concord.Turso.list(prefix: "sessions/", limit: 100, keys_only: true, timeout: 5_000)
+```
+
+These current-state pages preserve record metadata and use a covering metadata
+index. Existing databases automatically backfill the projection once during
+readiness, reading each existing current record; plan an upgrade window for
+large stores. The extra index and projection add storage and write work based on
+metadata size. Before serving requests, `Concord.Turso.list(prefix: "", limit: 1,
+keys_only: true, timeout: :infinity)` can complete the migration without a finite
+deadline. All Turso list calls return `{:error, :timeout}` immediately if the
+connection pool is busy. Finite deadlines cover readiness and querying, while
+synchronous native work cannot be forcibly interrupted.
+
 Applications that only need the durable Turso KV engine can disable the Concord
 VSR cluster runtime while still starting the Turso pool:
 
