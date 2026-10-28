@@ -100,10 +100,18 @@ defmodule Concord.Turso do
   as `list(prefix: "", limit: 1, keys_only: true, timeout: :infinity)` can finish
   this migration without a finite operation deadline.
 
-  List calls return `{:error, :timeout}` immediately when the connection pool is
-  busy, including with the default timeout or `:infinity`. A finite timeout is a
-  shared maximum budget for readiness and querying; synchronous native database
-  work cannot be forcibly interrupted. Both value and key-only pages filter
+  By default, list calls return `{:error, :timeout}` immediately when the pool is
+  busy, including with the default timeout or `:infinity`. Use `queue: true` with
+  a finite positive `:timeout` to wait for brief contention. One deadline covers
+  admission, connection acquisition, readiness and querying. Invalid queue choices
+  return `:invalid_queue`; infinite or nonpositive queued timeouts return
+  `:invalid_queue_timeout`.
+
+  Waiting and running queued lists share a finite capacity (default 64), configured
+  with `:list_queue_capacity` in the `:turso` application configuration. Full
+  capacity returns `{:error, :overloaded}`. Caller exit releases waiting admission;
+  already running native work retains capacity until cleanup finishes. Synchronous
+  native database work cannot be forcibly interrupted. Both value and key-only pages filter
   expired/deleted rows before applying the limit and continuation lookahead.
   """
   def list(opts), do: Concord.list(APIOptions.turso(opts))
@@ -119,6 +127,8 @@ defmodule Concord.Turso do
   Synchronous native work cannot be forcibly interrupted. A native commit already
   in progress may finish after the deadline; its successful acknowledgement is
   preserved. `timeout: :infinity` keeps unbounded acquisition and execution.
+  Once a native commit starts, timeout alone is not proof of no effect; resolve
+  an idempotent transaction receipt or reconcile stored state before retrying.
   """
   def txn(spec, opts \\ []), do: Concord.txn(spec, APIOptions.turso(opts))
 

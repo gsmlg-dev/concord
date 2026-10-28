@@ -239,9 +239,24 @@ config :concord,
   turso: [
     enabled: true,
     database: "./data/turso.db",
-    pool_size: 1
+    pool_size: 1,
+    list_queue_capacity: 64
   ]
 ```
+
+`Concord.Turso.list/1` uses immediate acquisition by default. For brief pool
+contention, opt in with a finite positive timeout:
+
+```elixir
+Concord.Turso.list(prefix: "sessions/", order: :desc, limit: 10,
+  keys_only: true, queue: true, timeout: 1_000)
+```
+
+One deadline covers admission, checkout, readiness and the query. The finite
+`list_queue_capacity` counts both waiting and running opted-in reads; full
+capacity returns `{:error, :overloaded}`. A timed-out native operation retains
+its slot until cleanup finishes. Queued infinite waits are rejected. Ordinary
+and infinite-timeout list calls without `queue: true` keep immediate acquisition.
 
 Applications that only need the durable Turso KV engine can disable Concord's
 VSR cluster runtime:

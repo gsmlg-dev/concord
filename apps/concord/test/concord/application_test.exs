@@ -60,10 +60,14 @@ defmodule Concord.ApplicationTest do
 
     assert {:ok, _started} = Application.ensure_all_started(:concord)
     assert Process.whereis(Concord.Turso.DB)
+    assert Process.whereis(Concord.Turso.ListQueue.Admission)
     assert Process.whereis(Concord.Engine.VSR.Supervisor) == nil
     assert Process.whereis(Concord.TTL) == nil
     assert :ok = Concord.Turso.put("app:turso", "value")
     assert {:ok, "value"} = Concord.Turso.get("app:turso")
+
+    assert {:ok, [%{key: "app:turso"}], %{has_more: false}} =
+             Concord.Turso.list(prefix: "app:", queue: true, timeout: 500)
   end
 
   test "starts a configured singleton VSR cluster" do

@@ -14,7 +14,7 @@ defmodule Concord.Engine.Turso do
   alias Concord.Deadline
   alias Concord.KV.Record
   alias Concord.Turso
-  alias Concord.Turso.{Codec, Migrations}
+  alias Concord.Turso.{Codec, ListQueue, Migrations}
   alias Concord.Txn.Result, as: TxnResult
 
   @db Concord.Turso.DB
@@ -1053,7 +1053,21 @@ defmodule Concord.Engine.Turso do
 
   defp with_list_db(opts, fun) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
+    queue = Keyword.get(opts, :queue, false)
 
+    cond do
+      not is_boolean(queue) ->
+        {:error, :invalid_queue}
+
+      queue and not (is_integer(timeout) and timeout > 0) ->
+        {:error, :invalid_queue_timeout}
+
+      true ->
+        run_list_with_budget(timeout, queue, fun)
+    end
+  end
+
+  defp run_list_with_budget(timeout, queue, fun) do
     db_opts =
       if timeout == :infinity,
         do: [timeout: :infinity, queue: false],
@@ -1063,25 +1077,33 @@ defmodule Concord.Engine.Turso do
           queue: false
         ]
 
-    run_list_db(db_opts, fun)
+    if queue do
+      ListQueue.run(Keyword.fetch!(db_opts, :deadline), fn caller, monitor ->
+        run_list_db(db_opts, fun, {caller, monitor})
+      end)
+    else
+      run_list_db(db_opts, fun)
+    end
   end
 
-  defp run_list_db(db_opts, fun) do
+  defp run_list_db(db_opts, fun, waiter \\ nil) do
     result =
       case Process.whereis(@db) do
         nil ->
           {:error, :engine_not_started}
 
         _pid ->
-          DBConnection.run(
-            @db,
-            fn conn ->
-              with :ok <- Migrations.migrate(conn, db_opts) do
-                fun.(conn, db_opts)
-              end
-            end,
-            db_opts
-          )
+          operation = fn conn ->
+            with :ok <- check_waiter(waiter),
+                 :ok <- check_deadline(db_opts),
+                 :ok <- Migrations.migrate(conn, db_opts) do
+              fun.(conn, db_opts)
+            end
+          end
+
+          if waiter,
+            do: checkout_db(db_opts, operation, waiter),
+            else: DBConnection.run(@db, operation, db_opts)
       end
 
     list_result(result, db_opts)
@@ -1138,7 +1160,7 @@ defmodule Concord.Engine.Turso do
         {:error, :engine_not_started}
 
       _pid ->
-        checkout_transaction(db_opts, fn conn ->
+        checkout_db(db_opts, fn conn ->
           with :ok <- check_deadline(db_opts),
                :ok <- Migrations.migrate(conn, db_opts),
                :ok <- check_deadline(db_opts) do
@@ -1148,16 +1170,20 @@ defmodule Concord.Engine.Turso do
     end
   end
 
-  defp checkout_transaction(db_opts, fun) do
-    with :ok <- check_deadline(db_opts) do
-      case checkout_transaction_once(db_opts, fun) do
+  defp checkout_db(db_opts, fun, waiter \\ nil) do
+    with :ok <- check_waiter(waiter),
+         :ok <- check_deadline(db_opts) do
+      case checkout_db_once(db_opts, fun) do
         :retry_checkout ->
           remaining = Keyword.fetch!(db_opts, :deadline) - System.monotonic_time(:millisecond)
 
           if remaining > 0 do
+            monitor = if waiter, do: elem(waiter, 1)
+
             receive do
+              {:DOWN, ^monitor, :process, _caller, _reason} -> {:error, :caller_down}
             after
-              min(remaining, 5) -> checkout_transaction(db_opts, fun)
+              min(remaining, 5) -> checkout_db(db_opts, fun, waiter)
             end
           else
             {:error, :timeout}
@@ -1169,7 +1195,13 @@ defmodule Concord.Engine.Turso do
     end
   end
 
-  defp checkout_transaction_once(db_opts, fun) do
+  defp check_waiter(nil), do: :ok
+
+  defp check_waiter({caller, _monitor}) do
+    if Process.alive?(caller), do: :ok, else: {:error, :caller_down}
+  end
+
+  defp checkout_db_once(db_opts, fun) do
     DBConnection.run(@db, fun, db_opts)
   rescue
     error in DBConnection.ConnectionError ->

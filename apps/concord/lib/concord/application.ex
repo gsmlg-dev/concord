@@ -48,6 +48,13 @@ defmodule Concord.Application do
   end
 
   defp turso_children do
-    if Turso.enabled?(), do: [{Turso, []}], else: []
+    if Turso.enabled?() do
+      capacity =
+        Application.get_env(:concord, :turso, []) |> Keyword.get(:list_queue_capacity, 64)
+
+      [{Turso.ListQueue, max_children: capacity}, {Turso, []}]
+    else
+      []
+    end
   end
 end

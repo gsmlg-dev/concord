@@ -132,6 +132,8 @@ defmodule Concord.KV do
   - `:timeout` — operation timeout in ms (default: 5000)
   - `:consistency` — compatibility name for the shared linearizable read path
     (default: `:leader`)
+  - `:queue` — Turso only: wait for a busy connection within a finite positive
+    timeout (default: false); full admission capacity returns `{:error, :overloaded}`
 
   ## Returns
 
@@ -455,7 +457,7 @@ defmodule Concord.KV do
   end
 
   defp do_query(query_cmd, timeout, consistency, opts) do
-    engine_opts = Keyword.take(opts, [:engine])
+    engine_opts = Keyword.take(opts, [:engine, :queue])
 
     case Engine.query(
            query_cmd,

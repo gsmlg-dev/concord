@@ -32,6 +32,32 @@ defmodule Concord.TursoDeadlineTest do
     assert_timed_out_without_mutation(tasks, [])
   end
 
+  test "legacy writes and batch deletes retain the same acquisition deadline", %{tasks: tasks} do
+    for operation <- [:put, :delete_many] do
+      assert :ok = Concord.Turso.put("deadline/legacy", :original)
+      assert {:ok, revision} = Concord.Turso.revision()
+      holder = hold_connection(tasks, 400)
+
+      try do
+        started = System.monotonic_time(:millisecond)
+
+        result =
+          case operation do
+            :put -> Concord.Turso.put("deadline/legacy", :unexpected, timeout: 20)
+            :delete_many -> Concord.Turso.delete_many(["deadline/legacy"], timeout: 20)
+          end
+
+        assert result == {:error, :timeout}
+        assert System.monotonic_time(:millisecond) - started < 200
+      after
+        release_connection(holder)
+      end
+
+      assert {:ok, :original} = Concord.Turso.get("deadline/legacy")
+      assert {:ok, ^revision} = Concord.Turso.revision()
+    end
+  end
+
   test "brief contention succeeds within the original operation budget", %{tasks: tasks} do
     assert {:ok, %{revision: revision}} =
              Concord.KV.put("deadline/key", :original, engine: :turso)
