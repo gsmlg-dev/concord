@@ -48,6 +48,7 @@ for i in $(seq 1 "$NODE_COUNT"); do
   CONCORD_VSR_TRANSPORT="distribution" \
   CONCORD_VSR_STORAGE="file" \
   CONCORD_VSR_BOOTSTRAP="true" \
+  CONCORD_VSR_COMMAND_VERSION="${CONCORD_VSR_COMMAND_VERSION:-0}" \
   NODE_NAME="concord_e2e${i}" \
     "$RELEASE_BIN" daemon \
     > "$LOG_FILE" 2>&1

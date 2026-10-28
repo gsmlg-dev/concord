@@ -3,7 +3,7 @@ defmodule Concord.CommandSchema do
 
   alias Concord.Compression
 
-  @type version :: 0 | 1
+  @type version :: 0 | 1 | 2
 
   @max_batch_size 500
   @max_index_name_bytes 255
@@ -62,17 +62,22 @@ defmodule Concord.CommandSchema do
     {:txn, spec}
   end
 
+  def normalize_emission({:compare_and_swap, key, value, expected, opts}) do
+    {:put, ^key, ^value, normalized} = normalize_emission({:put, key, value, opts})
+    {:compare_and_swap, key, value, expected, normalized}
+  end
+
   def normalize_emission(command), do: command
 
   @doc """
   Validates commands emitted by this release.
 
-  New writers use the strict version-one schema even while emitting the legacy
+  New writers use the strict current schema even while emitting the legacy
   envelope shape during a compatibility rollout.
   """
   @spec validate_emission(term()) ::
           :ok | {:error, :unsupported_command | {:invalid_command, atom()}}
-  def validate_emission(command), do: validate_replay(1, command)
+  def validate_emission(command), do: validate_replay(2, command)
 
   @doc """
   Validates a command using the immutable safety contract of its envelope.
@@ -90,6 +95,15 @@ defmodule Concord.CommandSchema do
     with :ok <- validate_v1_command_size(command),
          :ok <- validate_v1_term(command, 0),
          :ok <- validate(1, command),
+         :ok <- validate_v1_transaction_size(command) do
+      validate_v1_value_sizes(command)
+    end
+  end
+
+  def validate_replay(2, command) do
+    with :ok <- validate_v1_command_size(command),
+         :ok <- validate_v1_term(command, 0),
+         :ok <- validate(2, command),
          :ok <- validate_v1_transaction_size(command) do
       validate_v1_value_sizes(command)
     end
@@ -135,7 +149,7 @@ defmodule Concord.CommandSchema do
   bytes that an earlier release handled differently.
   """
   @spec validate(version(), term()) :: :ok | {:error, :unsupported_command}
-  def validate(version, command) when version in [0, 1] do
+  def validate(version, command) when version in [0, 1, 2] do
     if supported?(version, command), do: :ok, else: {:error, :unsupported_command}
   end
 
@@ -145,6 +159,13 @@ defmodule Concord.CommandSchema do
   # Erlang terms, not just the command shapes known at the time.
   def supported?(0, _command), do: true
   def supported?(1, command), do: current_command?(command)
+
+  def supported?(2, {:compare_and_swap, key, _value, expected, %{} = opts}) do
+    valid_key?(key) and is_integer(expected) and expected >= 0 and
+      only_keys?(opts, [:ttl, :lease, :content_type, :metadata]) and valid_txn_put_options?(opts)
+  end
+
+  def supported?(2, command), do: current_command?(command)
 
   defp current_command?({:put, key, _value}), do: valid_key?(key)
 
@@ -452,6 +473,7 @@ defmodule Concord.CommandSchema do
     match?({:error, :size_limit}, raw_external_size_v1(value, @max_value_bytes))
   end
 
+  defp command_values({:compare_and_swap, _key, value, _expected, _opts}), do: [value]
   defp command_values({:put, _key, value}), do: [value]
   defp command_values({:put, _key, value, _opts_or_expiry}), do: [value]
 

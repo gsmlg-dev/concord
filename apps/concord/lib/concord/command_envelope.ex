@@ -2,9 +2,9 @@ defmodule Concord.CommandEnvelope do
   @moduledoc false
 
   @legacy_version 0
-  @current_version 1
+  @current_version 2
 
-  @type version :: 0 | 1
+  @type version :: 0 | 1 | 2
   @type t ::
           {:concord_command, non_neg_integer(), term()}
           | {:concord_command, pos_integer(), non_neg_integer(), term()}
@@ -23,20 +23,20 @@ defmodule Concord.CommandEnvelope do
     {:concord_command, timestamp_ms, command}
   end
 
-  def wrap(timestamp_ms, command, @current_version)
-      when is_integer(timestamp_ms) and timestamp_ms >= 0 do
-    {:concord_command, @current_version, timestamp_ms, command}
+  def wrap(timestamp_ms, command, version)
+      when version in [1, 2] and is_integer(timestamp_ms) and timestamp_ms >= 0 do
+    {:concord_command, version, timestamp_ms, command}
   end
 
   @spec supported_version?(term()) :: boolean()
-  def supported_version?(version), do: version in [@legacy_version, @current_version]
+  def supported_version?(version), do: version in [@legacy_version, 1, 2]
 
   @spec unwrap(term()) ::
           {:ok, version(), non_neg_integer(), term()}
           | {:error, :invalid_command_envelope | {:unsupported_command_version, term()}}
-  def unwrap({:concord_command, @current_version, timestamp_ms, command})
-      when is_integer(timestamp_ms) and timestamp_ms >= 0 do
-    {:ok, @current_version, timestamp_ms, command}
+  def unwrap({:concord_command, version, timestamp_ms, command})
+      when version in [1, 2] and is_integer(timestamp_ms) and timestamp_ms >= 0 do
+    {:ok, version, timestamp_ms, command}
   end
 
   # Version 0 was emitted without an explicit version. Keeping this exact shape
@@ -46,7 +46,7 @@ defmodule Concord.CommandEnvelope do
     {:ok, @legacy_version, timestamp_ms, command}
   end
 
-  def unwrap({:concord_command, @current_version, _timestamp_ms, _command}) do
+  def unwrap({:concord_command, version, _timestamp_ms, _command}) when version in [1, 2] do
     {:error, :invalid_command_envelope}
   end
 

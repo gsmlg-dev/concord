@@ -68,7 +68,7 @@ vsr_command_version =
   System.get_env("CONCORD_VSR_COMMAND_VERSION", "0")
   |> String.to_integer()
 
-unless vsr_command_version in [0, 1] do
+unless vsr_command_version in [0, 1, 2] do
   raise "invalid CONCORD_VSR_COMMAND_VERSION=#{inspect(vsr_command_version)}"
 end
 

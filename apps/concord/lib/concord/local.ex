@@ -28,6 +28,11 @@ defmodule Concord.Local do
   def get(key, opts \\ []), do: Concord.get(key, APIOptions.local(opts))
   def delete(key, opts \\ []), do: Concord.delete(key, APIOptions.local(opts))
   def put_if(key, value, opts), do: Concord.put_if(key, value, APIOptions.local(opts))
+
+  @doc "See `Concord.KV.compare_and_swap/3`."
+  def compare_and_swap(key, value, opts \\ []),
+    do: Concord.compare_and_swap(key, value, APIOptions.local(opts))
+
   def delete_if(key, opts), do: Concord.delete_if(key, APIOptions.local(opts))
   def get_all(opts \\ []), do: Concord.get_all(APIOptions.local(opts))
   def status(opts \\ []), do: Concord.status(APIOptions.local(opts))

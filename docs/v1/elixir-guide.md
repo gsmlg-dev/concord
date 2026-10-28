@@ -240,6 +240,32 @@ Atomic conditional operations for CAS, distributed locks, and optimistic concurr
 
 ### Compare-and-Swap with Expected Value
 
+For revision-based replacement of large values, use the dedicated CAS API:
+
+```elixir
+{:ok, record} = Concord.KV.get("history", metadata: true)
+{:ok, %{succeeded: true, current_kv: %{value: nil}}} =
+  Concord.compare_and_swap("history", updated_history, mod_revision: record.mod_revision)
+```
+
+An expected revision of zero creates a missing, deleted or expired key.
+Success and conflict both return `succeeded`, the current cluster `revision`,
+and value-free `current_kv` metadata (or nil when absent). A conflict leaves
+the value and revision unchanged. Values can use the normal 16 MiB logical
+limit; generic transactions and the existing `Concord.KV.update_if/3`
+transaction wrapper retain their 1,000,000-byte envelope cap. Compression does
+not change either logical limit. `Concord.Local.compare_and_swap/3` and
+`Concord.Turso.compare_and_swap/3` select the corresponding node-local engine.
+Turso does not support leases.
+
+VSR CAS requires explicit `command_version: 2` after every replica has been
+upgraded; follow the [configuration rollout](configuration.md). The timeout
+budget includes validation, compression, readiness, admission and commit checks. A command
+already submitted to consensus or native commit can finish after its caller
+times out. Timeout alone is not proof of no effect; reconcile the stored
+revision/history before retrying. Known successful native commits retain
+their success acknowledgment.
+
 ```elixir
 # Initialize counter
 :ok = Concord.put("counter", 0)

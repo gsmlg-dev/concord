@@ -11,7 +11,7 @@ on:
 
 jobs:
   e2e:
-    name: VSR E2E Release Tests
+    name: VSR E2E Release Tests (commands ${{ matrix.command_version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -20,6 +20,7 @@ jobs:
       matrix:
         otp: ['28']
         elixir: ['1.18']
+        command_version: ['0', '2']
 
     steps:
       - name: Checkout code
@@ -58,11 +59,13 @@ jobs:
         run: epmd -daemon
 
       - name: Run E2E tests
+        env:
+          CONCORD_VSR_COMMAND_VERSION: ${{ matrix.command_version }}
         run: ./e2e_test/scripts/run_e2e.sh
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs-${{ matrix.otp }}-${{ matrix.elixir }}
+          name: e2e-logs-${{ matrix.otp }}-${{ matrix.elixir }}-commands-${{ matrix.command_version }}
           path: _build/e2e_data/

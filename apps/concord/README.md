@@ -194,6 +194,33 @@ Performance varies significantly depending on hardware, cluster size, and networ
 | Embedded | Yes | No | No | No |
 | Multi-DC | No | Yes | Yes | Yes |
 
+
+### Revision CAS for large values
+
+```elixir
+{:ok, %{succeeded: true, revision: revision, current_kv: %{value: nil}}} =
+  Concord.compare_and_swap("history", history, mod_revision: 0)
+
+{:ok, %{succeeded: succeeded, current_kv: current}} =
+  Concord.compare_and_swap("history", updated_history, mod_revision: revision)
+```
+
+`compare_and_swap/3` atomically compares the visible modification revision
+and stores one new value, up to the normal 16 MiB logical value limit. Revision
+zero means absent, deleted or expired. Conflicts return current value-free
+metadata without advancing the revision. The existing `KV.update_if/3`
+transaction wrapper and generic transactions retain their 1,000,000-byte cap.
+`Concord.Local` and `Concord.Turso` expose the same CAS API; Turso rejects leases.
+
+VSR requires explicit `command_version: 2` on every writer after all replicas
+have been upgraded. The default remains 0; writers 0/1 reject CAS with
+`{:command_version_required, 2}`. Follow the reader-first rollout in
+[configuration](../../docs/v1/configuration.md); v2 WAL/state has no downgrade
+guarantee. One timeout budget covers validation through commit checks; an already
+submitted consensus write or native commit can finish after a caller timeout.
+A timeout is not proof of no effect; reconcile the stored revision/history
+before retrying. Known successful native commits retain their success ACK.
+
 ## Documentation
 
 - **[Getting Started](../../docs/v1/getting-started.md)** — Installation, quick start, common use cases

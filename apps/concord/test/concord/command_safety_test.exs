@@ -22,7 +22,7 @@ defmodule Concord.CommandSafetyTest do
     state = Core.init()
     operation = CommandEnvelope.wrap(1_000, {:put, "key", "value", %{}})
 
-    assert {:concord_command, 1, 1_000, {:put, "key", "value", %{}}} = operation
+    assert {:concord_command, 2, 1_000, {:put, "key", "value", %{}}} = operation
 
     assert {%{revision: 1}, next_state} =
              VSRStateMachine.apply(metadata(1), operation, state)
@@ -38,7 +38,8 @@ defmodule Concord.CommandSafetyTest do
     assert {:concord_command, 1, 1_000, ^command} = CommandEnvelope.wrap(1_000, command, 1)
     assert CommandEnvelope.supported_version?(0)
     assert CommandEnvelope.supported_version?(1)
-    refute CommandEnvelope.supported_version?(2)
+    assert CommandEnvelope.supported_version?(2)
+    refute CommandEnvelope.supported_version?(3)
 
     assert {:ok, 0, 1_000, ^command} =
              1_000 |> CommandEnvelope.wrap(command, 0) |> CommandEnvelope.unwrap()
@@ -211,10 +212,10 @@ defmodule Concord.CommandSafetyTest do
   test "unsupported command versions and malformed envelopes return explicit errors" do
     state = Core.init()
 
-    assert {{:error, {:unsupported_command_version, 2}}, ^state} =
+    assert {{:error, {:unsupported_command_version, 3}}, ^state} =
              VSRStateMachine.apply(
                metadata(1),
-               {:concord_command, 2, 1_000, {:put, "key", "value", %{}}},
+               {:concord_command, 3, 1_000, {:put, "key", "value", %{}}},
                state
              )
 

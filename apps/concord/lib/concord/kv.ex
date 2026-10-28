@@ -34,7 +34,7 @@ defmodule Concord.KV do
   same quorum-confirmed, linearizable read barrier.
   """
 
-  alias Concord.{Compression, Engine, Validation}
+  alias Concord.{CommandSchema, Compression, Deadline, Engine, Validation}
   alias Concord.KV.Record
 
   @timeout 5_000
@@ -330,6 +330,56 @@ defmodule Concord.KV do
   end
 
   @doc """
+  Atomically replaces a key when its visible `mod_revision` matches `:mod_revision`.
+
+  An expected revision of zero creates a missing, deleted, or expired key.
+  Accepts the same 16 MiB logical values as `put/3`, without the transaction
+  envelope's 1,000,000-byte limit. `update_if/3` remains transaction based.
+
+  Returns `{:ok, %{succeeded: boolean, revision: integer, current_kv: Record.t() | nil}}`.
+  `current_kv.value` is always nil, including conflicts; a missing key returns nil.
+  Options are `:ttl`, `:lease`, `:content_type`, `:metadata`, `:compress`, `:timeout`,
+  and `:engine`. Turso does not support leases.
+
+  VSR requires every replica to support command version 2 and every writer to
+  opt in with `command_version: 2`. Older writers return
+  `{:error, {:command_version_required, 2}}` before submitting the command.
+  One timeout budget includes validation, compression, readiness, admission and commit checks.
+  A write already submitted to consensus or native commit can finish after a
+  caller timeout. Timeout alone never proves no effect; reconcile the stored
+  revision/history before retrying. A known successful native commit retains
+  its success acknowledgment even if it completes after the deadline.
+  """
+  @spec compare_and_swap(binary(), term(), keyword()) :: {:ok, map()} | {:error, term()}
+  def compare_and_swap(key, value, opts \\ []) do
+    opts = Deadline.start(opts)
+    expected = Keyword.get(opts, :mod_revision)
+
+    with :ok <- validate_cas_revision(expected),
+         :ok <- validate_key(key),
+         :ok <- Validation.validate_value(value),
+         :ok <- validate_ttl_option(opts),
+         :ok <- Deadline.check(opts) do
+      put_opts = Map.new(Keyword.take(opts, [:ttl, :lease, :content_type, :metadata]))
+      command = {:compare_and_swap, key, maybe_compress(value, opts), expected, put_opts}
+
+      with :ok <- CommandSchema.validate_emission(command),
+           :ok <- Deadline.check(opts) do
+        case do_command(command, Keyword.get(opts, :timeout, @timeout), opts) do
+          {:ok, {:error, reason}, _engine} -> {:error, reason}
+          {:ok, result, _engine} -> {:ok, result}
+          {:timeout, _engine} -> {:error, :timeout}
+          {:error, :noproc} -> {:error, :cluster_not_ready}
+          {:error, reason} -> {:error, reason}
+        end
+      end
+    end
+  end
+
+  defp validate_cas_revision(expected) when is_integer(expected) and expected >= 0, do: :ok
+  defp validate_cas_revision(_expected), do: {:error, :invalid_mod_revision}
+
+  @doc """
   Updates a key only if its `mod_revision` matches the expected value.
 
   Implemented as a transaction wrapper.
@@ -394,7 +444,7 @@ defmodule Concord.KV do
   # ──────────────────────────────────────────────
 
   defp do_command(cmd, timeout, opts) do
-    engine_opts = Keyword.take(opts, [:engine])
+    engine_opts = Keyword.take(opts, [:engine, :deadline])
 
     case Engine.command(cmd, Keyword.put(engine_opts, :timeout, timeout)) do
       {:ok, result} -> {:ok, result, Engine.engine(engine_opts)}

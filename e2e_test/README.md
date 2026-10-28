@@ -124,3 +124,17 @@ epmd -daemon
 
 **Leader election timeout:**
 Check node logs in `_build/e2e_data/node*.log`
+
+### Command version 2 CAS lane
+
+The workflow runs both the default legacy-envelope lane and an explicit
+version 2 lane. Run the latter locally with:
+
+```sh
+CONCORD_VSR_COMMAND_VERSION=2 ./e2e_test/scripts/run_e2e.sh
+```
+
+It exercises large revision CAS values, conflicts and concurrent writers,
+then verifies CAS through primary failover and a full durable cluster restart.
+The restart helper preserves every node's storage and uses bootstrap=false.
+The default command writer remains 0.

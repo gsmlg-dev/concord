@@ -9,7 +9,9 @@ defmodule Concord.Engine.Turso do
 
   @behaviour Concord.Engine
 
+  alias Concord.CommandSchema
   alias Concord.Compression
+  alias Concord.Deadline
   alias Concord.KV.Record
   alias Concord.Turso
   alias Concord.Turso.{Codec, Migrations}
@@ -23,6 +25,44 @@ defmodule Concord.Engine.Turso do
 
   @impl true
   def command(command, opts \\ [])
+
+  def command({:compare_and_swap, key, value, expected, put_opts} = command, opts) do
+    opts = Deadline.start(opts)
+
+    with :ok <- CommandSchema.validate_emission(command),
+         :ok <- Deadline.check(opts),
+         :ok <- cas_lease_supported(put_opts) do
+      {:compare_and_swap, ^key, ^value, ^expected, put_opts} =
+        CommandSchema.normalize_emission(command)
+
+      with_transaction(opts, fn conn ->
+        now = now_seconds()
+
+        with {:ok, current} <- fetch_visible_current(conn, key, now) do
+          actual = if current, do: current.mod_revision, else: 0
+
+          if actual == expected do
+            expires_at = ttl_to_expires_at(Map.get(put_opts, :ttl), now)
+
+            with {:ok, %{revision: revision}} <-
+                   put_record(conn, key, value, expires_at, put_opts, :revisioned),
+                 {:ok, record} <- fetch_current(conn, key) do
+              {:ok, %{succeeded: true, revision: revision, current_kv: %{record | value: nil}}}
+            end
+          else
+            with {:ok, revision} <- current_revision(conn) do
+              {:ok,
+               %{
+                 succeeded: false,
+                 revision: revision,
+                 current_kv: if(current, do: %{current | value: nil})
+               }}
+            end
+          end
+        end
+      end)
+    end
+  end
 
   def command({:put, key, value, %{} = put_opts}, opts) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
@@ -1077,15 +1117,21 @@ defmodule Concord.Engine.Turso do
   defp normalize_list_result({:error, error}), do: {:error, normalize_error(error)}
   defp normalize_list_result(result), do: result
 
-  defp with_transaction(timeout, fun) do
+  defp cas_lease_supported(opts) do
+    if Map.get(opts, :lease), do: {:error, :unsupported_operation}, else: :ok
+  end
+
+  defp with_transaction(timeout, fun) when not is_list(timeout),
+    do: with_transaction([timeout: timeout], fun)
+
+  defp with_transaction(opts, fun) do
+    opts = Deadline.start(opts)
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
     db_opts =
-      if timeout == :infinity,
+      if Keyword.fetch!(opts, :deadline) == :infinity,
         do: [timeout: :infinity],
-        else: [
-          timeout: timeout,
-          deadline: System.monotonic_time(:millisecond) + timeout,
-          queue: false
-        ]
+        else: [timeout: timeout, deadline: Keyword.fetch!(opts, :deadline), queue: false]
 
     case Process.whereis(@db) do
       nil ->

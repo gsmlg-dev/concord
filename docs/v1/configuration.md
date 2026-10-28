@@ -77,7 +77,7 @@ config :concord,
 
 ## Consensus and local admission limits
 
-Version-one envelopes have immutable protocol maxima. The corresponding
+Version-one and version-two envelopes have immutable protocol maxima. The corresponding
 settings above are local pre-consensus admission caps: a smaller value rejects
 work earlier, while a larger value is clamped to the protocol maximum and
 cannot widen the replicated command language. Configure the same local caps on
@@ -85,7 +85,7 @@ every node so routing a request to another node does not change admission. Caps
 must be non-negative integers; an invalid value fails closed as a zero cap
 instead of silently widening admission.
 
-| Resource | Immutable v1 maximum | Local setting |
+| Resource | Immutable v1/v2 maximum | Local setting |
 |---|---:|---|
 | Operations in a bulk command | 500 | `max_batch_size` |
 | Raw and logical aggregate command size | 64 MiB each | `max_command_bytes` |
@@ -164,8 +164,9 @@ storage. VSR reads are replicated barriers and therefore linearizable;
 path.
 
 `command_version: 0` emits the legacy command envelope while readers are being
-upgraded. New writers still enforce the strict current command schema; the
-version-zero replay path exists only to preserve historical behavior. Use this
+upgraded. Version 2 adds the dedicated revision CAS command; versions 0/1 keep
+their historical replay meanings. New writers still enforce the strict current
+command schema; the version-zero replay path exists only to preserve historical behavior. Use this
 rollout order:
 
 1. Upgrade every replica while keeping `command_version: 0`.
@@ -174,10 +175,10 @@ rollout order:
    `Concord.Index.drop/2`. Do not recreate the indexes yet. The list includes
    non-declarative extractors and names that are not non-empty, valid UTF-8
    binaries of at most 255 bytes.
-3. Pause writes, set `command_version: 1` on every node, and remove every old
+3. Pause writes, set `command_version: 2` on every node, and remove every old
    reader from the quorum before resuming operator commands. If an index was
    missed, only its exact listed name is admitted for the required drop.
-4. Run `Concord.Engine.command(:reconcile_legacy_state)`. Normal version-one
+4. Run `Concord.Engine.command(:reconcile_legacy_state)`. Normal version-one/two
    commands remain blocked until status reports
    `storage.legacy_state_reconciliation_required == false`,
    `storage.legacy_state_representation == :current`, and
@@ -187,12 +188,24 @@ rollout order:
    be replaced. Calling `Concord.Index.reindex/2` immediately after plain
    creation is equivalent.
 
-Under version-one admission, the two pre-reconciliation errors are
+Under version-one/two admission, the two pre-reconciliation errors are
 `{:legacy_indexes_require_migration, names}` and
 `{:legacy_state_requires_reconciliation, status}`. Reindexing after
 reconciliation backfills records that already exist. Status reports the active
 `command_version` and configured `wal_version`. The equivalent release
-variable is `CONCORD_VSR_COMMAND_VERSION`.
+variable is `CONCORD_VSR_COMMAND_VERSION`. Its default remains `0`; accepted values
+are `0`, `1`, and `2`. `Concord.KV.compare_and_swap/3` requires writer 2;
+writers 0/1 return `{:error, {:command_version_required, 2}}` without appending
+the command. Other APIs retain their existing command shapes and limits.
+
+Every replica must run a release that supports envelope 2 before any writer
+emits it. Old-reader rejection does not make a mixed-version quorum safe.
+Version 2 writers use current coherent mutation semantics for all commands,
+including existing conditional and batch APIs. Enabling 2 is explicit; a new
+release does not silently change the configured writer version. Snapshot
+format remains 4, but WAL/state after version 2 writes has no downgrade guarantee to
+older releases. The command envelope version and WAL format setting below
+are independent.
 
 `wal_version: 1` is also a compatibility gate. For built-in file storage it
 selects the format for both new WAL records and rewritten checkpoints; memory

@@ -23,6 +23,7 @@ defmodule Concord.Engine.VSR do
 
   alias Concord.CommandEnvelope
   alias Concord.CommandSchema
+  alias Concord.Deadline
   alias Concord.QuerySchema
   alias Concord.Validation
   alias ViewstampedReplication.Configuration
@@ -36,9 +37,11 @@ defmodule Concord.Engine.VSR do
 
   @impl Concord.Engine
   def command(command, opts \\ []) do
+    opts = Deadline.start(opts)
+
     with :ok <- Validation.validate_command_size(command),
          :ok <- CommandSchema.validate_emission(command) do
-      call({:command, command, timeout(opts)}, timeout(opts))
+      call({:command, command, opts}, Deadline.remaining(opts))
     end
   end
 
@@ -88,24 +91,28 @@ defmodule Concord.Engine.VSR do
 
   @impl true
   def handle_call(
-        {:command, command, timeout},
+        {:command, command, budget},
         _from,
         %{configuration: configuration, command_version: command_version} = state
       ) do
-    case ensure_command_ready(state, command, timeout) do
-      {:ok, ready_state} ->
-        result =
-          with :ok <- Validation.validate_command_size(command),
-               :ok <- CommandSchema.validate_emission(command) do
-            command = CommandSchema.normalize_emission(command)
-            operation = CommandEnvelope.wrap(timestamp_ms(), command, command_version)
-            issue(configuration, operation, timeout)
+    with :ok <- Deadline.check(budget),
+         {:ok, ready_state} <- ensure_command_ready(state, command, Deadline.remaining(budget)) do
+      result =
+        with :ok <- Validation.validate_command_size(command),
+             :ok <- CommandSchema.validate_emission(command),
+             :ok <- Deadline.check(budget) do
+          command = CommandSchema.normalize_emission(command)
+          operation = CommandEnvelope.wrap(timestamp_ms(), command, command_version)
+
+          case Deadline.remaining(budget) do
+            0 -> {:error, :timeout}
+            remaining -> issue(configuration, operation, remaining)
           end
+        end
 
-        {:reply, result, ready_state}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+      {:reply, result, ready_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -180,7 +187,11 @@ defmodule Concord.Engine.VSR do
   end
 
   defp call(request, timeout) do
-    GenServer.call(__MODULE__, request, timeout + @call_overhead)
+    GenServer.call(
+      __MODULE__,
+      request,
+      if(timeout == :infinity, do: :infinity, else: timeout + @call_overhead)
+    )
   catch
     :exit, {:timeout, _details} -> {:error, :timeout}
     :exit, {:noproc, _details} -> {:error, :cluster_not_ready}
@@ -209,6 +220,14 @@ defmodule Concord.Engine.VSR do
   end
 
   defp ensure_command_ready(
+         %{command_version: version},
+         {:compare_and_swap, _, _, _, _},
+         _timeout
+       )
+       when version < 2,
+       do: {:error, {:command_version_required, 2}}
+
+  defp ensure_command_ready(
          %{command_version: 0},
          :reconcile_legacy_state,
          _timeout
@@ -219,10 +238,11 @@ defmodule Concord.Engine.VSR do
     do: {:ok, state}
 
   defp ensure_command_ready(
-         %{configuration: configuration, command_version: 1} = state,
+         %{configuration: configuration, command_version: version} = state,
          command,
          timeout
-       ) do
+       )
+       when version in [1, 2] do
     case issue_read(configuration, {:concord_query, timestamp_ms(), :stats}, timeout) do
       {:ok, result} ->
         case unwrap_query_result(result) do

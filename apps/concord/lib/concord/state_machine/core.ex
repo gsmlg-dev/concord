@@ -7,11 +7,12 @@ defmodule Concord.StateMachine.Core.Context do
   """
 
   @enforce_keys [:op_number, :timestamp_ms]
-  defstruct [:op_number, :timestamp_ms]
+  defstruct [:op_number, :timestamp_ms, command_version: 1]
 
   @type t :: %__MODULE__{
           op_number: non_neg_integer(),
-          timestamp_ms: non_neg_integer()
+          timestamp_ms: non_neg_integer(),
+          command_version: 0 | 1 | 2
         }
 
   @spec new!(keyword() | map()) :: t()
@@ -27,8 +28,24 @@ defmodule Concord.StateMachine.Core.Context do
       raise ArgumentError, "timestamp_ms must be a non-negative integer"
     end
 
-    %__MODULE__{op_number: op_number, timestamp_ms: timestamp_ms}
+    command_version = get(attributes, :command_version, 1)
+
+    unless command_version in [0, 1, 2] do
+      raise ArgumentError, "command_version must be 0, 1, or 2"
+    end
+
+    %__MODULE__{
+      op_number: op_number,
+      timestamp_ms: timestamp_ms,
+      command_version: command_version
+    }
   end
+
+  defp get(attributes, key, default) when is_list(attributes),
+    do: Keyword.get(attributes, key, default)
+
+  defp get(attributes, key, default) when is_map(attributes),
+    do: Map.get(attributes, key, default)
 
   defp fetch!(attributes, key) when is_list(attributes), do: Keyword.fetch!(attributes, key)
   defp fetch!(attributes, key) when is_map(attributes), do: Map.fetch!(attributes, key)
@@ -113,7 +130,7 @@ defmodule Concord.StateMachine.Core do
 
   @spec apply(Context.t(), term(), State.t()) :: {term(), State.t()}
   def apply(%Context{} = context, command, %State{} = state) do
-    case CommandSchema.validate(1, command) do
+    case CommandSchema.validate(context.command_version, command) do
       :ok ->
         command = normalize_current_command(command)
 
@@ -150,7 +167,9 @@ defmodule Concord.StateMachine.Core do
   end
 
   defp apply_version(0, context, command, state), do: apply_legacy(context, command, state)
-  defp apply_version(1, context, command, state), do: __MODULE__.apply(context, command, state)
+
+  defp apply_version(version, context, command, state) when version in [1, 2],
+    do: __MODULE__.apply(%{context | command_version: version}, command, state)
 
   defp incremental_command?(command)
        when is_tuple(command) and tuple_size(command) in [3, 4] and elem(command, 0) == :put,
@@ -160,6 +179,7 @@ defmodule Concord.StateMachine.Core do
        when is_tuple(command) and tuple_size(command) in [2, 3] and elem(command, 0) == :delete,
        do: true
 
+  defp incremental_command?({:compare_and_swap, _, _, _, _}), do: true
   defp incremental_command?({:put_if, _, _, _, _}), do: true
   defp incremental_command?({:delete_if, _, _, _}), do: true
   defp incremental_command?({:touch, _, _}), do: true
@@ -517,6 +537,35 @@ defmodule Concord.StateMachine.Core do
       do_apply(context, command, state)
     else
       {:ok, state}
+    end
+  end
+
+  defp visible_cas_record(state, key, now) do
+    case Map.get(state.current, key) do
+      %Record{} = record -> if record.version > 0 and not Record.expired?(record, now), do: record
+      nil -> nil
+    end
+  end
+
+  defp cas_result(succeeded, state, record) do
+    %{
+      succeeded: succeeded,
+      revision: state.revision,
+      current_kv: if(record, do: %{record | value: nil})
+    }
+  end
+
+  defp do_apply(context, {:compare_and_swap, key, value, expected, opts}, state) do
+    current = visible_cas_record(state, key, now_seconds(context))
+    actual = if current, do: current.mod_revision, else: 0
+
+    if actual == expected do
+      case do_apply(context, {:put, key, value, opts}, state) do
+        {{:error, _reason} = error, next} -> {error, next}
+        {_result, next} -> {cas_result(true, next, Map.fetch!(next.current, key)), next}
+      end
+    else
+      {cas_result(false, state, current), state}
     end
   end
 
@@ -1152,6 +1201,9 @@ defmodule Concord.StateMachine.Core do
 
     {:txn, spec}
   end
+
+  defp normalize_current_command({:compare_and_swap, _, _, _, _} = command),
+    do: CommandSchema.normalize_emission(command)
 
   defp normalize_current_command(command), do: command
 

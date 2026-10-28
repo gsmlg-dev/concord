@@ -600,8 +600,8 @@ defmodule Concord.VSRIntegrationTest do
     previous_trap_exit = Process.flag(:trap_exit, true)
 
     try do
-      assert {:error, {:unsupported_command_version, 2}} =
-               Engine.VSR.start_link(configuration: configuration, command_version: 2)
+      assert {:error, {:unsupported_command_version, 3}} =
+               Engine.VSR.start_link(configuration: configuration, command_version: 3)
     after
       Process.flag(:trap_exit, previous_trap_exit)
     end

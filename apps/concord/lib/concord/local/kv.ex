@@ -20,5 +20,8 @@ defmodule Concord.Local.KV do
   def update_if(key, value, opts \\ []),
     do: KV.update_if(key, value, APIOptions.local(opts))
 
+  def compare_and_swap(key, value, opts \\ []),
+    do: KV.compare_and_swap(key, value, APIOptions.local(opts))
+
   def delete_if(key, opts \\ []), do: KV.delete_if(key, APIOptions.local(opts))
 end

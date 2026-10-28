@@ -44,6 +44,7 @@ ELIXIR_CMD="${ELIXIR_CMD:-elixir}"
 rm -rf "$PROJECT_DIR/_build/prod/rel/concord"
 MIX_ENV=prod $MIX_CMD release concord --overwrite --quiet 2>&1
 RELEASE_BIN="$PROJECT_DIR/_build/prod/rel/concord/bin/concord"
+export E2E_RELEASE_BIN="$RELEASE_BIN" E2E_DATA_BASE="$DATA_BASE" E2E_COOKIE="$COOKIE"
 
 if [ ! -f "$RELEASE_BIN" ]; then
   echo -e "${RED}✗ Release build failed${NC}"
@@ -128,6 +129,9 @@ $ELIXIR_CMD \
     Code.require_file(\"$E2E_DIR/tests/v2_txn_test.exs\")
     Code.require_file(\"$E2E_DIR/tests/v2_lease_test.exs\")
     Code.require_file(\"$E2E_DIR/tests/engine_modes_test.exs\")
+    if System.get_env(\"CONCORD_VSR_COMMAND_VERSION\", \"0\") == \"2\" do
+      Code.require_file(\"$E2E_DIR/tests/revision_cas_test.exs\")
+    end
 
     ExUnit.run()
     |> case do
@@ -151,7 +155,11 @@ if [ $EXIT_CODE -eq 0 ]; then
       ]
       Enum.each(nodes, &Node.connect/1)
       Code.require_file(\"$E2E_DIR/support/e2e_cluster.ex\")
-      Code.require_file(\"$E2E_DIR/tests/vsr_cluster_test.exs\")
+      if System.get_env(\"CONCORD_VSR_COMMAND_VERSION\", \"0\") == \"2\" do
+        Code.require_file(\"$E2E_DIR/tests/revision_cas_cluster_test.exs\")
+      else
+        Code.require_file(\"$E2E_DIR/tests/vsr_cluster_test.exs\")
+      end
 
       ExUnit.run()
       |> case do

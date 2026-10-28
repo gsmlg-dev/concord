@@ -45,6 +45,11 @@ defmodule Concord.Turso do
   def get(key, opts \\ []), do: Concord.get(key, APIOptions.turso(opts))
   def delete(key, opts \\ []), do: Concord.delete(key, APIOptions.turso(opts))
   def put_if(key, value, opts), do: Concord.put_if(key, value, APIOptions.turso(opts))
+
+  @doc "See `Concord.KV.compare_and_swap/3`."
+  def compare_and_swap(key, value, opts \\ []),
+    do: Concord.compare_and_swap(key, value, APIOptions.turso(opts))
+
   def delete_if(key, opts), do: Concord.delete_if(key, APIOptions.turso(opts))
   def get_all(opts \\ []), do: Concord.get_all(APIOptions.turso(opts))
   def status(opts \\ []), do: Concord.status(APIOptions.turso(opts))

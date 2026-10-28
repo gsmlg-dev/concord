@@ -14,7 +14,7 @@ defmodule Concord.Engine.Local do
 
   @behaviour Concord.Engine
 
-  alias Concord.{CommandSchema, QuerySchema, StateMachine, StorageScope, Validation}
+  alias Concord.{CommandSchema, Deadline, QuerySchema, StateMachine, StorageScope, Validation}
   alias Concord.StateMachine.Core
   alias Concord.StateMachine.Core.Context
   alias Concord.StateMachine.Observer
@@ -41,8 +41,10 @@ defmodule Concord.Engine.Local do
 
   @impl Concord.Engine
   def command(command, opts \\ []) do
+    opts = Deadline.start(opts)
+
     with :ok <- validate_command(command) do
-      call({:command, command}, opts)
+      call({:command, command, opts}, Keyword.put(opts, :timeout, Deadline.remaining(opts)))
     end
   end
 
@@ -86,9 +88,16 @@ defmodule Concord.Engine.Local do
   end
 
   @impl true
-  def handle_call({:command, command}, _from, %__MODULE__{} = state) do
-    case validate_command(command) do
-      :ok -> apply_command(CommandSchema.normalize_emission(command), state)
+  def handle_call({:command, command}, from, state) do
+    handle_call({:command, command, Deadline.start([])}, from, state)
+  end
+
+  def handle_call({:command, command, opts}, _from, %__MODULE__{} = state) do
+    with :ok <- Deadline.check(opts),
+         :ok <- validate_command(command),
+         :ok <- Deadline.check(opts) do
+      apply_command(CommandSchema.normalize_emission(command), state, opts)
+    else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -135,25 +144,36 @@ defmodule Concord.Engine.Local do
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  defp apply_command(command, state) do
+  defp apply_command(command, state, opts) do
     next_index = state.applied_index + 1
 
     context =
       Context.new!(
         op_number: next_index,
-        timestamp_ms: System.system_time(:millisecond)
+        timestamp_ms: System.system_time(:millisecond),
+        command_version: 2
       )
 
-    {result, machine_state} =
+    outcome =
       with_local_scope(fn ->
         previous_state = state.machine_state
         {result, machine_state} = Core.apply(context, command, previous_state)
-        StateMachine.materialize(machine_state)
-        Observer.committed(context, command, previous_state, machine_state, :local)
-        {result, machine_state}
+
+        with :ok <- Deadline.check(opts) do
+          StateMachine.materialize(machine_state)
+          Observer.committed(context, command, previous_state, machine_state, :local)
+          {:ok, result, machine_state}
+        end
       end)
 
-    {:reply, {:ok, result}, %{state | machine_state: machine_state, applied_index: next_index}}
+    case outcome do
+      {:ok, result, machine_state} ->
+        {:reply, {:ok, result},
+         %{state | machine_state: machine_state, applied_index: next_index}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   defp validate_command(command) do

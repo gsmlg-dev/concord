@@ -954,6 +954,9 @@ defmodule Concord do
   """
   defdelegate revision(opts \\ []), to: Concord.KV
 
+  @doc "See `Concord.KV.compare_and_swap/3`."
+  defdelegate compare_and_swap(key, value, opts \\ []), to: Concord.KV
+
   @doc """
   Lists keys matching a prefix or range selector.
 
