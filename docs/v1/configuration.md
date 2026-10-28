@@ -391,7 +391,7 @@ data_dir =
 | `CONCORD_VSR_WAL_VERSION` | `1` | Built-in file-storage WAL/checkpoint write format (`1` during the rollback window, then one-way opt-in to `2`) |
 | `CONCORD_VSR_BOOTSTRAP` | `false` | Bootstrap a new VSR configuration |
 | `CONCORD_VSR_RETRY_TIMEOUT` | `100` | VSR client retry interval in milliseconds |
-| `CONCORD_VSR_COMMAND_VERSION` | `0` | Emitted Concord command envelope (`0` during compatibility rollout, then `1`) |
+| `CONCORD_VSR_COMMAND_VERSION` | `0` | Emitted Concord command envelope (`0` during compatibility rollout; `1` or `2` after rollout; CAS requires `2`) |
 | `CONCORD_API_PORT` | `8080` | HTTP API port (prod) |
 | `CONCORD_API_IP` | `0.0.0.0` | HTTP API bind address (prod) |
 | `CONCORD_HTTP_ENABLED` | `true` | Enable HTTP API (prod) |

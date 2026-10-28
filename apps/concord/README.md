@@ -106,9 +106,12 @@ readiness, reading each existing current record; plan an upgrade window for
 large stores. The extra index and projection add storage and write work based on
 metadata size. Before serving requests, `Concord.Turso.list(prefix: "", limit: 1,
 keys_only: true, timeout: :infinity)` can complete the migration without a finite
-deadline. All Turso list calls return `{:error, :timeout}` immediately if the
-connection pool is busy. Finite deadlines cover readiness and querying, while
-synchronous native work cannot be forcibly interrupted.
+deadline. By default, Turso list calls return `{:error, :timeout}` immediately
+if the connection pool is busy. Use `queue: true` with a finite positive timeout
+to wait for brief contention within the same admission, checkout, readiness and
+query deadline. Queued lists share a finite capacity (default 64), configured by
+`list_queue_capacity`; full capacity returns `{:error, :overloaded}`. Synchronous
+native work cannot be forcibly interrupted.
 
 Applications that only need the durable Turso KV engine can disable the Concord
 VSR cluster runtime while still starting the Turso pool:
