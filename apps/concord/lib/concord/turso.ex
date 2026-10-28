@@ -99,6 +99,19 @@ defmodule Concord.Turso do
   expired/deleted rows before applying the limit and continuation lookahead.
   """
   def list(opts), do: Concord.list(APIOptions.turso(opts))
+
+  @doc """
+  Commits an atomic transaction using the options described by `Concord.Txn.commit/2`.
+
+  A finite timeout is one budget shared by connection acquisition, database
+  readiness, statements, and the commit. Brief pool contention can wait within
+  that budget. If readiness exhausts it, the application transaction does not run;
+  expiry during its body rolls the transaction back before commit.
+
+  Synchronous native work cannot be forcibly interrupted. A native commit already
+  in progress may finish after the deadline; its successful acknowledgement is
+  preserved. `timeout: :infinity` keeps unbounded acquisition and execution.
+  """
   def txn(spec, opts \\ []), do: Concord.txn(spec, APIOptions.turso(opts))
 
   @doc """

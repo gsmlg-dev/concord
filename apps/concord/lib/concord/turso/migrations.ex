@@ -8,18 +8,22 @@ defmodule Concord.Turso.Migrations do
 
   @spec migrate(DBConnection.conn(), keyword()) :: :ok | {:error, term()}
   def migrate(db \\ @default_db, opts \\ []) do
-    case DBConnection.transaction(
-           db,
-           fn conn ->
-             case migrate_schema(conn, opts) do
-               :ok -> :ok
-               {:error, reason} -> DBConnection.rollback(conn, reason)
-             end
-           end,
-           opts
-         ) do
-      {:ok, :ok} -> :ok
-      {:error, reason} -> {:error, reason}
+    with :ok <- check_deadline(opts) do
+      case DBConnection.transaction(
+             db,
+             fn conn ->
+               with :ok <- migrate_schema(conn, opts),
+                    :ok <- check_deadline(opts) do
+                 :ok
+               else
+                 {:error, reason} -> DBConnection.rollback(conn, reason)
+               end
+             end,
+             opts
+           ) do
+        {:ok, :ok} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -68,7 +72,7 @@ defmodule Concord.Turso.Migrations do
 
   defp ensure_record_metadata(db, opts) do
     with {:ok, %{rows: columns}} <-
-           TursoClient.query(db, "PRAGMA table_info(concord_turso_current)", [], opts),
+           query(db, "PRAGMA table_info(concord_turso_current)", [], opts),
          :ok <- add_record_metadata(db, columns, opts),
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_missing_metadata
                  ON concord_turso_current (key) WHERE record_metadata IS NULL", [], opts),
@@ -89,7 +93,7 @@ defmodule Concord.Turso.Migrations do
   defp backfill_record_metadata(db, opts) do
     with :ok <- check_deadline(opts),
          {:ok, %{rows: rows}} <-
-           TursoClient.query(db, "SELECT key FROM concord_turso_current
+           query(db, "SELECT key FROM concord_turso_current
              INDEXED BY concord_turso_current_missing_metadata
              WHERE record_metadata IS NULL LIMIT 100", [], opts) do
       backfill_record_metadata_rows(db, rows, opts)
@@ -102,7 +106,7 @@ defmodule Concord.Turso.Migrations do
     Enum.reduce_while(rows, :ok, fn %{"key" => key}, :ok ->
       with :ok <- check_deadline(opts),
            {:ok, %{rows: [%{"record" => binary}]}} <-
-             TursoClient.query(
+             query(
                db,
                "SELECT record FROM concord_turso_current WHERE key = ?",
                [key],
@@ -138,9 +142,17 @@ defmodule Concord.Turso.Migrations do
   end
 
   defp execute(db, sql, params, opts) do
-    case TursoClient.execute(db, sql, params, opts) do
-      {:ok, _result} -> :ok
-      {:error, error} -> {:error, error}
+    with :ok <- check_deadline(opts) do
+      case TursoClient.execute(db, sql, params, opts) do
+        {:ok, _result} -> :ok
+        {:error, error} -> {:error, error}
+      end
+    end
+  end
+
+  defp query(db, sql, params, opts) do
+    with :ok <- check_deadline(opts) do
+      TursoClient.query(db, sql, params, opts)
     end
   end
 end

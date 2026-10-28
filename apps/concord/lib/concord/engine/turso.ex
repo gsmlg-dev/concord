@@ -1073,20 +1073,98 @@ defmodule Concord.Engine.Turso do
   defp normalize_list_result(result), do: result
 
   defp with_transaction(timeout, fun) do
-    with :ok <- ensure_ready(timeout: timeout) do
-      case DBConnection.transaction(
-             @db,
-             fn conn ->
-               case fun.(conn) do
-                 {:ok, result} -> {:ok, result}
-                 {:error, reason} -> DBConnection.rollback(conn, reason)
-               end
-             end,
-             timeout: timeout
-           ) do
-        {:ok, {:ok, result}} -> {:ok, result}
-        {:error, reason} -> {:error, reason}
+    db_opts =
+      if timeout == :infinity,
+        do: [timeout: :infinity],
+        else: [
+          timeout: timeout,
+          deadline: System.monotonic_time(:millisecond) + timeout,
+          queue: false
+        ]
+
+    case Process.whereis(@db) do
+      nil ->
+        {:error, :engine_not_started}
+
+      _pid ->
+        checkout_transaction(db_opts, fn conn ->
+          with :ok <- check_deadline(db_opts),
+               :ok <- Migrations.migrate(conn, db_opts),
+               :ok <- check_deadline(db_opts) do
+            transact(conn, db_opts, fun)
+          end
+        end)
+    end
+  end
+
+  defp checkout_transaction(db_opts, fun) do
+    with :ok <- check_deadline(db_opts) do
+      case checkout_transaction_once(db_opts, fun) do
+        :retry_checkout ->
+          remaining = Keyword.fetch!(db_opts, :deadline) - System.monotonic_time(:millisecond)
+
+          if remaining > 0 do
+            receive do
+            after
+              min(remaining, 5) -> checkout_transaction(db_opts, fun)
+            end
+          else
+            {:error, :timeout}
+          end
+
+        result ->
+          result
       end
+    end
+  end
+
+  defp checkout_transaction_once(db_opts, fun) do
+    DBConnection.run(@db, fun, db_opts)
+  rescue
+    error in DBConnection.ConnectionError ->
+      cond do
+        check_deadline(db_opts) == {:error, :timeout} ->
+          {:error, :timeout}
+
+        error.message == "connection not available and queuing is disabled" ->
+          :retry_checkout
+
+        error.reason == :queue_timeout ->
+          {:error, :timeout}
+
+        true ->
+          {:error, normalize_error(error)}
+      end
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  defp transact(conn, db_opts, fun) do
+    case DBConnection.transaction(
+           conn,
+           fn transaction_conn ->
+             with :ok <- check_deadline(db_opts),
+                  {:ok, result} <- fun.({transaction_conn, db_opts}),
+                  :ok <- check_deadline(db_opts) do
+               {:ok, result}
+             else
+               {:error, reason} -> DBConnection.rollback(transaction_conn, reason)
+             end
+           end,
+           db_opts
+         ) do
+      {:ok, {:ok, result}} -> {:ok, result}
+      {:error, reason} -> {:error, normalize_error(reason)}
+    end
+  end
+
+  defp check_deadline(opts) do
+    case Keyword.get(opts, :deadline) do
+      nil ->
+        :ok
+
+      deadline ->
+        if System.monotonic_time(:millisecond) < deadline, do: :ok, else: {:error, :timeout}
     end
   end
 
@@ -1111,17 +1189,31 @@ defmodule Concord.Engine.Turso do
     end
   end
 
-  defp query_rows(conn, sql, params \\ [], opts \\ []) do
-    case Elixir.Turso.query(conn, sql, params, opts) do
-      {:ok, %Elixir.Turso.Result{rows: rows}} -> {:ok, rows}
-      {:error, error} -> {:error, normalize_error(error)}
+  defp query_rows(conn, sql, params \\ [], opts \\ [])
+
+  defp query_rows({conn, db_opts}, sql, params, opts),
+    do: query_rows(conn, sql, params, Keyword.merge(opts, db_opts))
+
+  defp query_rows(conn, sql, params, opts) do
+    with :ok <- check_deadline(opts) do
+      case Elixir.Turso.query(conn, sql, params, opts) do
+        {:ok, %Elixir.Turso.Result{rows: rows}} -> {:ok, rows}
+        {:error, error} -> {:error, normalize_error(error)}
+      end
     end
   end
 
-  defp execute(conn, sql, params \\ []) do
-    case Elixir.Turso.execute(conn, sql, params) do
-      {:ok, _result} -> :ok
-      {:error, error} -> {:error, normalize_error(error)}
+  defp execute(conn, sql, params \\ [], opts \\ [])
+
+  defp execute({conn, db_opts}, sql, params, opts),
+    do: execute(conn, sql, params, Keyword.merge(opts, db_opts))
+
+  defp execute(conn, sql, params, opts) do
+    with :ok <- check_deadline(opts) do
+      case Elixir.Turso.execute(conn, sql, params, opts) do
+        {:ok, _result} -> :ok
+        {:error, error} -> {:error, normalize_error(error)}
+      end
     end
   end
 
