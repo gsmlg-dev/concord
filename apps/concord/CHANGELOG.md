@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.9] - 2026-10-28
+
+### Fixed
+- Share one finite Turso transaction deadline across connection acquisition,
+  database readiness, application statements and pre-commit checks. An expired
+  readiness budget cannot start the application transaction. Native work cannot
+  be forcibly interrupted; timeout after admission is not proof of no effect,
+  and a known successful native commit retains its acknowledgement.
+- Enforce the original CAS deadline through validation, compression and engine
+  admission, including queued Local and VSR commands.
+
+### Added
+- Support `order: :desc` for bounded prefix/range lists through reverse ordered
+  seeks and Turso covering-index queries. Preserve sparse pagination, current
+  visibility, Local/VSR historical reads and the ascending default.
+- Add `Concord.KV.compare_and_swap/3` and convenience APIs for atomic revision
+  comparisons with one new value, up to the normal 16 MiB logical value and
+  64 MiB command limits. Return value-free committed or conflicting metadata;
+  generic transactions and `update_if/3` retain their 1,000,000-byte limit.
+  VSR CAS requires every replica to support command envelope 2 and explicit
+  writer opt-in. The default remains 0; replay meanings for 0/1 are unchanged.
+  Follow the documented reader-first rollout before enabling version 2.
+- Support `queue: true` for Turso lists with a finite positive timeout. One
+  deadline covers bounded admission, checkout, readiness and querying. Configure
+  `list_queue_capacity` (default 64); overload returns an explicit error, and
+  active native work retains capacity until cleanup finishes.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.9.
+- Exercise both legacy and version-2 commands in three-node release tests,
+  including large CAS values, competing writers, failover and durable restart.
+
 ## [3.1.8] - 2026-10-25
 
 ### Fixed
