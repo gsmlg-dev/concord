@@ -261,7 +261,7 @@ Turso does not support leases.
 VSR CAS requires explicit `command_version: 2` after every replica has been
 upgraded; follow the [configuration rollout](configuration.md). The timeout
 budget includes validation, compression, readiness, admission and commit checks. A command
-already submitted to consensus or native commit can finish after its caller
+already admitted by an engine can finish after its caller
 times out. Timeout alone is not proof of no effect; reconcile the stored
 revision/history before retrying. Known successful native commits retain
 their success acknowledgment.

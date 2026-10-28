@@ -347,8 +347,8 @@ defmodule Concord.KV do
   opt in with `command_version: 2`. Older writers return
   `{:error, {:command_version_required, 2}}` before submitting the command.
   One timeout budget includes validation, compression, readiness, admission and commit checks.
-  A write already submitted to consensus or native commit can finish after a
-  caller timeout. Timeout alone never proves no effect; reconcile the stored
+  A write already admitted by an engine can finish after a caller timeout.
+  Timeout alone never proves no effect; reconcile the stored
   revision/history before retrying. A known successful native commit retains
   its success acknowledgment even if it completes after the deadline.
   """

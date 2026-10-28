@@ -212,6 +212,8 @@ defmodule Concord.RevisionCASTest do
       :sys.suspend(pid)
 
       try do
+        started = System.monotonic_time(:millisecond)
+
         task =
           Task.async(fn ->
             KV.compare_and_swap("queued", :late,
@@ -222,6 +224,7 @@ defmodule Concord.RevisionCASTest do
           end)
 
         assert {:error, :timeout} = Task.await(task, 1_000)
+        assert System.monotonic_time(:millisecond) - started < 150
       after
         :sys.resume(pid)
       end

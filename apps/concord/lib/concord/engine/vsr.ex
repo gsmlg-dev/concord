@@ -41,7 +41,7 @@ defmodule Concord.Engine.VSR do
 
     with :ok <- Validation.validate_command_size(command),
          :ok <- CommandSchema.validate_emission(command) do
-      call({:command, command, opts}, Deadline.remaining(opts))
+      call({:command, command, opts}, Deadline.remaining(opts), 0)
     end
   end
 
@@ -186,11 +186,11 @@ defmodule Concord.Engine.VSR do
     |> normalize_error()
   end
 
-  defp call(request, timeout) do
+  defp call(request, timeout, overhead \\ @call_overhead) do
     GenServer.call(
       __MODULE__,
       request,
-      if(timeout == :infinity, do: :infinity, else: timeout + @call_overhead)
+      if(timeout == :infinity, do: :infinity, else: timeout + overhead)
     )
   catch
     :exit, {:timeout, _details} -> {:error, :timeout}

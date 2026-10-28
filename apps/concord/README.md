@@ -217,7 +217,7 @@ have been upgraded. The default remains 0; writers 0/1 reject CAS with
 `{:command_version_required, 2}`. Follow the reader-first rollout in
 [configuration](../../docs/v1/configuration.md); v2 WAL/state has no downgrade
 guarantee. One timeout budget covers validation through commit checks; an already
-submitted consensus write or native commit can finish after a caller timeout.
+admitted engine write can finish after a caller timeout.
 A timeout is not proof of no effect; reconcile the stored revision/history
 before retrying. Known successful native commits retain their success ACK.
 
