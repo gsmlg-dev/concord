@@ -79,6 +79,9 @@ defmodule Concord.Turso do
   @doc """
   Lists current records in lexical prefix or range order.
 
+  Use `order: :desc` for descending keys; ascending order is the default. Continue
+  descending pages with `range: {original_start, last_key}` and the same order.
+
   Accepts the selector, limit, cursor continuation, and timeout options described
   by `Concord.KV.list/1`. With `keys_only: true`, the SQL query reads a covering
   index containing keys and value-free record metadata. Stored values are neither

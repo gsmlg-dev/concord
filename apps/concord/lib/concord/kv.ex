@@ -127,6 +127,7 @@ defmodule Concord.KV do
   - `:range` — `{start, end_exclusive}` tuple (mutually exclusive with `:prefix`)
   - `:limit` — max results (default: 1000, max: 10000)
   - `:keys_only` — omit values (default: false)
+  - `:order` — lexical key order, `:asc` (default) or `:desc`
   - `:revision` — snapshot read at a specific revision
   - `:timeout` — operation timeout in ms (default: 5000)
   - `:consistency` — compatibility name for the shared linearizable read path
@@ -142,9 +143,12 @@ defmodule Concord.KV do
   tombstones inside the selected range may still need to be visited. VSR reads
   retain the same quorum-confirmed barrier.
 
-  Continue a range using its original exclusive upper bound and an inclusive
-  start of `last_key <> <<0>>` for keys shorter than the 4096-byte boundary limit.
-  For maximum-length keys, use a valid binary successor within that limit.
+  For ascending pages, continue using the original exclusive upper bound and an
+  inclusive start of `last_key <> <<0>>` for keys shorter than the 4096-byte
+  boundary limit. For maximum-length keys, use a valid binary successor within
+  that limit. For descending pages, retain the original inclusive start and use
+  `range: {original_start, last_key}` with `order: :desc`; the upper bound is
+  exclusive, so no key is repeated. A prefix page uses its prefix as that start.
   Keep the same `:revision` on every page when a consistent historical view is
   required; without it, each page observes its own current read.
 
@@ -159,27 +163,29 @@ defmodule Concord.KV do
   def list(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @timeout)
     consistency = Keyword.get(opts, :consistency, default_consistency())
+    order = Keyword.get(opts, :order, :asc)
     limit = opts |> Keyword.get(:limit, @default_list_limit) |> min(@max_list_limit) |> max(1)
+
+    list_opts = %{
+      limit: limit,
+      keys_only: Keyword.get(opts, :keys_only, false),
+      revision: Keyword.get(opts, :revision)
+    }
+
+    list_opts = if order == :desc, do: Map.put(list_opts, :order, :desc), else: list_opts
 
     query_cmd =
       cond do
+        order not in [:asc, :desc] ->
+          {:error, :invalid_order}
+
         Keyword.has_key?(opts, :prefix) ->
-          {:list, {:prefix, Keyword.fetch!(opts, :prefix)},
-           %{
-             limit: limit,
-             keys_only: Keyword.get(opts, :keys_only, false),
-             revision: Keyword.get(opts, :revision)
-           }}
+          {:list, {:prefix, Keyword.fetch!(opts, :prefix)}, list_opts}
 
         Keyword.has_key?(opts, :range) ->
           {start_key, end_key} = Keyword.fetch!(opts, :range)
 
-          {:list, {:range, start_key, end_key},
-           %{
-             limit: limit,
-             keys_only: Keyword.get(opts, :keys_only, false),
-             revision: Keyword.get(opts, :revision)
-           }}
+          {:list, {:range, start_key, end_key}, list_opts}
 
         true ->
           {:error, :missing_selector}

@@ -20,6 +20,7 @@ defmodule Concord.E2E.V2KVTest do
         end)
 
       rev_values = Enum.map(revisions, fn {:ok, r} -> r end)
+
       assert length(Enum.uniq(rev_values)) == 1,
              "Revisions should be identical: #{inspect(rev_values)}"
 
@@ -55,6 +56,7 @@ defmodule Concord.E2E.V2KVTest do
 
       for node <- Cluster.nodes() do
         result = Cluster.replicated_query(node, {:get_record, "e2e:tomb:1"})
+
         assert result == {:error, :not_found},
                "Deleted key should return :not_found on #{node}"
       end
@@ -85,17 +87,60 @@ defmodule Concord.E2E.V2KVTest do
       IO.puts("  ✓ Prefix list consistent (5 users) across all nodes")
     end
 
+    test "descending snapshot pages agree on all three nodes" do
+      primary = Cluster.find_primary()
+
+      keys = [
+        "/e2e/descending/a",
+        "/e2e/descending/a" <> <<0>>,
+        "/e2e/descending/m",
+        "/e2e/descending/z"
+      ]
+
+      for key <- keys do
+        assert :ok = :rpc.call(primary, Concord, :put, [key, key])
+      end
+
+      assert {:ok, revision} = :rpc.call(primary, Concord.KV, :revision, [])
+      assert :ok = :rpc.call(primary, Concord, :delete, ["/e2e/descending/m"])
+
+      for node <- Cluster.nodes() do
+        assert {:ok, [first], %{has_more: true, last_key: "/e2e/descending/z"}} =
+                 :rpc.call(node, Concord.KV, :list, [
+                   [prefix: "/e2e/descending/", order: :desc, revision: revision, limit: 1]
+                 ])
+
+        assert {:ok, remaining, %{has_more: false, last_key: "/e2e/descending/a"}} =
+                 :rpc.call(node, Concord.KV, :list, [
+                   [
+                     range: {"/e2e/descending/", first.key},
+                     order: :desc,
+                     revision: revision,
+                     limit: 3
+                   ]
+                 ])
+
+        assert Enum.map(remaining, & &1.key) == Enum.reverse(Enum.take(keys, 3))
+      end
+    end
+
     test "list with limit returns has_more" do
       primary = Cluster.find_primary()
 
       for i <- 1..10 do
-        :rpc.call(primary, Concord, :put, ["/e2e/paginate/#{String.pad_leading("#{i}", 2, "0")}", i])
+        :rpc.call(primary, Concord, :put, [
+          "/e2e/paginate/#{String.pad_leading("#{i}", 2, "0")}",
+          i
+        ])
       end
 
       Process.sleep(500)
 
       {:ok, records, meta} =
-        Cluster.replicated_query(Cluster.find_primary(), {:list, {:prefix, "/e2e/paginate/"}, %{limit: 3}})
+        Cluster.replicated_query(
+          Cluster.find_primary(),
+          {:list, {:prefix, "/e2e/paginate/"}, %{limit: 3}}
+        )
 
       assert length(records) == 3
       assert meta.has_more == true

@@ -80,10 +80,11 @@ defmodule Concord.QuerySchema do
   defp valid_history_options?(_opts), do: false
 
   defp valid_list_options?(opts) when is_map(opts) do
-    only_keys?(opts, [:limit, :keys_only, :revision]) and
+    only_keys?(opts, [:limit, :keys_only, :revision, :order]) and
       positive_integer?(Map.get(opts, :limit, 1_000)) and
       Map.get(opts, :limit, 1_000) <= @max_list_limit and
       is_boolean(Map.get(opts, :keys_only, false)) and
+      Map.get(opts, :order, :asc) in [:asc, :desc] and
       valid_optional_non_negative_integer?(Map.get(opts, :revision))
   end
 

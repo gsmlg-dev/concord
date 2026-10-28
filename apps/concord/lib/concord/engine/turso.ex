@@ -380,15 +380,19 @@ defmodule Concord.Engine.Turso do
     end)
   end
 
+  def query({:list, _selector, %{order: order}}, _opts) when order not in [:asc, :desc],
+    do: {:error, :invalid_order}
+
   def query({:list, selector, list_opts}, opts) do
     with_list_db(opts, fn conn, db_opts ->
       limit = Map.get(list_opts, :limit, 1_000)
       keys_only = Map.get(list_opts, :keys_only, false)
+      order = Map.get(list_opts, :order, :asc)
       now = now_seconds()
       {start_key, end_key} = selector_range(selector)
 
       with {:ok, records} <-
-             list_records(conn, start_key, end_key, limit + 1, keys_only, now, db_opts) do
+             list_records(conn, {start_key, end_key}, limit + 1, keys_only, order, now, db_opts) do
         has_more = length(records) > limit
         trimmed = Enum.take(records, limit)
 
@@ -867,7 +871,8 @@ defmodule Concord.Engine.Turso do
 
   defp decode_record_rows({:error, reason}), do: {:error, reason}
 
-  defp list_records(conn, start_key, end_key, limit, keys_only, now, opts) do
+  defp list_records(conn, {start_key, end_key}, limit, keys_only, order, now, opts) do
+    direction = if order == :desc, do: " DESC", else: ""
     column = if keys_only, do: "record_metadata", else: "record"
     # A table-row projection can still read the record's overflow pages in Turso.
     # Keep key-only projection and visibility checks on the value-free index.
@@ -878,7 +883,7 @@ defmodule Concord.Engine.Turso do
              conn,
              "SELECT key, #{column} FROM concord_turso_current#{index}
              WHERE key >= ? AND key < ? AND version != 0
-             AND (expires_at IS NULL OR expires_at >= ?) ORDER BY key LIMIT ?",
+             AND (expires_at IS NULL OR expires_at >= ?) ORDER BY key#{direction} LIMIT ?",
              [start_key, end_key, now, limit],
              opts
            ) do

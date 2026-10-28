@@ -1479,17 +1479,22 @@ defmodule Concord.StateMachine.Core do
     end
   end
 
+  defp do_query({:list, _selector, %{order: order}}, _state, _now)
+       when order not in [:asc, :desc],
+       do: {:error, :invalid_order}
+
   defp do_query({:list, selector, opts}, state, now) do
     limit = Map.get(opts, :limit, 1000)
     keys_only = Map.get(opts, :keys_only, false)
     revision = Map.get(opts, :revision)
+    order = Map.get(opts, :order, :asc)
 
     if revision != nil and revision <= state.compact_revision do
       {:error, {:compacted, state.compact_revision}}
     else
       entries =
         state
-        |> list_entries(selector, revision, now, limit + 1)
+        |> list_entries(selector, order, revision, now, limit + 1)
 
       has_more = length(entries) > limit
       entries = Enum.take(entries, limit)
@@ -2194,21 +2199,60 @@ defmodule Concord.StateMachine.Core do
     end
   end
 
-  defp list_entries(state, selector, revision, now, remaining) do
-    start_key = selector_start(selector)
-    current = :gb_trees.next(:gb_trees.iterator_from(start_key, state.current_keys))
+  defp list_entries(state, selector, order, revision, now, remaining) do
+    current = listing_iterator(state.current_keys, selector, order)
 
     historical =
       if is_nil(revision),
         do: :none,
-        else: :gb_trees.next(:gb_trees.iterator_from(start_key, state.history_keys))
+        else: listing_iterator(state.history_keys, selector, order)
 
-    collect_list_entries({current, historical}, state, selector, revision, now, remaining, [])
+    collect_list_entries(
+      {order, current, historical},
+      state,
+      selector,
+      revision,
+      now,
+      remaining,
+      []
+    )
+  end
+
+  defp listing_iterator(tree, selector, :asc),
+    do: :gb_trees.next(:gb_trees.iterator_from(selector_start(selector), tree))
+
+  defp listing_iterator(tree, selector, :desc) do
+    case selector_end(selector) do
+      :unbounded ->
+        :gb_trees.next(:gb_trees.iterator(tree, :reversed))
+
+      {:inclusive, key} ->
+        :gb_trees.next(:gb_trees.iterator_from(key, tree, :reversed))
+
+      {:exclusive, key} ->
+        case :gb_trees.next(:gb_trees.iterator_from(key, tree, :reversed)) do
+          {^key, _value, iterator} -> :gb_trees.next(iterator)
+          next -> next
+        end
+    end
   end
 
   defp selector_start({:key, key}), do: key
   defp selector_start({:prefix, prefix}), do: prefix
   defp selector_start({:range, start_key, _end_key}), do: start_key
+
+  defp selector_end({:key, key}), do: {:inclusive, key}
+  defp selector_end({:range, _start_key, end_key}), do: {:exclusive, end_key}
+  defp selector_end({:prefix, prefix}), do: prefix_end(prefix, byte_size(prefix))
+
+  defp prefix_end(_prefix, 0), do: :unbounded
+
+  defp prefix_end(prefix, size) do
+    case :binary.at(prefix, size - 1) do
+      255 -> prefix_end(prefix, size - 1)
+      byte -> {:exclusive, binary_part(prefix, 0, size - 1) <> <<byte + 1>>}
+    end
+  end
 
   defp collect_list_entries(_iterators, _state, _selector, _revision, _now, 0, entries),
     do: Enum.reverse(entries)
@@ -2243,25 +2287,29 @@ defmodule Concord.StateMachine.Core do
     end
   end
 
-  defp next_listing_key({:none, :none}), do: :none
+  defp next_listing_key({_order, :none, :none}), do: :none
 
-  defp next_listing_key({{key, _value, iterator}, :none}),
-    do: {key, {:gb_trees.next(iterator), :none}}
+  defp next_listing_key({order, {key, _value, iterator}, :none}),
+    do: {key, {order, :gb_trees.next(iterator), :none}}
 
-  defp next_listing_key({:none, {key, _value, iterator}}),
-    do: {key, {:none, :gb_trees.next(iterator)}}
-
-  defp next_listing_key({{key, _current_value, current}, {key, _history_value, historical}}),
-    do: {key, {:gb_trees.next(current), :gb_trees.next(historical)}}
+  defp next_listing_key({order, :none, {key, _value, iterator}}),
+    do: {key, {order, :none, :gb_trees.next(iterator)}}
 
   defp next_listing_key(
-         {{current_key, _value, iterator}, {historical_key, _value2, _iterator} = historical}
-       )
-       when current_key < historical_key,
-       do: {current_key, {:gb_trees.next(iterator), historical}}
+         {order, {key, _current_value, current}, {key, _history_value, historical}}
+       ),
+       do: {key, {order, :gb_trees.next(current), :gb_trees.next(historical)}}
 
-  defp next_listing_key({current, {key, _value, iterator}}),
-    do: {key, {current, :gb_trees.next(iterator)}}
+  defp next_listing_key(
+         {order, {current_key, _value, iterator},
+          {historical_key, _value2, _iterator} = historical}
+       )
+       when (order == :asc and current_key < historical_key) or
+              (order == :desc and current_key > historical_key),
+       do: {current_key, {order, :gb_trees.next(iterator), historical}}
+
+  defp next_listing_key({order, current, {key, _value, iterator}}),
+    do: {key, {order, current, :gb_trees.next(iterator)}}
 
   defp mutating_op?({:put, _, _, _}), do: true
   defp mutating_op?({:delete, _, _}), do: true
