@@ -258,6 +258,14 @@ capacity returns `{:error, :overloaded}`. A timed-out native operation retains
 its slot until cleanup finishes. Queued infinite waits are rejected. Ordinary
 and infinite-timeout list calls without `queue: true` keep immediate acquisition.
 
+Point, metadata and batch reads use their finite `:timeout` for readiness,
+checkout and SQL on one connection; all keys in a batch share the original
+budget. Public value and metadata reads check the budget around decompression.
+Expiry returns `{:error, :timeout}` and prevents subsequent SQL. Native work and
+decoding already in progress cannot be forcibly interrupted and may return late.
+When composing reads with a later CAS, pass the caller's remaining timeout to
+each call; the read and mutation are separate operations.
+
 Applications that only need the durable Turso KV engine can disable Concord's
 VSR cluster runtime:
 

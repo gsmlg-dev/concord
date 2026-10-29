@@ -55,10 +55,21 @@ defmodule Concord.KV do
   - `:consistency` — compatibility name for the shared linearizable read path:
     `:eventual`, `:leader` (default), or `:strong`
   - `:timeout` — operation timeout in ms (default: 5000)
+
+  Turso reads share one finite budget across connection acquisition, database
+  readiness, SQL and record decoding. Value and metadata reads also check the
+  budget before and after public decompression. Expiry returns `{:error, :timeout}`;
+  synchronous native work or decoding already in progress cannot be interrupted
+  and may finish after the budget. Compose multiple API calls by passing the
+  caller's remaining timeout to each call; a read and a later CAS are separate
+  operations.
   """
   @spec get(binary(), keyword()) :: {:ok, term()} | {:ok, Record.t()} | {:error, term()}
   def get(key, opts \\ []) do
-    with :ok <- validate_key(key) do
+    opts = Deadline.start(opts)
+
+    with :ok <- validate_key(key),
+         :ok <- Deadline.check(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
       with_metadata = Keyword.get(opts, :metadata, false)
@@ -72,14 +83,11 @@ defmodule Concord.KV do
         end
 
       case do_query(query_cmd, timeout, consistency, opts) do
-        {:ok, %Record{} = record} when not with_metadata ->
-          {:ok, Compression.decompress(record.value)}
-
-        {:ok, %Record{} = record} ->
-          {:ok, %{record | value: Compression.decompress(record.value)}}
-
-        {:ok, value} when not is_struct(value, Record) ->
-          {:ok, Compression.decompress(value)}
+        {:ok, value} ->
+          with :ok <- Deadline.check(opts) do
+            result = {:ok, decompress_get(value, with_metadata)}
+            with :ok <- Deadline.check(opts), do: result
+          end
 
         other ->
           other
@@ -457,7 +465,7 @@ defmodule Concord.KV do
   end
 
   defp do_query(query_cmd, timeout, consistency, opts) do
-    engine_opts = Keyword.take(opts, [:engine, :queue])
+    engine_opts = Keyword.take(opts, [:engine, :queue, :deadline])
 
     case Engine.query(
            query_cmd,
@@ -471,6 +479,13 @@ defmodule Concord.KV do
   defp default_consistency do
     Application.get_env(:concord, :default_read_consistency, :leader)
   end
+
+  defp decompress_get(%Record{} = record, false), do: Compression.decompress(record.value)
+
+  defp decompress_get(%Record{} = record, _with_metadata),
+    do: %{record | value: Compression.decompress(record.value)}
+
+  defp decompress_get(value, _with_metadata), do: Compression.decompress(value)
 
   defp maybe_compress(value, opts) do
     case Keyword.get(opts, :compress) do

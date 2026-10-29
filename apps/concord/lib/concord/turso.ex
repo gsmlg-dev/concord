@@ -5,6 +5,20 @@ defmodule Concord.Turso do
   This API uses a local Turso database through `ex_turso`. It is durable and
   node-local: it does not submit writes to the VSR cluster and it does not
   replicate data to Concord cluster peers.
+
+  Point, metadata and batch reads carry one finite timeout through readiness,
+  connection acquisition and SQL. Batch reads share that budget across all keys
+  and stop before subsequent SQL after expiry. Public value and metadata getters
+  also check the budget around decompression. Expiry returns `{:error, :timeout}`;
+  native work and decoding already in progress cannot be forcibly interrupted,
+  so the response may arrive after the timeout.
+
+  For a sequence of calls, calculate the caller's remaining timeout before each
+  call. For example, pass that remaining value to
+  `Concord.KV.get(key, engine: :turso, metadata: true, timeout: remaining_ms)` and
+  recalculate it before a later `compare_and_swap/3`. These remain separate
+  operations; use `mod_revision` to fence the write. Absolute deadlines are an
+  internal implementation detail, not a required public read option.
   """
 
   alias Concord.APIOptions

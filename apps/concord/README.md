@@ -113,6 +113,14 @@ query deadline. Queued lists share a finite capacity (default 64), configured by
 `list_queue_capacity`; full capacity returns `{:error, :overloaded}`. Synchronous
 native work cannot be forcibly interrupted.
 
+Point, metadata and batch reads also preserve one finite timeout through
+readiness, checkout and SQL. All batch keys share that budget; expiry returns
+`{:error, :timeout}` and stops subsequent SQL. Public value and metadata getters
+check the budget around decompression. Native work or decoding already in
+progress can finish after expiry, so this is not a hard wall-clock cancellation
+guarantee. Pass the caller's remaining timeout to each call when composing a
+read and a later revision CAS; those calls remain separate operations.
+
 Applications that only need the durable Turso KV engine can disable the Concord
 VSR cluster runtime while still starting the Turso pool:
 

@@ -24,7 +24,7 @@ defmodule Concord do
   semantics with the same read path.
   """
 
-  alias Concord.{Compression, Engine, TTL, Txn, Validation}
+  alias Concord.{Compression, Deadline, Engine, TTL, Txn, Validation}
 
   @timeout 5_000
 
@@ -77,6 +77,11 @@ defmodule Concord do
   @doc """
   Retrieves a value by key from the cluster.
 
+  A finite timeout is checked before and after decompression. With Turso, the
+  same budget covers readiness, checkout, SQL and record decoding. Synchronous
+  native work and decoding cannot be forcibly interrupted; an overrun returns
+  `{:error, :timeout}` when control returns.
+
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:consistency` - Compatibility name (`:eventual`, `:leader`, or `:strong`;
@@ -84,7 +89,10 @@ defmodule Concord do
     read barrier.
   """
   def get(key, opts \\ []) do
-    with :ok <- validate_key(key) do
+    opts = Deadline.start(opts)
+
+    with :ok <- validate_key(key),
+         :ok <- Deadline.check(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
@@ -107,8 +115,14 @@ defmodule Concord do
       # Automatically decompress the result if needed
       decompressed_result =
         case result do
-          {:ok, value} -> {:ok, Compression.decompress(value)}
-          other -> other
+          {:ok, value} ->
+            with :ok <- Deadline.check(opts) do
+              result = {:ok, Compression.decompress(value)}
+              with :ok <- Deadline.check(opts), do: result
+            end
+
+          other ->
+            other
         end
 
       duration = System.monotonic_time() - start_time
@@ -604,6 +618,11 @@ defmodule Concord do
   @doc """
   Retrieves multiple values by key from the cluster.
 
+  With Turso, one finite budget covers readiness, connection acquisition and
+  every selected record read. Expiry stops subsequent reads and returns
+  `{:error, :timeout}` rather than a partial result. Native work and decoding
+  already in progress cannot be forcibly interrupted.
+
   ## Options
   - `:timeout` - Operation timeout in milliseconds (default: 5000)
   - `:consistency` - Compatibility name for the shared linearizable read path
@@ -614,8 +633,11 @@ defmodule Concord do
       {:ok, %{"key1" => {:ok, "value1"}, "key2" => {:error, :not_found}}}
   """
   def get_many(keys, opts \\ []) when is_list(keys) do
+    opts = Deadline.start(opts)
+
     with :ok <- validate_batch_size(keys),
-         :ok <- validate_keys(keys) do
+         :ok <- validate_keys(keys),
+         :ok <- Deadline.check(opts) do
       timeout = Keyword.get(opts, :timeout, @timeout)
       consistency = Keyword.get(opts, :consistency, default_consistency())
       start_time = System.monotonic_time()
@@ -794,7 +816,7 @@ defmodule Concord do
   end
 
   defp query(query, timeout, consistency, opts) do
-    engine_opts = Keyword.take(opts, [:engine])
+    engine_opts = Keyword.take(opts, [:engine, :deadline])
 
     case Engine.query(
            query,

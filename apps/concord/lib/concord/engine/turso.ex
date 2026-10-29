@@ -313,16 +313,9 @@ defmodule Concord.Engine.Turso do
     with_db(opts, fn conn ->
       now = now_seconds()
 
-      results =
-        Enum.map(keys, fn key ->
-          case fetch_visible_current(conn, key, now) do
-            {:ok, %Record{} = record} -> {key, {:ok, record.value}}
-            {:ok, nil} -> {key, {:error, :not_found}}
-            {:error, reason} -> {key, {:error, reason}}
-          end
-        end)
-
-      {:ok, {:ok, Map.new(results)}}
+      with {:ok, results} <- fetch_many(conn, keys, now) do
+        {:ok, {:ok, results}}
+      end
     end)
   end
 
@@ -473,9 +466,9 @@ defmodule Concord.Engine.Turso do
 
   @impl true
   def members(opts \\ []) do
-    with :ok <- ensure_ready(opts) do
+    with_db(opts, fn _conn ->
       {:ok, [{:turso, node()}]}
-    end
+    end)
   end
 
   defp put_record(conn, key, value, expires_at, opts, return_style) do
@@ -885,6 +878,22 @@ defmodule Concord.Engine.Turso do
     end
   end
 
+  defp fetch_many(conn, keys, now) do
+    Enum.reduce_while(keys, {:ok, %{}}, fn key, {:ok, results} ->
+      result =
+        case fetch_visible_current(conn, key, now) do
+          {:ok, %Record{} = record} -> {:ok, record.value}
+          {:ok, nil} -> {:error, :not_found}
+          {:error, reason} -> {:error, reason}
+        end
+
+      case result do
+        {:error, :timeout} -> {:halt, {:error, :timeout}}
+        result -> {:cont, {:ok, Map.put(results, key, result)}}
+      end
+    end)
+  end
+
   defp current_records(conn, nil, nil, :all) do
     query_rows(conn, "SELECT key, record FROM concord_turso_current ORDER BY key")
     |> decode_record_rows()
@@ -1046,9 +1055,30 @@ defmodule Concord.Engine.Turso do
   end
 
   defp with_db(opts, fun) do
-    with :ok <- ensure_ready(opts) do
-      fun.(@db)
-    end
+    opts = Deadline.start(opts)
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+
+    db_opts =
+      if Keyword.fetch!(opts, :deadline) == :infinity,
+        do: [timeout: :infinity],
+        else: [timeout: timeout, deadline: Keyword.fetch!(opts, :deadline), queue: false]
+
+    result =
+      case Process.whereis(@db) do
+        nil ->
+          {:error, :engine_not_started}
+
+        _pid ->
+          checkout_db(db_opts, fn conn ->
+            with :ok <- check_deadline(db_opts),
+                 :ok <- Migrations.migrate(conn, db_opts),
+                 :ok <- check_deadline(db_opts) do
+              fun.({conn, db_opts})
+            end
+          end)
+      end
+
+    read_result(result, db_opts)
   end
 
   defp with_list_db(opts, fun) do
@@ -1106,14 +1136,14 @@ defmodule Concord.Engine.Turso do
             else: DBConnection.run(@db, operation, db_opts)
       end
 
-    list_result(result, db_opts)
+    read_result(result, db_opts)
   rescue
-    error in DBConnection.ConnectionError -> list_result({:error, error}, db_opts)
+    error in DBConnection.ConnectionError -> read_result({:error, error}, db_opts)
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  defp list_result(result, opts) do
+  defp read_result(result, opts) do
     deadline = Keyword.get(opts, :deadline)
 
     cond do
@@ -1124,11 +1154,11 @@ defmodule Concord.Engine.Turso do
         {:error, :timeout}
 
       true ->
-        normalize_list_result(result)
+        normalize_read_result(result)
     end
   end
 
-  defp normalize_list_result(
+  defp normalize_read_result(
          {:error,
           %DBConnection.ConnectionError{
             message: "connection not available and queuing is disabled"
@@ -1136,8 +1166,8 @@ defmodule Concord.Engine.Turso do
        ),
        do: {:error, :timeout}
 
-  defp normalize_list_result({:error, error}), do: {:error, normalize_error(error)}
-  defp normalize_list_result(result), do: result
+  defp normalize_read_result({:error, error}), do: {:error, normalize_error(error)}
+  defp normalize_read_result(result), do: result
 
   defp cas_lease_supported(opts) do
     if Map.get(opts, :lease), do: {:error, :unsupported_operation}, else: :ok
@@ -1251,27 +1281,6 @@ defmodule Concord.Engine.Turso do
     end
   end
 
-  defp ensure_ready(opts) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
-
-    try do
-      case Process.whereis(@db) do
-        nil ->
-          {:error, :engine_not_started}
-
-        _pid ->
-          case Migrations.migrate(@db) do
-            :ok -> :ok
-            {:error, reason} -> {:error, normalize_error(reason)}
-          end
-      end
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-    after
-      _ = timeout
-    end
-  end
-
   defp query_rows(conn, sql, params \\ [], opts \\ [])
 
   defp query_rows({conn, db_opts}, sql, params, opts),
@@ -1280,8 +1289,11 @@ defmodule Concord.Engine.Turso do
   defp query_rows(conn, sql, params, opts) do
     with :ok <- check_deadline(opts) do
       case Elixir.Turso.query(conn, sql, params, opts) do
-        {:ok, %Elixir.Turso.Result{rows: rows}} -> {:ok, rows}
-        {:error, error} -> {:error, normalize_error(error)}
+        {:ok, %Elixir.Turso.Result{rows: rows}} ->
+          with :ok <- check_deadline(opts), do: {:ok, rows}
+
+        {:error, error} ->
+          {:error, normalize_error(error)}
       end
     end
   end
