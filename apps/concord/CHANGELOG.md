@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.10] - 2026-10-30
+
+### Fixed
+- Preserve one finite Turso read budget across connection acquisition,
+  database readiness, SQL and record decoding. Point, metadata and batch reads
+  use one checked-out connection; every batch key shares the original deadline,
+  and expiry stops subsequent SQL with a structured timeout.
+- Carry the public value/metadata getter budget through decompression and reject
+  success after expiry. Preserve value shapes, modification revisions, historical
+  reads, consistency behavior and infinite timeouts. Native work or decoding
+  already in progress can finish late and cannot be forcibly interrupted.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.10.
+
 ## [3.1.9] - 2026-10-28
 
 ### Fixed
