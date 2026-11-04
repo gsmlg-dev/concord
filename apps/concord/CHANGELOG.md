@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.11] - 2026-11-05
+
+### Changed
+- Upgrade the embedded `turso` and `turso_core` crates from 0.8.2 to 0.8.3,
+  retaining cloud sync and full-text search support.
+- Update `http_fetch` and its HTTP stack to 0.21.19, `rustler_precompiled` to
+  0.10.1, Ecto to 3.14.3 and Decimal to 3.2.0.
+- Refresh the locked devenv and Nixpkgs inputs.
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.11.
+
 ## [3.1.10] - 2026-10-30
 
 ### Fixed

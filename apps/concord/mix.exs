@@ -1,8 +1,8 @@
 defmodule Concord.MixProject do
   use Mix.Project
 
-  @version "3.1.10"
-  @ex_turso_version "3.1.10"
+  @version "3.1.11"
+  @ex_turso_version "3.1.11"
 
   def project do
     [
@@ -109,7 +109,7 @@ defmodule Concord.MixProject do
       {:db_connection, "~> 2.10"},
       ex_turso_dep(),
       # E2E testing (note: LocalCluster removed due to OTP 28 compatibility, using manual node spawning)
-      {:http_fetch, "~> 0.17.1", only: [:e2e_test], runtime: false},
+      {:http_fetch, "~> 0.21.19", only: [:e2e_test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.29", only: [:dev, :prod], runtime: false}

@@ -4,7 +4,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_turso.svg)](https://hex.pm/packages/ex_turso)
 
 An Elixir library that wraps the [`turso`](https://crates.io/crates/turso) Rust
-crate (v0.8.2) via [Rustler](https://github.com/rusterlium/rustler) NIFs, exposed
+crate (v0.8.3) via [Rustler](https://github.com/rusterlium/rustler) NIFs, exposed
 through a [`DBConnection`](https://hexdocs.pm/db_connection) pool.
 
 It supports **local file databases** (and `":memory:"`), **Turso Cloud sync**
@@ -149,7 +149,7 @@ applications must update `concord`, `ex_turso`, and `viewstamped_replication`
 together because Concord requires its companion packages at the exact same
 version.
 
-Turso 0.8.2 still enforces a maximum expression tree depth of 100. Schema
+Turso 0.8.3 still enforces a maximum expression tree depth of 100. Schema
 authors must group long chains of predicates into balanced expressions to
 stay within that limit. ExTurso does not rewrite application SQL or lift the
 parser limit.
@@ -235,10 +235,10 @@ databases. Use Turso's FTS index syntax:
 
 SQLite's FTS5 virtual table syntax, such as
 `CREATE VIRTUAL TABLE docs_fts USING fts5(content)`, is not exposed by the
-embedded `turso` crate v0.8.2 API. Use `CREATE INDEX ... USING fts` with `MATCH`
+embedded `turso` crate v0.8.3 API. Use `CREATE INDEX ... USING fts` with `MATCH`
 queries instead.
 
-Turso 0.8.2 uses a new FTS storage format. FTS indexes created by older
+Turso 0.8.2 and later use a new FTS storage format. FTS indexes created by older
 versions such as 0.7.2 must be rebuilt explicitly from their base tables;
 they are not migrated automatically. Recreate each affected index with its
 original columns and options:
