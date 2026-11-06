@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.12] - 2026-11-06
+
+### Fixed
+- Avoid retained-log canonicalization and request-index rebuilding for ordinary
+  owned multi-voter read requests, read barriers and acknowledgements, including
+  late acknowledgements. Preserve quorum checks, public-kernel state/effect
+  parity, and exhaustive recovery, state-transfer and different-view validation.
+- Preserve prior Turso records on ordinary and transactional touches. Earlier
+  releases discarded these versions; upgrading cannot recover missing history.
+
+### Added
+- Support bounded Turso prefix/range pages at a committed `:revision`, in either
+  lexical order with stable continuation. Resolve only matching candidates;
+  key-only reads use covering metadata indexes without fetching values. TTL
+  visibility remains based on the current wall clock. Capture revisions after
+  upgrading all writers for complete snapshots; older reads use retained history.
+- Add `Concord.Turso.replace_prefix/3` for one-revision atomic prefix replacement
+  and explicit related puts, with transaction-style expected-state predicates.
+  Admit up to 500 puts, 16 MiB logical/encoded values and a 64 MiB command subject
+  to configured lower limits. Generic transaction limits and replicated command
+  languages are unchanged. One timeout covers preparation, readiness and the
+  transaction; known successful native commit acknowledgements are preserved.
+
+### Changed
+- Backfill value-free historical metadata and add byte-seek indexes during
+  Turso readiness. Original record/history payloads and revision counters remain
+  unchanged. Plan an upgrade window; projections and indexes add storage/write
+  costs, and missing projections from older writers are repaired at readiness.
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.12.
+
 ## [3.1.11] - 2026-11-05
 
 ### Changed
