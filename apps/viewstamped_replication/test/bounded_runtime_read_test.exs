@@ -77,7 +77,7 @@ defmodule ViewstampedReplication.BoundedRuntimeReadTest do
     assert calls == 1
   end
 
-  test "multi-member reads retain the validated quorum path" do
+  test "normal multi-member reads preserve quorum results without exhaustive revalidation" do
     configuration = configuration(3)
     replica = start_replica(configuration, true)
 
@@ -92,9 +92,18 @@ defmodule ViewstampedReplication.BoundedRuntimeReadTest do
                client: writer
              )
 
+    before_read = :sys.get_state(replica)
     {result, calls} = trace_protocol_reads(replica, fn -> read(configuration) end)
+    after_read = :sys.get_state(replica)
     assert result == {:ok, {:ok, :value}}
-    assert calls == 1
+    assert calls == 0
+    assert before_read.protocol_state.log === after_read.protocol_state.log
+    assert before_read.protocol_state.client_table === after_read.protocol_state.client_table
+    assert before_read.state_machine_state === after_read.state_machine_state
+    assert after_read.protocol_state.pending_reads == %{}
+    assert after_read.protocol_state.op_number == 1
+    assert after_read.protocol_state.commit_number == 1
+    assert after_read.protocol_state.applied_number == 1
   end
 
   defp trace_protocol_reads(replica, operation) do

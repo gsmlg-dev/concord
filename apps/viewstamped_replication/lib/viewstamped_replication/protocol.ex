@@ -139,6 +139,22 @@ defmodule ViewstampedReplication.Protocol do
 
   defp runtime_step(
          %State{status: :normal} = state,
+         {:read_request, route, operation}
+       ) do
+    {next, effects} = handle_read_request(state, route, operation)
+    assert_runtime_base!(state, next)
+
+    assert!(
+      next.op_number == state.op_number and next.commit_number == state.commit_number and
+        next.applied_number == state.applied_number,
+      :invalid_operation_numbers
+    )
+
+    {next, effects}
+  end
+
+  defp runtime_step(
+         %State{status: :normal} = state,
          {:peer_message, sender, %Envelope{payload: payload} = envelope} = event
        ) do
     if runtime_normal_message?(state, payload) do
@@ -176,8 +192,8 @@ defmodule ViewstampedReplication.Protocol do
 
   defp runtime_step(state, event), do: exhaustive_runtime_step(state, event)
 
-  # A normal append or exact duplicate preserves every old entry. Messages that
-  # can request state transfer or change views stay on the exhaustive path.
+  # A normal append, read barrier or exact duplicate preserves every old entry.
+  # Messages that can request state transfer or change views stay exhaustive.
   # Cumulative acknowledgements may visit the pending suffix, never applied history.
   defp runtime_normal_message?(state, %Prepare{
          view_number: view,
@@ -200,6 +216,14 @@ defmodule ViewstampedReplication.Protocol do
     do:
       view == state.view_number and is_integer(number) and number >= 0 and
         number <= state.op_number
+
+  defp runtime_normal_message?(state, %ReadBarrier{view_number: view, commit_number: number}),
+    do:
+      view == state.view_number and is_integer(number) and number >= 0 and
+        number <= state.op_number
+
+  defp runtime_normal_message?(state, %ReadBarrierOk{view_number: view}),
+    do: view == state.view_number
 
   defp runtime_normal_message?(_state, _message), do: false
 
