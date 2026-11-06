@@ -14,7 +14,7 @@ defmodule Concord.Engine.Turso do
   alias Concord.Deadline
   alias Concord.KV.Record
   alias Concord.Turso
-  alias Concord.Turso.{Codec, ListQueue, Migrations, PrefixReplacement}
+  alias Concord.Turso.{Codec, ConditionalPut, ListQueue, Migrations, PrefixReplacement}
   alias Concord.Txn.Result, as: TxnResult
 
   @db Concord.Turso.DB
@@ -25,6 +25,16 @@ defmodule Concord.Engine.Turso do
 
   @impl true
   def command(command, opts \\ [])
+
+  def command({:put_many_if, puts, compares}, opts) do
+    opts = Deadline.start(opts)
+
+    with :ok <- Deadline.check(opts),
+         :ok <- ConditionalPut.validate(puts, compares),
+         :ok <- Deadline.check(opts) do
+      with_transaction(opts, &put_many_if(&1, puts, compares))
+    end
+  end
 
   def command({:replace_prefix, prefix, puts, compares}, opts) do
     opts = Deadline.start(opts)
@@ -551,6 +561,19 @@ defmodule Concord.Engine.Turso do
     end
   end
 
+  defp put_many_if(conn, puts, compares) do
+    with {:ok, succeeded?} <- eval_compares(conn, compares, now_seconds()),
+         {:ok, revision} <- txn_revision(conn, succeeded? and puts != []),
+         :ok <- if(succeeded?, do: put_pairs(conn, puts, revision), else: :ok) do
+      {:ok,
+       %{
+         succeeded: succeeded?,
+         revision: revision,
+         written: if(succeeded?, do: length(puts), else: 0)
+       }}
+    end
+  end
+
   defp replace_prefix(conn, prefix, puts, compares) do
     with {:ok, succeeded?} <- eval_compares(conn, compares, now_seconds()) do
       if succeeded? do
@@ -566,7 +589,7 @@ defmodule Concord.Engine.Turso do
                |> Enum.reject(&MapSet.member?(replacements, &1)),
              {:ok, revision} <- bump_revision(conn),
              :ok <- delete_replaced_keys(conn, stale, revision),
-             :ok <- put_replacements(conn, puts, revision) do
+             :ok <- put_pairs(conn, puts, revision) do
           {:ok,
            %{succeeded: true, revision: revision, deleted: length(stale), written: length(puts)}}
         end
@@ -587,7 +610,7 @@ defmodule Concord.Engine.Turso do
     end)
   end
 
-  defp put_replacements(conn, puts, revision) do
+  defp put_pairs(conn, puts, revision) do
     Enum.reduce_while(puts, :ok, fn {key, value}, :ok ->
       case put_record_at_revision(conn, key, value, nil, %{}, revision) do
         {:ok, _result} -> {:cont, :ok}

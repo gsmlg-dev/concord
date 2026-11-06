@@ -22,7 +22,7 @@ defmodule Concord.Turso do
   """
 
   alias Concord.{APIOptions, Deadline, Engine}
-  alias Concord.Turso.PrefixReplacement
+  alias Concord.Turso.{ConditionalPut, PrefixReplacement}
   alias Elixir.Turso, as: TursoClient
 
   @db __MODULE__.DB
@@ -83,6 +83,57 @@ defmodule Concord.Turso do
   def get_all_with_ttl(opts \\ []), do: Concord.get_all_with_ttl(APIOptions.turso(opts))
   def prefix_scan(prefix, opts \\ []), do: Concord.prefix_scan(prefix, APIOptions.turso(opts))
   def put_many(operations, opts \\ []), do: Concord.put_many(operations, APIOptions.turso(opts))
+
+  @doc """
+  Atomically publishes exact-key puts when all pre-commit predicates match.
+
+  Writes only the supplied unique `{key, value}` pairs. Omitted keys and their
+  histories remain unchanged. Comparisons and puts run in one node-local Turso
+  transaction, independently of any `:engine` option.
+
+  ## Options
+
+  - `:compare` — predicates using the `Concord.Txn` compare grammar (default:
+    `[]`). Every predicate observes the state before publication.
+  - `:compress` — optional value compression, as with `Concord.KV.put/3`.
+  - `:timeout` — one budget in milliseconds (default: 5000), or `:infinity`,
+    covering validation, compression, acquisition, readiness and SQL.
+
+  Admits 500 pairs total, including related metadata, with 16 MiB logical and
+  encoded values and a 64 MiB logical and encoded command, including keys and
+  predicates. Lower configured admission caps still apply. Predicates retain
+  transaction compare limits; puts use the batch envelope rather than the
+  generic 128-operation, 1,000,000-byte transaction limits. There are no per-pair
+  TTL, lease or metadata options; ordinary `put_many/2` record semantics apply.
+
+  Returns `{:ok, %{succeeded: boolean, revision: revision, written: count}}`.
+  A nonempty successful batch advances the revision once and shares that revision
+  across all writes, preserving coherent before/after historical reads. Existing
+  keys retain their creation revision and increment their version. A failed
+  comparison returns `succeeded: false`, the current revision and `written: 0`,
+  with no mutation. Empty batches evaluate comparisons without advancing it.
+
+  Native work cannot be forcibly interrupted. Expiry before commit rolls back;
+  an in-flight native commit can finish late, and a known successful
+  acknowledgement is preserved. There is no idempotency receipt: reconcile an
+  uncertain outcome before retrying.
+
+      Concord.Turso.put_many_if([
+        {"turns/session/002", %{text: "new turn"}},
+        {"sessions/session", %{title: "Updated"}}
+      ], compare: [{:mod_revision, "sessions/session", :==, observed_revision}])
+  """
+  @spec put_many_if([{binary(), term()}], keyword()) ::
+          {:ok, %{succeeded: boolean(), revision: non_neg_integer(), written: non_neg_integer()}}
+          | {:error, term()}
+  def put_many_if(puts, opts \\ []) do
+    opts = opts |> APIOptions.turso() |> Deadline.start()
+
+    with {:ok, command} <- ConditionalPut.prepare(puts, opts),
+         :ok <- Deadline.check(opts) do
+      Engine.command(command, opts)
+    end
+  end
 
   @doc """
   Atomically replaces a prefix and publishes the supplied key-value pairs.

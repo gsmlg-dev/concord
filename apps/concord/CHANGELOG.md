@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.14] - 2026-11-07
+
+### Added
+- Add `Concord.Turso.put_many_if/2` for delete-free conditional bulk publication.
+  Evaluate transaction-style predicates and write only supplied exact-key pairs
+  in one node-local transaction. Admit 500 total pairs including metadata, 16 MiB
+  logical/encoded values and a 64 MiB logical/encoded command, subject to lower
+  configured caps. Generic transaction and replicated protocol limits are unchanged.
+- Share one publication revision across successful nonempty batches, preserving
+  per-key create revisions, versions and history. Conflicts apply nothing; empty
+  batches compare without advancing the revision. One timeout covers preparation,
+  acquisition, readiness and SQL. Preserve known successful late native commit
+  acknowledgements; reconcile uncertain outcomes before retrying.
+- Cover full-capacity append with retained records, coherent historical reads,
+  concurrent revision fencing, compression/admission limits and timeout rollback.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.14.
+
 ## [3.1.13] - 2026-11-06
 
 ### Fixed

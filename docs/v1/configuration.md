@@ -276,9 +276,24 @@ record/history bytes and revision counters, and adds index storage/write costs.
 Finish large-store upgrades before serving requests with an infinite-timeout
 list call. Older writers that omit projections are repaired at readiness.
 
+`Concord.Turso.put_many_if/2` atomically writes only the supplied exact-key pairs
+when all optional `:compare` predicates match. Use
+`compare: [{:mod_revision, metadata_key, :==, observed_revision}]` to fence new
+turns and related metadata without reading, rewriting or deleting omitted turns.
+It admits 500 total pairs including metadata, 16 MiB logical/encoded values and
+a 64 MiB logical/encoded command including keys and predicates, subject to lower
+configured admission caps. Puts use the batch envelope; predicates keep the
+transaction compare limits. Successful nonempty batches share one new revision
+and return `{:ok, %{succeeded: true, revision: revision, written: count}}`.
+Conflicts return `succeeded: false`, the current revision and `written: 0`
+without mutation. Empty batches evaluate comparisons without advancing the
+revision. Preparation, acquisition, readiness and SQL share the same timeout;
+expiry before commit rolls back, while known successful late native commit
+acknowledgements are preserved. Reconcile uncertain outcomes before retrying.
+
 `Concord.Turso.replace_prefix/3` atomically publishes an entire prefix and
 explicit related puts at one revision, with optional `:compare` predicates.
-It admits up to 500 puts, 16 MiB logical/encoded values and a 64 MiB logical/encoded
+It admits up to 501 puts, 16 MiB logical/encoded values and a 64 MiB logical/encoded
 command, subject to lower configured limits. Related metadata puts count toward
 that bound. Predicates keep existing transaction compare limits; replacement
 values use the batch envelope. Stale-key deletion can visit every selected old

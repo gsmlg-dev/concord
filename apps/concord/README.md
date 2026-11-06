@@ -139,6 +139,33 @@ progress can finish after expiry, so this is not a hard wall-clock cancellation
 guarantee. Pass the caller's remaining timeout to each call when composing a
 read and a later revision CAS; those calls remain separate operations.
 
+Use `Concord.Turso.put_many_if/2` to append exact new keys and update related
+metadata atomically, fenced by the metadata revision you observed:
+
+```elixir
+Concord.Turso.put_many_if([
+  {"session/1/turn/002", %{text: "new turn"}},
+  {"session/1/meta", %{title: "Updated"}}
+], compare: [{:mod_revision, "session/1/meta", :==, observed_revision}])
+```
+
+Only supplied keys change; omitted earlier turns and session values retain their
+records and history. The operation admits 500 total pairs, including metadata,
+with 16 MiB logical/encoded values and a 64 MiB logical/encoded command including
+keys and predicates, subject to lower configured caps. Predicates retain their
+transaction limits; puts do not consume the generic 128-op/1 MB transaction
+envelope. A successful nonempty batch shares one new revision and returns
+`{:ok, %{succeeded: true, revision: revision, written: count}}`. A conflict returns
+`succeeded: false`, the current revision and `written: 0` without mutation. Empty
+batches compare without advancing the revision. Existing keys retain their
+creation revision and increment their version, as with ordinary pair puts.
+
+Validation, compression, acquisition, readiness and SQL share one `:timeout`
+budget (default 5000 ms). Expiry before commit rolls back. An in-flight native
+commit can finish late, and known successful acknowledgements are preserved.
+There is no idempotency receipt; reconcile uncertain outcomes before retrying.
+Use a fixed committed revision across multi-call historical readers.
+
 Use `Concord.Turso.replace_prefix/3` to publish a complete transcript and related
 metadata in one commit:
 
