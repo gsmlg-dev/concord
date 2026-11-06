@@ -100,11 +100,23 @@ Use key-only pages to enumerate keys without loading stored values:
 Concord.Turso.list(prefix: "sessions/", limit: 100, keys_only: true, timeout: 5_000)
 ```
 
-These current-state pages preserve record metadata and use a covering metadata
-index. Existing databases automatically backfill the projection once during
-readiness, reading each existing current record; plan an upgrade window for
-large stores. The extra index and projection add storage and write work based on
-metadata size. Before serving requests, `Concord.Turso.list(prefix: "", limit: 1,
+These pages preserve record metadata and use covering metadata indexes. Capture
+`{:ok, r} = Concord.Turso.revision()` and pass `revision: r` to
+each page and `Concord.KV.get(key, engine: :turso, revision: r)` to read the same
+retained snapshot despite later appends, overwrites or deletions. Both lexical
+orders and cursor continuation support that revision. Historical selection seeks
+bounded batches of matching keys; key-only reads do not fetch stored values.
+TTL visibility still uses the current wall clock. Future revisions are rejected;
+database resets invalidate old snapshots, and history is not automatically pruned.
+Older releases discarded prior versions on `touch`; those missing versions
+cannot be recovered. Capture revisions after all writers are upgraded for
+complete snapshots; older reads use the history that was actually retained.
+
+Existing databases backfill current and historical metadata projections during
+readiness, reading each existing record once; plan an upgrade window for large
+stores. Original record/history bytes and revision counters remain unchanged.
+The projections and key-seek indexes add storage and write work proportional to
+keys, history and metadata. Before serving requests, `Concord.Turso.list(prefix: "", limit: 1,
 keys_only: true, timeout: :infinity)` can complete the migration without a finite
 deadline. By default, Turso list calls return `{:error, :timeout}` immediately
 if the connection pool is busy. Use `queue: true` with a finite positive timeout
@@ -120,6 +132,25 @@ check the budget around decompression. Native work or decoding already in
 progress can finish after expiry, so this is not a hard wall-clock cancellation
 guarantee. Pass the caller's remaining timeout to each call when composing a
 read and a later revision CAS; those calls remain separate operations.
+
+Use `Concord.Turso.replace_prefix/3` to publish a complete transcript and related
+metadata in one commit:
+
+```elixir
+Concord.Turso.replace_prefix("session/1/turn/", [
+  {"session/1/turn/001", %{text: "replacement"}},
+  {"session/1/meta", %{title: "Updated"}}
+], compare: [{:mod_revision, "session/1/meta", :==, observed_revision}])
+```
+
+The operation removes stale prefix keys, overwrites retained keys, and writes
+all supplied pairs at one revision. Related puts count toward the 500-pair bound;
+16 MiB values and the 64 MiB command envelope retain existing admission checks.
+Generic transaction limits are unchanged. Comparisons fence the entire commit;
+false predicates leave data and revision unchanged. Deletion work depends on
+selected old keys. Timeout after native commit admission can have an uncertain
+outcome; reconcile stored state before retrying. Use a fixed revision for
+multi-call readers to observe a complete old or new publication.
 
 Applications that only need the durable Turso KV engine can disable the Concord
 VSR cluster runtime while still starting the Turso pool:

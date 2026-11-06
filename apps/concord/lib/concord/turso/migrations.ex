@@ -45,10 +45,12 @@ defmodule Concord.Turso.Migrations do
                 key TEXT NOT NULL,
                 revision INTEGER NOT NULL,
                 record BLOB NOT NULL,
+                record_metadata BLOB,
                 PRIMARY KEY (key, revision)
               )", [], opts),
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_history_key_revision
                 ON concord_turso_history (key, revision)", [], opts),
+         :ok <- ensure_history_metadata(db, opts),
          :ok <- execute(db, "CREATE TABLE IF NOT EXISTS concord_turso_txn_requests (
                 idempotency_key TEXT PRIMARY KEY,
                 request_hash BLOB NOT NULL,
@@ -77,7 +79,9 @@ defmodule Concord.Turso.Migrations do
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_missing_metadata
                  ON concord_turso_current (key) WHERE record_metadata IS NULL", [], opts),
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_metadata
-                 ON concord_turso_current (key, record_metadata, version, expires_at)", [], opts) do
+                 ON concord_turso_current (key, record_metadata, version, expires_at)", [], opts),
+         :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_key_bytes
+                 ON concord_turso_current (CAST(key AS BLOB), key)", [], opts) do
       backfill_record_metadata(db, opts)
     end
   end
@@ -127,6 +131,70 @@ defmodule Concord.Turso.Migrations do
     end)
     |> case do
       :ok -> backfill_record_metadata(db, opts)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp ensure_history_metadata(db, opts) do
+    with {:ok, %{rows: columns}} <-
+           query(db, "PRAGMA table_info(concord_turso_history)", [], opts),
+         :ok <- add_history_metadata(db, columns, opts),
+         :ok <-
+           execute(
+             db,
+             "CREATE INDEX IF NOT EXISTS concord_turso_history_missing_metadata
+                 ON concord_turso_history (key, revision) WHERE record_metadata IS NULL",
+             [],
+             opts
+           ),
+         :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_history_metadata
+                 ON concord_turso_history (key, revision, record_metadata)", [], opts),
+         :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_history_key_bytes
+                 ON concord_turso_history (CAST(key AS BLOB), key, revision)", [], opts) do
+      backfill_history_metadata(db, opts)
+    end
+  end
+
+  defp add_history_metadata(db, columns, opts) do
+    if Enum.any?(columns, &(&1["name"] == "record_metadata")) do
+      :ok
+    else
+      execute(db, "ALTER TABLE concord_turso_history ADD COLUMN record_metadata BLOB", [], opts)
+    end
+  end
+
+  defp backfill_history_metadata(db, opts) do
+    with :ok <- check_deadline(opts),
+         {:ok, %{rows: rows}} <-
+           query(db, "SELECT key, revision FROM concord_turso_history
+             INDEXED BY concord_turso_history_missing_metadata
+             WHERE record_metadata IS NULL LIMIT 100", [], opts) do
+      backfill_history_metadata_rows(db, rows, opts)
+    end
+  end
+
+  defp backfill_history_metadata_rows(_db, [], _opts), do: :ok
+
+  defp backfill_history_metadata_rows(db, rows, opts) do
+    Enum.reduce_while(rows, :ok, fn %{"key" => key, "revision" => revision}, :ok ->
+      with :ok <- check_deadline(opts),
+           {:ok, %{rows: [%{"record" => binary}]}} <-
+             query(
+               db,
+               "SELECT record FROM concord_turso_history WHERE key = ? AND revision = ?",
+               [key, revision],
+               opts
+             ),
+           metadata = binary |> Codec.decode_record() |> Codec.encode_record_metadata(),
+           :ok <- execute(db, "UPDATE concord_turso_history SET record_metadata = ?
+                     WHERE key = ? AND revision = ?", [metadata, key, revision], opts) do
+        {:cont, :ok}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      :ok -> backfill_history_metadata(db, opts)
       {:error, reason} -> {:error, reason}
     end
   end

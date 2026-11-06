@@ -276,13 +276,18 @@ defmodule Concord.TursoKeysOnlyTest do
 
     assert_covering_plan(page_sql, page_params)
 
-    assert [{:sql, missing_sql, missing_params}] =
-             Enum.filter(calls, fn
-               {:sql, sql, _params} -> String.contains?(sql, "record_metadata IS NULL")
-               _ -> false
-             end)
+    missing_queries =
+      Enum.filter(calls, fn
+        {:sql, sql, _params} -> String.contains?(sql, "record_metadata IS NULL")
+        _ -> false
+      end)
 
-    assert_covering_plan(missing_sql, missing_params)
+    assert [{:sql, current_missing, _}, {:sql, history_missing, _}] = missing_queries
+    assert String.contains?(current_missing, "FROM concord_turso_current")
+    assert String.contains?(history_missing, "FROM concord_turso_history")
+
+    for {:sql, missing_sql, missing_params} <- missing_queries,
+        do: assert_covering_plan(missing_sql, missing_params)
 
     for sql <- statements,
         [_, columns] <-

@@ -258,6 +258,35 @@ capacity returns `{:error, :overloaded}`. A timed-out native operation retains
 its slot until cleanup finishes. Queued infinite waits are rejected. Ordinary
 and infinite-timeout list calls without `queue: true` keep immediate acquisition.
 
+Pass the same committed `:revision` to historical Turso pages and selected
+`Concord.KV.get/2` calls. Ascending/descending prefix and range pages seek bounded
+batches of matching keys and retain snapshot metadata. Key-only reads use
+covering metadata indexes without fetching values. Matching invisible keys and
+historical versions may still require visits. Revision zero is empty; malformed
+or future revisions return `:invalid_revision` or `:future_revision`. History is
+not automatically compacted; database resets invalidate old snapshots. TTL
+visibility always uses the current wall clock.
+Pre-3.1.12 `touch` operations discarded prior versions that cannot be recovered.
+There is no separate availability marker for these missing legacy versions;
+capture revisions after upgrading every writer for complete snapshots.
+
+Readiness adds byte-seek indexes and backfills value-free projections for current
+and historical records. This reads each original record once, preserves original
+record/history bytes and revision counters, and adds index storage/write costs.
+Finish large-store upgrades before serving requests with an infinite-timeout
+list call. Older writers that omit projections are repaired at readiness.
+
+`Concord.Turso.replace_prefix/3` atomically publishes an entire prefix and
+explicit related puts at one revision, with optional `:compare` predicates.
+It admits up to 500 puts, 16 MiB logical/encoded values and a 64 MiB logical/encoded
+command, subject to lower configured limits. Related metadata puts count toward
+that bound. Predicates keep existing transaction compare limits; replacement
+values use the batch envelope. Stale-key deletion can visit every selected old
+record. Validation, compression, checkout, readiness and statements share one
+finite timeout. Expiry before commit rolls back; an in-flight native commit can
+finish late, and its known success is preserved. No idempotency receipt is
+provided, so reconcile uncertain outcomes before retrying.
+
 Point, metadata and batch reads use their finite `:timeout` for readiness,
 checkout and SQL on one connection; all keys in a batch share the original
 budget. Public value and metadata reads check the budget around decompression.

@@ -164,10 +164,23 @@ defmodule Concord.KV do
 
   This bound applies to `list/1` on Local and VSR. Legacy `prefix_scan`/`get_all`
   queries and the compatibility `Concord.StateMachine.query/2` wrapper can still
-  traverse the full inventory. Turso lists read current state through SQL and
-  use a value-free covering index for `keys_only: true` after database readiness.
-  See `Concord.Turso.list/1` for its one-time database migration and pool
-  contention behavior.
+  traverse the full inventory. Turso also supports `:revision`, seeking bounded
+  batches of matching current/historical keys and resolving their retained
+  snapshot metadata. Key-only pages use value-free covering indexes after
+  readiness; full pages fetch only selected visible values. Matching invisible
+  keys and historical versions may still need to be visited.
+
+  Turso accepts nonnegative committed revisions: zero is empty, invalid revisions
+  return `:invalid_revision`, and revisions beyond the current counter return
+  `:future_revision`. History is retained without automatic compaction for the
+  database's lifetime; replacing/resetting the database invalidates old snapshots.
+  Releases before 3.1.12 discarded prior versions on `touch`; missing versions
+  cannot be reconstructed. Old snapshots follow retained point-read history
+  without a separate availability marker. Capture revisions after all writers
+  have upgraded for complete snapshots.
+  TTL visibility uses the current wall clock, including for historical records;
+  `:revision` does not provide a historical wall-clock view. See
+  `Concord.Turso.list/1` for its one-time migration and pool contention behavior.
   """
   @spec list(keyword()) :: {:ok, [Record.t()], map()} | {:error, term()}
   def list(opts \\ []) do

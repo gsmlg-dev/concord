@@ -14,7 +14,7 @@ defmodule Concord.Engine.Turso do
   alias Concord.Deadline
   alias Concord.KV.Record
   alias Concord.Turso
-  alias Concord.Turso.{Codec, ListQueue, Migrations}
+  alias Concord.Turso.{Codec, ListQueue, Migrations, PrefixReplacement}
   alias Concord.Txn.Result, as: TxnResult
 
   @db Concord.Turso.DB
@@ -25,6 +25,16 @@ defmodule Concord.Engine.Turso do
 
   @impl true
   def command(command, opts \\ [])
+
+  def command({:replace_prefix, prefix, puts, compares}, opts) do
+    opts = Deadline.start(opts)
+
+    with :ok <- Deadline.check(opts),
+         :ok <- PrefixReplacement.validate(prefix, puts, compares),
+         :ok <- Deadline.check(opts) do
+      with_transaction(opts, &replace_prefix(&1, prefix, puts, compares))
+    end
+  end
 
   def command({:compare_and_swap, key, value, expected, put_opts} = command, opts) do
     opts = Deadline.start(opts)
@@ -416,16 +426,16 @@ defmodule Concord.Engine.Turso do
   def query({:list, _selector, %{order: order}}, _opts) when order not in [:asc, :desc],
     do: {:error, :invalid_order}
 
+  def query({:list, _selector, %{revision: revision}}, _opts)
+      when not is_nil(revision) and (not is_integer(revision) or revision < 0),
+      do: {:error, :invalid_revision}
+
   def query({:list, selector, list_opts}, opts) do
     with_list_db(opts, fn conn, db_opts ->
       limit = Map.get(list_opts, :limit, 1_000)
-      keys_only = Map.get(list_opts, :keys_only, false)
-      order = Map.get(list_opts, :order, :asc)
       now = now_seconds()
-      {start_key, end_key} = selector_range(selector)
 
-      with {:ok, records} <-
-             list_records(conn, {start_key, end_key}, limit + 1, keys_only, order, now, db_opts) do
+      with {:ok, records} <- page_records(conn, selector, limit + 1, list_opts, now, db_opts) do
         has_more = length(records) > limit
         trimmed = Enum.take(records, limit)
 
@@ -529,7 +539,8 @@ defmodule Concord.Engine.Turso do
           with {:ok, revision} <- bump_revision(conn) do
             updated = %{record | expires_at: now + ttl_seconds, mod_revision: revision}
 
-            with :ok <- upsert_current(conn, key, updated) do
+            with :ok <- insert_history(conn, key, record),
+                 :ok <- upsert_current(conn, key, updated) do
               case return_style do
                 :legacy -> {:ok, :ok}
                 :batch -> {:ok, :ok}
@@ -538,6 +549,51 @@ defmodule Concord.Engine.Turso do
           end
       end
     end
+  end
+
+  defp replace_prefix(conn, prefix, puts, compares) do
+    with {:ok, succeeded?} <- eval_compares(conn, compares, now_seconds()) do
+      if succeeded? do
+        {where, params} = byte_range_sql(byte_range({:prefix, prefix}))
+
+        with {:ok, rows} <-
+               query_rows(conn, "SELECT CAST(key AS BLOB) AS key FROM concord_turso_current
+                 INDEXED BY concord_turso_current_key_bytes WHERE #{where}", params),
+             replacements = MapSet.new(puts, &elem(&1, 0)),
+             stale =
+               rows
+               |> Enum.map(&Map.fetch!(&1, "key"))
+               |> Enum.reject(&MapSet.member?(replacements, &1)),
+             {:ok, revision} <- bump_revision(conn),
+             :ok <- delete_replaced_keys(conn, stale, revision),
+             :ok <- put_replacements(conn, puts, revision) do
+          {:ok,
+           %{succeeded: true, revision: revision, deleted: length(stale), written: length(puts)}}
+        end
+      else
+        with {:ok, revision} <- current_revision(conn) do
+          {:ok, %{succeeded: false, revision: revision, deleted: 0, written: 0}}
+        end
+      end
+    end
+  end
+
+  defp delete_replaced_keys(conn, keys, revision) do
+    Enum.reduce_while(keys, :ok, fn key, :ok ->
+      case delete_txn_key(conn, key, revision, false, []) do
+        {:ok, []} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp put_replacements(conn, puts, revision) do
+    Enum.reduce_while(puts, :ok, fn {key, value}, :ok ->
+      case put_record_at_revision(conn, key, value, nil, %{}, revision) do
+        {:ok, _result} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   defp commit_txn(conn, spec) do
@@ -736,7 +792,8 @@ defmodule Concord.Engine.Turso do
         %Record{} ->
           updated = %{record | expires_at: now + ttl_seconds, mod_revision: revision}
 
-          with :ok <- upsert_current(conn, key, updated) do
+          with :ok <- insert_history(conn, key, record),
+               :ok <- upsert_current(conn, key, updated) do
             {:ok, {:touch, key, %{ttl: ttl_seconds}}}
           end
       end
@@ -948,6 +1005,156 @@ defmodule Concord.Engine.Turso do
     end
   end
 
+  defp page_records(conn, selector, limit, list_opts, now, opts) do
+    case Map.get(list_opts, :revision) do
+      nil ->
+        list_records(
+          conn,
+          selector_range(selector),
+          limit,
+          Map.get(list_opts, :keys_only, false),
+          Map.get(list_opts, :order, :asc),
+          now,
+          opts
+        )
+
+      revision ->
+        with {:ok, current} <- current_revision({conn, opts}) do
+          if revision <= current do
+            context = %{
+              revision: revision,
+              keys_only: Map.get(list_opts, :keys_only, false),
+              order: Map.get(list_opts, :order, :asc),
+              now: now
+            }
+
+            historical_page({conn, opts}, byte_range(selector), limit, context, nil, [])
+          else
+            {:error, :future_revision}
+          end
+        end
+    end
+  end
+
+  defp historical_page(_conn, _range, 0, _context, _cursor, records),
+    do: {:ok, Enum.reverse(records)}
+
+  defp historical_page(_conn, _range, _limit, %{revision: 0}, _cursor, _records),
+    do: {:ok, []}
+
+  defp historical_page(conn, range, limit, context, cursor, records) do
+    batch_size = min(limit, 100)
+
+    with {:ok, keys} <- historical_keys(conn, range, context, cursor, batch_size),
+         {:ok, visible} <- visible_revision_records(conn, keys, context) do
+      records = Enum.reverse(visible, records)
+
+      if length(keys) < batch_size do
+        {:ok, Enum.reverse(records)}
+      else
+        historical_page(conn, range, limit - length(visible), context, List.last(keys), records)
+      end
+    end
+  end
+
+  defp historical_keys(conn, range, context, cursor, limit) do
+    {where, params} = byte_range_sql(range, cursor, context.order)
+    direction = if context.order == :desc, do: " DESC", else: ""
+
+    with {:ok, current} <-
+           query_rows(conn, "SELECT CAST(key AS BLOB) AS key FROM concord_turso_current
+             INDEXED BY concord_turso_current_key_bytes WHERE #{where}
+             ORDER BY CAST(key AS BLOB)#{direction} LIMIT ?", params ++ [limit]),
+         {:ok, history} <-
+           query_rows(conn, "SELECT DISTINCT CAST(key AS BLOB) AS key FROM concord_turso_history
+             INDEXED BY concord_turso_history_key_bytes WHERE #{where} AND revision <= ?
+             ORDER BY CAST(key AS BLOB)#{direction} LIMIT ?", params ++ [context.revision, limit]) do
+      keys =
+        (current ++ history)
+        |> Enum.map(&Map.fetch!(&1, "key"))
+        |> Enum.uniq()
+        |> Enum.sort(context.order)
+        |> Enum.take(limit)
+
+      {:ok, keys}
+    end
+  end
+
+  defp visible_revision_records(conn, keys, context) do
+    Enum.reduce_while(keys, {:ok, []}, fn key, {:ok, records} ->
+      with {:ok, metadata} <- metadata_at_revision(conn, key, context.revision),
+           {:ok, record} <- selected_revision_record(conn, key, metadata, context) do
+        if hidden?(record, context.now),
+          do: {:cont, {:ok, records}},
+          else: {:cont, {:ok, [{key, record} | records]}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, records} -> {:ok, Enum.reverse(records)}
+      error -> error
+    end
+  end
+
+  defp selected_revision_record(conn, key, metadata, context) do
+    if context.keys_only or hidden?(metadata, context.now),
+      do: {:ok, metadata},
+      else: record_at_revision(conn, key, context.revision)
+  end
+
+  defp metadata_at_revision(conn, key, revision) do
+    with {:ok, current} <-
+           query_rows(conn, "SELECT record_metadata FROM concord_turso_current
+             INDEXED BY concord_turso_current_metadata WHERE key = ?", [key]) do
+      metadata =
+        case current do
+          [%{"record_metadata" => binary}] -> Codec.decode_record_metadata(binary)
+          [] -> nil
+        end
+
+      if metadata && metadata.mod_revision <= revision do
+        {:ok, metadata}
+      else
+        case query_rows(conn, "SELECT record_metadata FROM concord_turso_history
+               INDEXED BY concord_turso_history_metadata
+               WHERE key = ? AND revision <= ? ORDER BY revision DESC LIMIT 1", [key, revision]) do
+          {:ok, [%{"record_metadata" => binary}]} -> {:ok, Codec.decode_record_metadata(binary)}
+          {:ok, []} -> {:ok, nil}
+          error -> error
+        end
+      end
+    end
+  end
+
+  defp byte_range({:prefix, prefix}), do: {prefix, prefix_successor(prefix)}
+  defp byte_range({:range, start_key, end_key}), do: {start_key, end_key}
+
+  defp prefix_successor(<<>>), do: nil
+
+  defp prefix_successor(prefix) do
+    size = byte_size(prefix) - 1
+    <<start::binary-size(size), last>> = prefix
+    if last == 255, do: prefix_successor(start), else: start <> <<last + 1>>
+  end
+
+  defp byte_range_sql({start_key, end_key}, cursor \\ nil, order \\ :asc) do
+    {where, params} =
+      if end_key do
+        {"CAST(key AS BLOB) >= ? AND CAST(key AS BLOB) < ?",
+         [{:blob, start_key}, {:blob, end_key}]}
+      else
+        {"CAST(key AS BLOB) >= ?", [{:blob, start_key}]}
+      end
+
+    if cursor do
+      comparison = if order == :desc, do: "<", else: ">"
+      {where <> " AND CAST(key AS BLOB) #{comparison} ?", params ++ [{:blob, cursor}]}
+    else
+      {where, params}
+    end
+  end
+
   defp record_at_revision(conn, key, revision) do
     with {:ok, current} <- fetch_current(conn, key) do
       if current && current.mod_revision <= revision do
@@ -1020,10 +1227,11 @@ defmodule Concord.Engine.Turso do
 
   defp insert_history(conn, key, %Record{} = record) do
     execute(conn, "INSERT OR REPLACE INTO concord_turso_history
-      (key, revision, record) VALUES (?, ?, ?)", [
+      (key, revision, record, record_metadata) VALUES (?, ?, ?, ?)", [
       key,
       record.mod_revision,
-      Codec.encode_record(record)
+      Codec.encode_record(record),
+      Codec.encode_record_metadata(record)
     ])
   end
 

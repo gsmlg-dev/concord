@@ -21,7 +21,8 @@ defmodule Concord.Turso do
   internal implementation detail, not a required public read option.
   """
 
-  alias Concord.APIOptions
+  alias Concord.{APIOptions, Deadline, Engine}
+  alias Concord.Turso.PrefixReplacement
   alias Elixir.Turso, as: TursoClient
 
   @db __MODULE__.DB
@@ -83,6 +84,62 @@ defmodule Concord.Turso do
   def prefix_scan(prefix, opts \\ []), do: Concord.prefix_scan(prefix, APIOptions.turso(opts))
   def put_many(operations, opts \\ []), do: Concord.put_many(operations, APIOptions.turso(opts))
 
+  @doc """
+  Atomically replaces a prefix and publishes the supplied key-value pairs.
+
+  Removes current records whose keys start with the nonempty binary `prefix`,
+  then writes every `{key, value}` pair in one Turso commit. Puts may include
+  related metadata keys outside the removed prefix. Keys must be unique; an
+  empty put list deletes the prefix without writing replacements.
+
+  ## Options
+
+  - `:compare` — pre-commit predicates using the `Concord.Txn` compare grammar
+    (default: `[]`). Every predicate observes the state before replacement.
+  - `:compress` — optional value compression, as with `Concord.KV.put/3`.
+  - `:timeout` — one operation budget in milliseconds (default: 5000), or
+    `:infinity`, covering validation, compression, acquisition, readiness and SQL.
+
+  The put bound is 500 pairs, with a 16 MiB logical and encoded value limit and
+  a 64 MiB logical and encoded command limit, including predicates and keys.
+  Lower configured admission limits still apply. Predicates retain transaction
+  compare limits; replacement values do not use the generic 128-operation,
+  1,000,000-byte transaction envelope. This API has no per-pair TTL or lease opts.
+
+  Returns `{:ok, %{succeeded: boolean, revision: revision, deleted: count,
+  written: count}}`. A failed comparison returns `succeeded: false` without
+  mutation. Successful publication shares one revision, so historical readers
+  observe complete before/after replacement rather than an intermediate delete.
+
+  Native work cannot be forcibly interrupted. Expiry before commit rolls back;
+  a native commit already in progress can finish after the deadline, and a known
+  successful acknowledgement is preserved. There is no idempotency receipt for
+  this operation: reconcile an uncertain outcome before retrying. Calls always
+  use the node-local Turso engine, independently of any `:engine` option.
+
+      Concord.Turso.replace_prefix("turns/session/", [
+        {"turns/session/001", %{text: "new transcript"}},
+        {"sessions/session", %{title: "Updated"}}
+      ], compare: [{:mod_revision, "sessions/session", :==, observed_revision}])
+  """
+  @spec replace_prefix(binary(), [{binary(), term()}], keyword()) ::
+          {:ok,
+           %{
+             succeeded: boolean(),
+             revision: non_neg_integer(),
+             deleted: non_neg_integer(),
+             written: non_neg_integer()
+           }}
+          | {:error, term()}
+  def replace_prefix(prefix, puts, opts \\ []) do
+    opts = opts |> APIOptions.turso() |> Deadline.start()
+
+    with {:ok, command} <- PrefixReplacement.prepare(prefix, puts, opts),
+         :ok <- Deadline.check(opts) do
+      Engine.command(command, opts)
+    end
+  end
+
   def put_many_with_ttl(operations, ttl_seconds, opts \\ []) do
     Concord.put_many_with_ttl(operations, ttl_seconds, APIOptions.turso(opts))
   end
@@ -96,10 +153,22 @@ defmodule Concord.Turso do
   def revision(opts \\ []), do: Concord.revision(APIOptions.turso(opts))
 
   @doc """
-  Lists current records in lexical prefix or range order.
+  Lists current or historical records in lexical prefix or range order.
 
   Use `order: :desc` for descending keys; ascending order is the default. Continue
   descending pages with `range: {original_start, last_key}` and the same order.
+
+  Set `:revision` to a nonnegative committed revision for a snapshot page, and
+  retain it on every continuation page. Revision `0` is empty; revisions ahead
+  of the current committed revision return `{:error, :future_revision}`, and
+  malformed revisions return `{:error, :invalid_revision}`. Later overwrites,
+  appends and deletions do not change an earlier snapshot. TTL visibility uses
+  the current wall clock, rather than a historical wall-clock timestamp.
+  History is retained without automatic compaction for the database's lifetime.
+  Versions discarded by pre-3.1.12 `touch` operations cannot be reconstructed.
+  Such old snapshots use retained point-read history without a separate
+  availability marker; capture revisions after upgrading all writers for
+  complete snapshots. Replacing/resetting the database invalidates old revisions.
 
   Accepts the selector, limit, cursor continuation, and timeout options described
   by `Concord.KV.list/1`. With `keys_only: true`, the SQL query reads a covering
@@ -107,12 +176,16 @@ defmodule Concord.Turso do
   fetched nor decoded after database readiness completes. Application metadata is
   preserved, so its size still contributes to read and index costs.
 
-  Existing databases automatically add and backfill the metadata projection on
-  their first engine operation. This one-time transaction reads and decodes each
-  existing current record; original record and history blobs remain unchanged.
-  Plan an upgrade window for large stores. Before serving requests, a call such
-  as `list(prefix: "", limit: 1, keys_only: true, timeout: :infinity)` can finish
-  this migration without a finite operation deadline.
+  Database readiness adds value-free projections for current and historical
+  records, including `concord_turso_history.record_metadata`, and byte-seek
+  indexes. Backfilling missing metadata reads and decodes the corresponding
+  original records, preserving their record/history bytes and revision counters.
+  The projections and indexes add storage and write costs. Plan an upgrade
+  window for large stores; before serving requests, a call such as
+  `list(prefix: "", limit: 1, keys_only: true, timeout: :infinity)` can finish
+  readiness without a finite operation deadline. Legacy writers, including
+  3.1.11, can omit the new projection through `INSERT OR REPLACE`; readiness
+  repairs missing metadata before the next engine operation.
 
   By default, list calls return `{:error, :timeout}` immediately when the pool is
   busy, including with the default timeout or `:infinity`. Use `queue: true` with
