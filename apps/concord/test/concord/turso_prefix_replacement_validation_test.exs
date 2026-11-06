@@ -89,7 +89,7 @@ defmodule Concord.TursoPrefixReplacementValidationTest do
   end
 
   test "enforces the immutable batch cap and configured lower caps" do
-    puts = for number <- 1..501, do: {"p/#{number}", number}
+    puts = for number <- 1..502, do: {"p/#{number}", number}
     assert {:error, :batch_too_large} = PrefixReplacement.validate("p/", puts, [])
     Application.put_env(:concord, :max_batch_size, 1_000)
     assert {:error, :batch_too_large} = PrefixReplacement.validate("p/", puts, [])

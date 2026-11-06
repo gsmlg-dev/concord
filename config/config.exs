@@ -26,7 +26,8 @@ config :concord,
   data_dir: "./data",
   # Local API admission caps. Values above the immutable v1 protocol maxima
   # are clamped, never used to widen the replicated command language.
-  max_batch_size: 500,
+  # Prefix replacement admits 501 puts; generic batch APIs remain capped at 500.
+  max_batch_size: 501,
   max_command_bytes: 64 * 1_024 * 1_024,
   # Default read consistency name. VSR treats all accepted names as linearizable aliases.
   default_read_consistency: :leader,

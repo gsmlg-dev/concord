@@ -3,6 +3,8 @@ defmodule Concord.Turso.PrefixReplacement do
 
   alias Concord.{APIOptions, Compression, Deadline, Validation}
 
+  @max_puts 501
+
   @spec prepare(term(), term(), keyword()) :: {:ok, tuple()} | {:error, term()}
   def prepare(prefix, puts, opts) do
     opts = opts |> APIOptions.turso() |> Deadline.start()
@@ -22,10 +24,17 @@ defmodule Concord.Turso.PrefixReplacement do
   @spec validate(term(), term(), term()) :: :ok | {:error, term()}
   def validate(prefix, puts, compares) do
     with :ok <- Validation.validate_key(prefix),
-         :ok <- validate_puts(puts, %{}, 0, Validation.max_batch_size()),
+         :ok <- validate_puts(puts, %{}, 0, max_puts()),
          :ok <- validate_compare_collections(compares),
          :ok <- Validation.validate_txn_spec(%{compare: compares}) do
       Validation.validate_command_size({:replace_prefix, prefix, puts, compares})
+    end
+  end
+
+  defp max_puts do
+    case Application.get_env(:concord, :max_batch_size, @max_puts) do
+      maximum when is_integer(maximum) and maximum >= 0 -> min(maximum, @max_puts)
+      _invalid -> 0
     end
   end
 

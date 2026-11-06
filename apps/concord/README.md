@@ -150,9 +150,12 @@ Concord.Turso.replace_prefix("session/1/turn/", [
 ```
 
 The operation removes stale prefix keys, overwrites retained keys, and writes
-all supplied pairs at one revision. Related puts count toward the 500-pair bound;
-16 MiB values and the 64 MiB command envelope retain existing admission checks.
-Generic transaction limits are unchanged. Comparisons fence the entire commit;
+all supplied pairs at one revision. The 501-pair total bound admits 500 replacement
+rows and one related metadata row. The `:max_batch_size` setting can lower that
+bound; an explicit setting of 500 must be raised to 501 for the additional pair.
+Generic batches stay capped at 500, while 16 MiB values, the 64 MiB command
+envelope and generic transaction limits retain existing admission checks.
+Comparisons fence the entire commit;
 false predicates leave data and revision unchanged. Deletion work depends on
 selected old keys. Timeout after native commit admission can have an uncertain
 outcome; reconcile stored state before retrying. Use a fixed revision for

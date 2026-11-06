@@ -100,9 +100,13 @@ defmodule Concord.Turso do
   - `:timeout` — one operation budget in milliseconds (default: 5000), or
     `:infinity`, covering validation, compression, acquisition, readiness and SQL.
 
-  The put bound is 500 pairs, with a 16 MiB logical and encoded value limit and
+  The put bound is 501 pairs total, allowing 500 replacement rows plus one
+  related metadata row in the same publication. Generic batch APIs remain capped
+  at 500 pairs. There is a 16 MiB logical and encoded value limit and
   a 64 MiB logical and encoded command limit, including predicates and keys.
-  Lower configured admission limits still apply. Predicates retain transaction
+  Lower configured admission limits still apply, including `:max_batch_size`;
+  an explicit cap of 500 must be raised to 501 to admit the additional pair.
+  Predicates retain transaction
   compare limits; replacement values do not use the generic 128-operation,
   1,000,000-byte transaction envelope. This API has no per-pair TTL or lease opts.
 
