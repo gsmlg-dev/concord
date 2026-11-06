@@ -5,7 +5,9 @@ defmodule Concord.KV.Record do
   Every key in Concord is backed by a `Record` that tracks its full revision
   history metadata. Records are the internal representation stored in ETS;
   the public API can return either bare values (for backward compatibility)
-  or full records (with `metadata: true`).
+  or full records (with `metadata: true` on current point reads).
+  Historical point reads through `Concord.KV.get/2` return values even with
+  `metadata: true`; use revision-bound `Concord.KV.list/1` for snapshot Records.
 
   ## Fields
 

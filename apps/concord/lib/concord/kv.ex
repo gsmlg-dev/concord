@@ -50,11 +50,28 @@ defmodule Concord.KV do
 
   ## Options
 
-  - `:metadata` — if `true`, returns `{:ok, %Record{}}` instead of `{:ok, value}`
-  - `:revision` — read the value as of a specific cluster revision (time-travel)
+  - `:metadata` — if `true` and `:revision` is nil or omitted, returns
+    `{:ok, %Record{}}` instead of `{:ok, value}`
+  - `:revision` — read the value as of a specific revision; a non-nil revision
+    takes precedence over `:metadata` and returns `{:ok, value}`
   - `:consistency` — compatibility name for the shared linearizable read path:
     `:eventual`, `:leader` (default), or `:strong`
   - `:timeout` — operation timeout in ms (default: 5000)
+
+  Historical point reads return values, including when `metadata: true` is
+  supplied. This precedence applies to Local, Turso and VSR; `get/2` does not
+  return historical Records. Use `list/1` with the captured `:revision` to read
+  actual snapshot Records and their metadata. With `keys_only: true`, those
+  Records omit values; read selected values with `get/2` at the same revision:
+
+      {:ok, revision} = Concord.KV.revision(engine: :turso)
+      {:ok, [record | _], _page} =
+        Concord.KV.list(engine: :turso, prefix: "notes/", revision: revision, keys_only: true)
+      {:ok, value} = Concord.KV.get(record.key, engine: :turso, revision: revision)
+
+  Keep that revision on every continuation page and selected point read. Do not
+  combine historical values with current point metadata to infer a snapshot
+  Record. See `list/1` for retention and TTL visibility limits.
 
   Turso reads share one finite budget across connection acquisition, database
   readiness, SQL and record decoding. Value and metadata reads also check the

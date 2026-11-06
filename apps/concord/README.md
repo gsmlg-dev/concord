@@ -106,6 +106,12 @@ each page and `Concord.KV.get(key, engine: :turso, revision: r)` to read the sam
 retained snapshot despite later appends, overwrites or deletions. Both lexical
 orders and cursor continuation support that revision. Historical selection seeks
 bounded batches of matching keys; key-only reads do not fetch stored values.
+Historical lists return snapshot Records, including their actual metadata.
+`Concord.KV.get/2` returns a historical value even with `metadata: true`: a
+non-nil `:revision` takes precedence. Current point Records are available when
+`:revision` is nil or omitted. For snapshot metadata and selected point values,
+use key-only lists and point reads at the same revision; do not substitute
+current metadata for historical list Records.
 TTL visibility still uses the current wall clock. Future revisions are rejected;
 database resets invalidate old snapshots, and history is not automatically pruned.
 Older releases discarded prior versions on `touch`; those missing versions

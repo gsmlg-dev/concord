@@ -170,6 +170,11 @@ defmodule Concord.Turso do
   availability marker; capture revisions after upgrading all writers for
   complete snapshots. Replacing/resetting the database invalidates old revisions.
 
+  Historical lists return snapshot Records. A historical `Concord.KV.get/2`
+  returns the selected value, even with `metadata: true`, because a non-nil
+  `:revision` takes precedence. To read metadata and selected values separately,
+  use a key-only list and point reads at the same revision.
+
   Accepts the selector, limit, cursor continuation, and timeout options described
   by `Concord.KV.list/1`. With `keys_only: true`, the SQL query reads a covering
   index containing keys and value-free record metadata. Stored values are neither
