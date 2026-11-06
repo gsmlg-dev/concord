@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.13] - 2026-11-06
+
+### Fixed
+- Clarify `Concord.KV.get/2` option precedence: a non-nil `:revision` returns
+  the historical value even with `metadata: true`. Current point Records require
+  a nil or omitted revision. Historical Records and their actual metadata are
+  available through revision-bound lists; selected point values must use that
+  same revision. Existing read behavior and engine-specific errors are preserved.
+- Admit up to 501 total puts in Turso prefix replacement, allowing 500 transcript
+  rows plus one related metadata row at a single revision. Generic batches remain
+  capped at 500; value, command, predicate and lower configured limits still apply.
+
+### Added
+- Cover the read-option contract on Local, Turso and VSR, including compressed
+  values, current Records, historical absence, and snapshot list metadata paired
+  with selected point values across later updates and deletions.
+- Verify full-capacity atomic publication, comparisons, retained-key history,
+  shrinking/empty rewrites, complete historical snapshots and admission bounds.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.13.
+- Set the default `:max_batch_size` admission setting to 501 for prefix replacement;
+  generic APIs retain their immutable 500-pair limit. Explicit settings of 500 or
+  less continue to constrain prefix replacement and must be raised to opt in.
+
 ## [3.1.12] - 2026-11-06
 
 ### Fixed
