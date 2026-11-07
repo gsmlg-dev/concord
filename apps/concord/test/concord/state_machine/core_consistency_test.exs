@@ -340,11 +340,10 @@ defmodule Concord.StateMachine.CoreConsistencyTest do
   test "status bounds and deterministically orders the representation conflict sample" do
     keys = Enum.map(1..105, &"key-#{String.pad_leading(Integer.to_string(&1), 3, "0")}")
 
-    state = %{
-      Core.init()
-      | representation: :legacy,
+    state =
+      Core.from_legacy_tables(Core.init(), %{
         store: Map.new(keys, &{&1, %{value: &1, expires_at: nil}})
-    }
+      })
 
     assert {:ok,
             %{

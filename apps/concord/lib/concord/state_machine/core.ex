@@ -57,7 +57,8 @@ defmodule Concord.StateMachine.Core.State do
 
   The legacy and MVCC representations intentionally coexist while the public
   command formats are supported. Unlike the former protocol adapter, no service data
-  is stored outside this value.
+  is stored outside this value. Ordered listing trees and statistics are derived
+  caches, rebuilt at ingress and omitted from snapshots.
   """
 
   defstruct store: %{},
@@ -65,6 +66,7 @@ defmodule Concord.StateMachine.Core.State do
             history: %{},
             current_keys: {0, nil},
             history_keys: {0, nil},
+            statistics: %{memory: 6, conflicts: {0, nil}, changes: %{}},
             leases: %{},
             indexes: %{},
             index_entries: %{},
@@ -87,6 +89,11 @@ defmodule Concord.StateMachine.Core.State do
           history: map(),
           current_keys: :gb_trees.tree(),
           history_keys: :gb_trees.tree(),
+          statistics: %{
+            memory: non_neg_integer(),
+            conflicts: :gb_trees.tree(),
+            changes: map()
+          },
           leases: map(),
           indexes: map(),
           index_entries: map(),
@@ -116,7 +123,7 @@ defmodule Concord.StateMachine.Core do
   alias Concord.Txn.Result
 
   @snapshot_version 4
-  @derived_state_fields [:current_keys, :history_keys]
+  @derived_state_fields [:current_keys, :history_keys, :statistics]
   @idempotency_cache_size 100_000
   @idempotency_retention_revisions 10_000
   @representation_conflict_sample_size 100
@@ -125,7 +132,11 @@ defmodule Concord.StateMachine.Core do
 
   @spec init(keyword()) :: State.t()
   def init(_opts \\ []) do
-    %State{current_keys: :gb_trees.empty(), history_keys: :gb_trees.empty()}
+    %State{
+      current_keys: :gb_trees.empty(),
+      history_keys: :gb_trees.empty(),
+      statistics: %{memory: 6, conflicts: :gb_trees.empty(), changes: %{}}
+    }
   end
 
   @spec apply(Context.t(), term(), State.t()) :: {term(), State.t()}
@@ -202,7 +213,7 @@ defmodule Concord.StateMachine.Core do
         {result, original_state}
 
       {result, next_state} ->
-        {result, %{next_state | command_count: next_state.command_count + 1}}
+        {result, finalize_statistics(%{next_state | command_count: next_state.command_count + 1})}
     end
   end
 
@@ -210,8 +221,12 @@ defmodule Concord.StateMachine.Core do
   @spec apply_command(Context.t(), term(), State.t()) :: {term(), State.t()}
   def apply_command(%Context{} = context, command, %State{} = state) do
     case CommandSchema.validate(1, command) do
-      :ok -> do_apply(context, normalize_current_command(command), state)
-      {:error, :unsupported_command} -> {invalid_command_result(command), state}
+      :ok ->
+        {result, state} = do_apply(context, normalize_current_command(command), state)
+        {result, finalize_statistics(state)}
+
+      {:error, :unsupported_command} ->
+        {invalid_command_result(command), state}
     end
   end
 
@@ -249,11 +264,15 @@ defmodule Concord.StateMachine.Core do
         indexes: Map.get(backup, :indexes, %{})
     }
 
-    {:ok, rebuild_indexes(state)}
+    {:ok, state |> rebuild_indexes() |> rebuild_statistics()}
   end
 
   defp do_apply_legacy(_context, {:restore_backup, entries}, state) when is_list(entries) do
-    {:ok, rebuild_indexes(%{state | store: entries_to_map(entries)})}
+    {:ok,
+     state
+     |> Map.put(:store, entries_to_map(entries))
+     |> rebuild_indexes()
+     |> rebuild_statistics()}
   end
 
   defp do_apply_legacy(context, {:put, key, value}, state) do
@@ -383,8 +402,7 @@ defmodule Concord.StateMachine.Core do
 
       state =
         state
-        |> Map.update!(:store, &Map.delete(&1, key))
-        |> track_change(:store, key)
+        |> delete_stored(key)
         |> update_indexes(key, old_value, nil)
 
       {:ok, state}
@@ -417,7 +435,7 @@ defmodule Concord.StateMachine.Core do
 
               acc =
                 acc
-                |> Map.update!(:store, &Map.delete(&1, key))
+                |> delete_stored(key)
                 |> update_indexes(key, old_value, nil)
 
               {acc, count + 1}
@@ -457,7 +475,7 @@ defmodule Concord.StateMachine.Core do
       Enum.all?(keys, &(is_binary(&1) and byte_size(&1) > 0)) ->
         {results, state} =
           Enum.map_reduce(keys, state, fn key, acc ->
-            {{key, :ok}, Map.update!(acc, :store, &Map.delete(&1, key))}
+            {{key, :ok}, delete_stored(acc, key)}
           end)
 
         {{:ok, results}, rebuild_indexes(state)}
@@ -932,6 +950,8 @@ defmodule Concord.StateMachine.Core do
             revision: revision
         }
 
+        state = Enum.reduce(lease.keys, state, &mark_statistics_key(&2, &1))
+
         {{:ok, %{deleted_keys: deleted}}, state}
 
       :error ->
@@ -1031,7 +1051,8 @@ defmodule Concord.StateMachine.Core do
         next_lease_id: 1
     }
 
-    {:ok, state |> rebuild_listing_indexes() |> rebuild_indexes_deterministic()}
+    {:ok,
+     state |> rebuild_listing_indexes() |> rebuild_indexes_deterministic() |> rebuild_statistics()}
   end
 
   defp ensure_current_representation({:drop_index, name}, state) do
@@ -1116,20 +1137,14 @@ defmodule Concord.StateMachine.Core do
       |> rebuild_listing_indexes()
       |> rebuild_lease_memberships()
       |> rebuild_indexes_deterministic()
+      |> rebuild_statistics()
 
     {{:ok, %{reconciled: count, revision: revision}}, state}
   end
 
   defp representation_conflict_status(state) do
-    keys =
-      state.leases
-      |> Enum.flat_map(fn {_id, lease} -> lease.keys end)
-      |> Kernel.++(Map.keys(state.store))
-      |> Kernel.++(Map.keys(state.current))
-      |> MapSet.new()
-
     {count, sample} =
-      Enum.reduce(keys, {0, []}, fn key, acc ->
+      Enum.reduce(representation_keys(state), {0, []}, fn key, acc ->
         if representation_key_consistent?(state, key),
           do: acc,
           else: add_representation_conflict(acc, key)
@@ -1141,6 +1156,66 @@ defmodule Concord.StateMachine.Core do
       representation: state.representation,
       required: state.representation != :current or count > 0
     }
+  end
+
+  defp representation_keys(state) do
+    state.leases
+    |> Enum.flat_map(fn {_id, lease} -> lease.keys end)
+    |> Kernel.++(Map.keys(state.store))
+    |> Kernel.++(Map.keys(state.current))
+    |> MapSet.new()
+  end
+
+  # Statistics are derived at ingress and updated for changed keys at command
+  # completion. Normal status reads never validate or serialize the store.
+  defp rebuild_statistics(state) do
+    memory =
+      Enum.reduce(state.store, 6, fn {key, stored}, size -> size + stored_size(key, stored) end)
+
+    conflicts =
+      Enum.reduce(representation_keys(state), :gb_trees.empty(), fn key, conflicts ->
+        if representation_key_consistent?(state, key),
+          do: conflicts,
+          else: :gb_trees.enter(key, true, conflicts)
+      end)
+
+    %{state | statistics: %{memory: memory, conflicts: conflicts, changes: %{}}}
+  end
+
+  defp finalize_statistics(state) do
+    conflicts =
+      Enum.reduce(state.statistics.changes, state.statistics.conflicts, fn {key, true},
+                                                                           conflicts ->
+        present? =
+          Map.has_key?(state.store, key) or Map.has_key?(state.current, key) or
+            Enum.any?(state.leases, fn {_id, lease} -> key in lease.keys end)
+
+        if present? and not representation_key_consistent?(state, key),
+          do: :gb_trees.enter(key, true, conflicts),
+          else: :gb_trees.delete_any(key, conflicts)
+      end)
+
+    %{state | statistics: %{state.statistics | conflicts: conflicts, changes: %{}}}
+  end
+
+  defp mark_statistics_key(state, key) do
+    statistics = state.statistics
+    %{state | statistics: %{statistics | changes: Map.put(statistics.changes, key, true)}}
+  end
+
+  defp statistics_conflict_sample(conflicts) do
+    conflicts
+    |> :gb_trees.iterator()
+    |> take_statistics_conflicts(@representation_conflict_sample_size, [])
+  end
+
+  defp take_statistics_conflicts(_iterator, 0, acc), do: Enum.reverse(acc)
+
+  defp take_statistics_conflicts(iterator, remaining, acc) do
+    case :gb_trees.next(iterator) do
+      :none -> Enum.reverse(acc)
+      {key, true, iterator} -> take_statistics_conflicts(iterator, remaining - 1, [key | acc])
+    end
   end
 
   defp current_projection_matches?(%Record{} = record, value, expires_at) do
@@ -1417,23 +1492,18 @@ defmodule Concord.StateMachine.Core do
 
   defp do_query(:stats, state, _now) do
     legacy_indexes = legacy_indexes(state)
-
-    %{
-      count: conflict_count,
-      sample: conflict_sample,
-      representation: representation,
-      required: reconciliation_required
-    } = representation_conflict_status(state)
+    conflict_count = :gb_trees.size(state.statistics.conflicts)
 
     {:ok,
      %{
        size: map_size(state.store),
-       memory: byte_size(:erlang.term_to_binary(state.store)),
+       memory: state.statistics.memory,
        legacy_indexes: legacy_indexes,
        legacy_state_conflict_count: conflict_count,
-       legacy_state_conflicts: conflict_sample,
-       legacy_state_representation: representation,
-       legacy_state_reconciliation_required: reconciliation_required
+       legacy_state_conflicts: statistics_conflict_sample(state.statistics.conflicts),
+       legacy_state_representation: state.representation,
+       legacy_state_reconciliation_required:
+         state.representation != :current or conflict_count > 0
      }}
   end
 
@@ -1594,7 +1664,7 @@ defmodule Concord.StateMachine.Core do
   @spec restore(term()) :: {:ok, State.t()} | {:error, term()}
   def restore(%{__concord_snapshot_version__: @snapshot_version, state: %State{} = state}) do
     state = normalize_restored_state(state)
-    with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_listing_indexes(state)}
+    with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_derived_state(state)}
   end
 
   def restore(%{__concord_snapshot_version__: @snapshot_version}),
@@ -1611,7 +1681,7 @@ defmodule Concord.StateMachine.Core do
     with {:ok, store} <- entries_to_map_checked(entries),
          state = %{init() | store: store, representation: :legacy},
          :ok <- validate_legacy_v4_state(state) do
-      {:ok, state}
+      {:ok, rebuild_derived_state(state)}
     else
       {:error, {:invalid_snapshot, _reason}} = error -> error
       {:error, reason} -> {:error, {:invalid_snapshot, reason}}
@@ -1620,14 +1690,14 @@ defmodule Concord.StateMachine.Core do
 
   def restore(%State{} = state) do
     state = normalize_restored_state(state)
-    with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_listing_indexes(state)}
+    with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_derived_state(state)}
   end
 
   def restore(data) when is_map(data) do
     if complete_plain_state_map?(data) do
       representation = Map.get(data, :representation, :legacy)
       state = struct(State, Map.put(data, :representation, representation))
-      with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_listing_indexes(state)}
+      with :ok <- validate_snapshot_state(state), do: {:ok, rebuild_derived_state(state)}
     else
       {:error, :invalid_snapshot}
     end
@@ -1699,7 +1769,7 @@ defmodule Concord.StateMachine.Core do
            })
            |> then(&struct(State, &1)),
          :ok <- validate_legacy_v4_state(state) do
-      {:ok, rebuild_listing_indexes(state)}
+      {:ok, rebuild_derived_state(state)}
     else
       {:error, {:invalid_snapshot, _reason}} = error -> error
       {:error, reason} -> {:error, {:invalid_snapshot, reason}}
@@ -1799,8 +1869,11 @@ defmodule Concord.StateMachine.Core do
         representation: :legacy
     }
 
-    rebuild_listing_indexes(state)
+    rebuild_derived_state(state)
   end
+
+  defp rebuild_derived_state(state),
+    do: state |> rebuild_listing_indexes() |> rebuild_statistics()
 
   # These ordered lookup structures are derived solely from authoritative maps.
   # They are rebuilt at ingress, never on reads, and omitted from v4 snapshots.
@@ -1912,9 +1985,44 @@ defmodule Concord.StateMachine.Core do
   defp decompress_record(%Record{value: value}), do: Compression.decompress(value)
 
   defp put_legacy(state, key, value, expires_at) do
-    %{state | store: Map.put(state.store, key, %{value: value, expires_at: expires_at})}
+    put_stored(state, key, %{value: value, expires_at: expires_at})
+  end
+
+  defp put_stored(state, key, stored) do
+    previous_size =
+      case Map.fetch(state.store, key) do
+        {:ok, previous} -> stored_size(key, previous)
+        :error -> 0
+      end
+
+    statistics = %{
+      state.statistics
+      | memory: state.statistics.memory + stored_size(key, stored) - previous_size
+    }
+
+    %{state | store: Map.put(state.store, key, stored), statistics: statistics}
+    |> mark_statistics_key(key)
     |> track_change(:store, key)
   end
+
+  defp delete_stored(state, key) do
+    previous_size =
+      case Map.fetch(state.store, key) do
+        {:ok, previous} -> stored_size(key, previous)
+        :error -> 0
+      end
+
+    statistics = %{state.statistics | memory: state.statistics.memory - previous_size}
+
+    %{state | store: Map.delete(state.store, key), statistics: statistics}
+    |> mark_statistics_key(key)
+    |> track_change(:store, key)
+  end
+
+  # An ETF map has a six-byte header. Individual term sizes include their own
+  # one-byte ETF version, which is absent for keys and values inside the map.
+  defp stored_size(key, stored),
+    do: :erlang.external_size(key) + :erlang.external_size(stored) - 2
 
   defp put_current_at_revision(state, key, value, expires_at, revision) do
     previous = Map.get(state.current, key)
@@ -1972,10 +2080,9 @@ defmodule Concord.StateMachine.Core do
     %{
       state
       | current: Map.put(state.current, key, record),
-        current_keys: :gb_trees.enter(key, true, state.current_keys),
-        store: Map.put(state.store, key, %{value: record.value, expires_at: record.expires_at})
+        current_keys: :gb_trees.enter(key, true, state.current_keys)
     }
-    |> track_change(:store, key)
+    |> put_stored(key, %{value: record.value, expires_at: record.expires_at})
     |> track_change(:current, key)
   end
 
@@ -1983,10 +2090,9 @@ defmodule Concord.StateMachine.Core do
     %{
       state
       | current: Map.delete(state.current, key),
-        current_keys: :gb_trees.delete_any(key, state.current_keys),
-        store: Map.delete(state.store, key)
+        current_keys: :gb_trees.delete_any(key, state.current_keys)
     }
-    |> track_change(:store, key)
+    |> delete_stored(key)
     |> track_change(:current, key)
   end
 

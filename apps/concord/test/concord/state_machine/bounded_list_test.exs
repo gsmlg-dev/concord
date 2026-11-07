@@ -168,9 +168,16 @@ defmodule Concord.StateMachine.BoundedListTest do
     assert snapshot.__concord_snapshot_version__ == 4
     refute Map.has_key?(snapshot.state, :current_keys)
     refute Map.has_key?(snapshot.state, :history_keys)
-    assert snapshot.state == Map.drop(state, [:current_keys, :history_keys])
+    refute Map.has_key?(snapshot.state, :statistics)
+    assert snapshot.state == Map.drop(state, [:current_keys, :history_keys, :statistics])
 
-    poisoned = %{state | current_keys: :untrusted, history_keys: :untrusted}
+    poisoned = %{
+      state
+      | current_keys: :untrusted,
+        history_keys: :untrusted,
+        statistics: :untrusted
+    }
+
     plain = Map.from_struct(snapshot.state)
 
     for source <- [

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.16] - 2026-11-08
+
+### Fixed
+- Keep periodic VSR statistics from scanning or serializing the entire store,
+  avoiding metadata-size-dependent pauses in ordinary point reads. Maintain exact
+  storage byte counts and bounded conflict diagnostics incrementally.
+- Rebuild derived statistics at recovery boundaries while preserving exhaustive
+  snapshot, admission and reconciliation validation and the existing snapshot format.
+
 ## [3.1.15] - 2026-11-07
 
 ### Changed
