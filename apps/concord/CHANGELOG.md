@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Select current Turso list, prefix scan, and transaction range get/delete keys in
+  unsigned byte order. UTF-8 keys stored as SQL TEXT no longer escape binary
+  (BLOB) upper bounds, and non-UTF-8 keys are no longer omitted from prefixes.
+  Add a covering byte-order index so key-only pages still avoid value reads.
+
 ## [3.1.16] - 2026-11-08
 
 ### Fixed

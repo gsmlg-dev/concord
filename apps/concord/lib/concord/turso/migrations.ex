@@ -81,7 +81,10 @@ defmodule Concord.Turso.Migrations do
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_metadata
                  ON concord_turso_current (key, record_metadata, version, expires_at)", [], opts),
          :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_key_bytes
-                 ON concord_turso_current (CAST(key AS BLOB), key)", [], opts) do
+                 ON concord_turso_current (CAST(key AS BLOB), key)", [], opts),
+         :ok <- execute(db, "CREATE INDEX IF NOT EXISTS concord_turso_current_key_bytes_metadata
+                 ON concord_turso_current
+                 (CAST(key AS BLOB), key, record_metadata, version, expires_at)", [], opts) do
       backfill_record_metadata(db, opts)
     end
   end

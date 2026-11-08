@@ -19,7 +19,6 @@ defmodule Concord.Engine.Turso do
 
   @db Concord.Turso.DB
   @default_timeout 5_000
-  @prefix_upper_bound <<0xF4, 0x8F, 0xBF, 0xBF>>
   @idempotency_cache_size 100_000
   @idempotency_retention_revisions 10_000
 
@@ -342,9 +341,8 @@ defmodule Concord.Engine.Turso do
   def query({:prefix_scan, prefix}, opts) when is_binary(prefix) do
     with_db(opts, fn conn ->
       now = now_seconds()
-      {start_key, end_key} = prefix_range(prefix)
 
-      with {:ok, records} <- current_records(conn, start_key, end_key, :all) do
+      with {:ok, records} <- current_records(conn, byte_range({:prefix, prefix}), :all) do
         visible =
           records
           |> Enum.reject(fn {_key, record} -> hidden?(record, now) end)
@@ -763,9 +761,8 @@ defmodule Concord.Engine.Turso do
 
   defp execute_txn_op(conn, {:get, selector, opts}, _revision, now) do
     limit = Map.get(opts, :limit, 1_000)
-    {start_key, end_key} = selector_range(selector)
 
-    with {:ok, records} <- current_records(conn, start_key, end_key, limit) do
+    with {:ok, records} <- current_records(conn, byte_range(selector), limit) do
       kvs =
         records
         |> Enum.map(fn {_key, record} -> record end)
@@ -979,15 +976,22 @@ defmodule Concord.Engine.Turso do
     |> decode_record_rows()
   end
 
-  defp current_records(conn, start_key, end_key, :all) do
+  # Keys are TEXT when valid UTF-8 and BLOB otherwise; compare them as bytes.
+  defp current_records(conn, range, :all) do
+    {where, params} = byte_range_sql(range)
+
     query_rows(conn, "SELECT key, record FROM concord_turso_current
-      WHERE key >= ? AND key < ? ORDER BY key", [start_key, end_key])
+      INDEXED BY concord_turso_current_key_bytes WHERE #{where}
+      ORDER BY CAST(key AS BLOB)", params)
     |> decode_record_rows()
   end
 
-  defp current_records(conn, start_key, end_key, limit) do
+  defp current_records(conn, range, limit) do
+    {where, params} = byte_range_sql(range)
+
     query_rows(conn, "SELECT key, record FROM concord_turso_current
-      WHERE key >= ? AND key < ? ORDER BY key LIMIT ?", [start_key, end_key, limit])
+      INDEXED BY concord_turso_current_key_bytes WHERE #{where}
+      ORDER BY CAST(key AS BLOB) LIMIT ?", params ++ [limit])
     |> decode_record_rows()
   end
 
@@ -1000,20 +1004,25 @@ defmodule Concord.Engine.Turso do
 
   defp decode_record_rows({:error, reason}), do: {:error, reason}
 
-  defp list_records(conn, {start_key, end_key}, limit, keys_only, order, now, opts) do
+  defp list_records(conn, range, limit, keys_only, order, now, opts) do
+    {where, params} = byte_range_sql(range)
     direction = if order == :desc, do: " DESC", else: ""
     column = if keys_only, do: "record_metadata", else: "record"
     # A table-row projection can still read the record's overflow pages in Turso.
     # Keep key-only projection and visibility checks on the value-free index.
-    index = if keys_only, do: " INDEXED BY concord_turso_current_metadata", else: ""
+    index =
+      if keys_only,
+        do: "concord_turso_current_key_bytes_metadata",
+        else: "concord_turso_current_key_bytes"
 
     with {:ok, rows} <-
            query_rows(
              conn,
-             "SELECT key, #{column} FROM concord_turso_current#{index}
-             WHERE key >= ? AND key < ? AND version != 0
-             AND (expires_at IS NULL OR expires_at >= ?) ORDER BY key#{direction} LIMIT ?",
-             [start_key, end_key, now, limit],
+             "SELECT key, #{column} FROM concord_turso_current INDEXED BY #{index}
+             WHERE #{where} AND version != 0
+             AND (expires_at IS NULL OR expires_at >= ?)
+             ORDER BY CAST(key AS BLOB)#{direction} LIMIT ?",
+             params ++ [now, limit],
              opts
            ) do
       {:ok,
@@ -1033,7 +1042,7 @@ defmodule Concord.Engine.Turso do
       nil ->
         list_records(
           conn,
-          selector_range(selector),
+          byte_range(selector),
           limit,
           Map.get(list_opts, :keys_only, false),
           Map.get(list_opts, :order, :asc),
@@ -1218,18 +1227,12 @@ defmodule Concord.Engine.Turso do
 
   defp keys_for_selector(_conn, {:key, key}), do: {:ok, [key]}
 
-  defp keys_for_selector(conn, {:prefix, prefix}) do
-    {start_key, end_key} = prefix_range(prefix)
-    keys_in_range(conn, start_key, end_key)
-  end
+  defp keys_for_selector(conn, selector) do
+    {where, params} = byte_range_sql(byte_range(selector))
 
-  defp keys_for_selector(conn, {:range, start_key, end_key}) do
-    keys_in_range(conn, start_key, end_key)
-  end
-
-  defp keys_in_range(conn, start_key, end_key) do
     case query_rows(conn, "SELECT key FROM concord_turso_current
-           WHERE key >= ? AND key < ? ORDER BY key", [start_key, end_key]) do
+           INDEXED BY concord_turso_current_key_bytes WHERE #{where}
+           ORDER BY CAST(key AS BLOB)", params) do
       {:ok, rows} -> {:ok, Enum.map(rows, &Map.fetch!(&1, "key"))}
       {:error, reason} -> {:error, reason}
     end
@@ -1571,11 +1574,6 @@ defmodule Concord.Engine.Turso do
   defp ttl_to_expires_at(_ttl, _now), do: nil
 
   defp now_seconds, do: System.system_time(:second)
-
-  defp selector_range({:prefix, prefix}), do: prefix_range(prefix)
-  defp selector_range({:range, start_key, end_key}), do: {start_key, end_key}
-
-  defp prefix_range(prefix), do: {prefix, prefix <> @prefix_upper_bound}
 
   defp database_path do
     Turso.pool_options() |> Keyword.fetch!(:database)

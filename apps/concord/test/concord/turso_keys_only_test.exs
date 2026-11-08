@@ -268,8 +268,11 @@ defmodule Concord.TursoKeysOnlyTest do
 
     assert [{:sql, page_sql, page_params}] =
              Enum.filter(calls, fn
-               {:sql, sql, _params} -> Regex.match?(~r/ORDER BY\s+key\s+LIMIT\s+\?/i, sql)
-               _ -> false
+               {:sql, sql, _params} ->
+                 Regex.match?(~r/ORDER BY\s+CAST\(key AS BLOB\)\s+LIMIT\s+\?/i, sql)
+
+               _ ->
+                 false
              end)
 
     assert List.last(page_params) == Keyword.fetch!(opts, :limit) + 1

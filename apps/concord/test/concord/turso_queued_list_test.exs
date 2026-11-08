@@ -235,14 +235,14 @@ defmodule Concord.TursoQueuedListTest do
       assert [{:sql, ^worker, :query, _conn, sql, params, _opts}] =
                Enum.filter(calls, fn
                  {:sql, _pid, :query, _conn, sql, _params, _opts} ->
-                   Regex.match?(~r/ORDER BY\s+key\s+DESC\s+LIMIT\s+\?/i, sql)
+                   Regex.match?(~r/ORDER BY\s+CAST\(key AS BLOB\)\s+DESC\s+LIMIT\s+\?/i, sql)
 
                  _ ->
                    false
                end)
 
       assert List.last(params) == 3
-      assert String.contains?(sql, "INDEXED BY concord_turso_current_metadata")
+      assert String.contains?(sql, "INDEXED BY concord_turso_current_key_bytes_metadata")
       assert String.contains?(sql, "SELECT key, record_metadata")
       assert {:ok, %{rows: plan}} = Elixir.Turso.query(@db, "EXPLAIN QUERY PLAN " <> sql, params)
       assert Enum.any?(plan, &Regex.match?(~r/COVERING INDEX/i, &1["detail"]))

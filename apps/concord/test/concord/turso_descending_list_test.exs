@@ -97,12 +97,15 @@ defmodule Concord.TursoDescendingListTest do
 
     assert [{:sql, sql, params}] =
              Enum.filter(calls, fn
-               {:sql, sql, _params} -> Regex.match?(~r/ORDER BY\s+key\s+DESC\s+LIMIT\s+\?/i, sql)
-               _ -> false
+               {:sql, sql, _params} ->
+                 Regex.match?(~r/ORDER BY\s+CAST\(key AS BLOB\)\s+DESC\s+LIMIT\s+\?/i, sql)
+
+               _ ->
+                 false
              end)
 
     assert List.last(params) == Keyword.fetch!(opts, :limit) + 1
-    assert String.contains?(sql, "INDEXED BY concord_turso_current_metadata")
+    assert String.contains?(sql, "INDEXED BY concord_turso_current_key_bytes_metadata")
     assert String.contains?(sql, "SELECT key, record_metadata")
 
     assert {:ok, %{rows: plan}} = Elixir.Turso.query(@db, "EXPLAIN QUERY PLAN " <> sql, params)
