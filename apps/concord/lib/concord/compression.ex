@@ -94,11 +94,12 @@ defmodule Concord.Compression do
   """
   @spec decompress(term() | compressed_value()) :: term()
   def decompress({:compressed, _algorithm, _compressed_binary} = compressed) do
-    case decode_with_limit(compressed) do
+    case decode_with_limit(compressed, @max_decompressed_bytes) do
       {:ok, value} -> value
       # Version-zero values were persisted before an expanded-size limit
-      # existed. New command admission never reaches this fallback, but reads
-      # and exact legacy replay must remain able to decode those durable bytes.
+      # existed, and node-local Turso CAS admits larger values. Replicated
+      # admission never reaches this fallback, but reads and exact legacy
+      # replay must remain able to decode those durable bytes.
       {:error, :expanded_size_limit} -> legacy_decode(compressed)
       {:error, :invalid_compressed_value} -> legacy_decode(compressed)
     end
@@ -125,9 +126,14 @@ defmodule Concord.Compression do
   @doc false
   @spec decode_v1(term()) ::
           {:ok, term()} | {:error, :invalid_compressed_value | :value_too_large}
-  def decode_v1({:compressed, algorithm, compressed_binary} = compressed)
+  def decode_v1(compressed), do: decode_bounded(compressed, @max_decompressed_bytes)
+
+  @doc false
+  @spec decode_bounded(term(), pos_integer()) ::
+          {:ok, term()} | {:error, :invalid_compressed_value | :value_too_large}
+  def decode_bounded({:compressed, algorithm, compressed_binary} = compressed, limit)
       when algorithm in [:zlib, :gzip, :none] and is_binary(compressed_binary) do
-    case decode_with_limit(compressed) do
+    case decode_with_limit(compressed, limit) do
       {:ok, value} -> {:ok, value}
       {:error, :expanded_size_limit} -> {:error, :value_too_large}
       {:error, :invalid_compressed_value} -> {:error, :invalid_compressed_value}
@@ -138,7 +144,7 @@ defmodule Concord.Compression do
     _kind, _reason -> {:error, :invalid_compressed_value}
   end
 
-  def decode_v1(_value), do: {:error, :invalid_compressed_value}
+  def decode_bounded(_value, _limit), do: {:error, :invalid_compressed_value}
 
   @doc false
   @spec max_decompressed_bytes() :: pos_integer()
@@ -253,12 +259,12 @@ defmodule Concord.Compression do
     {:compressed, algorithm, compressed}
   end
 
-  defp decode_with_limit({:compressed, algorithm, compressed_binary})
+  defp decode_with_limit({:compressed, algorithm, compressed_binary}, limit)
        when algorithm in [:zlib, :gzip, :none] and is_binary(compressed_binary) do
-    if byte_size(compressed_binary) > @max_decompressed_bytes do
+    if byte_size(compressed_binary) > limit do
       {:error, :expanded_size_limit}
     else
-      with {:ok, decompressed} <- bounded_decompress(compressed_binary, algorithm) do
+      with {:ok, decompressed} <- bounded_decompress(compressed_binary, algorithm, limit) do
         # `[:safe]` makes decoding depend on the receiving VM's current atom
         # table: identical replicated bytes are accepted only after every atom
         # happens to exist locally. Ordinary decoding is deterministic;
@@ -273,7 +279,7 @@ defmodule Concord.Compression do
     _kind, _reason -> {:error, :invalid_compressed_value}
   end
 
-  defp decode_with_limit(_compressed), do: {:error, :invalid_compressed_value}
+  defp decode_with_limit(_compressed, _limit), do: {:error, :invalid_compressed_value}
 
   # ETF's own COMPRESSED tag would introduce a second, unbounded inflation
   # step inside binary_to_term/2 and bypass the outer streaming limit. Values
@@ -319,16 +325,16 @@ defmodule Concord.Compression do
     end
   end
 
-  defp bounded_decompress(binary, :none), do: {:ok, binary}
+  defp bounded_decompress(binary, :none, _limit), do: {:ok, binary}
 
-  defp bounded_decompress(compressed_binary, algorithm) do
+  defp bounded_decompress(compressed_binary, algorithm, limit) do
     z = :zlib.open()
 
     try do
       window_bits = if algorithm == :gzip, do: 16 + 15, else: 15
       :ok = :zlib.inflateInit(z, window_bits)
 
-      case collect_inflated(z, compressed_binary, 0, []) do
+      case collect_inflated(z, compressed_binary, 0, [], limit) do
         {:ok, chunks} ->
           :ok = :zlib.inflateEnd(z)
           {:ok, chunks |> Enum.reverse() |> IO.iodata_to_binary()}
@@ -345,10 +351,10 @@ defmodule Concord.Compression do
   # retains unconsumed compressed input in the zlib state. Draining with an
   # empty input therefore lets us reject at the limit without first allocating
   # the entire expanded value.
-  defp collect_inflated(z, input, total_size, chunks) do
+  defp collect_inflated(z, input, total_size, chunks, limit) do
     case :zlib.safeInflate(z, input) do
       {:finished, output} ->
-        append_inflated(output, total_size, chunks)
+        append_inflated(output, total_size, chunks, limit)
 
       {:continue, output} ->
         output_size = :erlang.iolist_size(output)
@@ -356,9 +362,9 @@ defmodule Concord.Compression do
         if output_size == 0 do
           {:error, :invalid_compressed_value}
         else
-          case append_inflated(output, total_size, chunks) do
+          case append_inflated(output, total_size, chunks, limit) do
             {:ok, next_chunks} ->
-              collect_inflated(z, <<>>, total_size + output_size, next_chunks)
+              collect_inflated(z, <<>>, total_size + output_size, next_chunks, limit)
 
             {:error, _reason} = error ->
               error
@@ -367,10 +373,10 @@ defmodule Concord.Compression do
     end
   end
 
-  defp append_inflated(output, total_size, chunks) do
+  defp append_inflated(output, total_size, chunks, limit) do
     output_size = :erlang.iolist_size(output)
 
-    if total_size + output_size <= @max_decompressed_bytes do
+    if total_size + output_size <= limit do
       {:ok, [output | chunks]}
     else
       {:error, :expanded_size_limit}

@@ -36,6 +36,7 @@ defmodule Concord.KV do
 
   alias Concord.{CommandSchema, Compression, Deadline, Engine, Validation}
   alias Concord.KV.Record
+  alias Concord.Turso.CasAdmission
 
   @timeout 5_000
   @default_list_limit 1_000
@@ -375,6 +376,9 @@ defmodule Concord.KV do
   An expected revision of zero creates a missing, deleted, or expired key.
   Accepts the same 16 MiB logical values as `put/3`, without the transaction
   envelope's 1,000,000-byte limit. `update_if/3` remains transaction based.
+  Node-local Turso CAS admits 32 MiB logical and encoded values instead, within
+  the 64 MiB logical and encoded command; `config :concord, turso:
+  [max_cas_value_bytes: bytes]` may lower that cap. VSR and Local keep 16 MiB.
 
   Returns `{:ok, %{succeeded: boolean, revision: integer, current_kv: Record.t() | nil}}`.
   `current_kv.value` is always nil, including conflicts; a missing key returns nil.
@@ -397,13 +401,13 @@ defmodule Concord.KV do
 
     with :ok <- validate_cas_revision(expected),
          :ok <- validate_key(key),
-         :ok <- Validation.validate_value(value),
+         :ok <- validate_cas_value(value, opts),
          :ok <- validate_ttl_option(opts),
          :ok <- Deadline.check(opts) do
       put_opts = Map.new(Keyword.take(opts, [:ttl, :lease, :content_type, :metadata]))
       command = {:compare_and_swap, key, maybe_compress(value, opts), expected, put_opts}
 
-      with :ok <- CommandSchema.validate_emission(command),
+      with :ok <- validate_cas_emission(command, opts),
            :ok <- Deadline.check(opts) do
         case do_command(command, Keyword.get(opts, :timeout, @timeout), opts) do
           {:ok, {:error, reason}, _engine} -> {:error, reason}
@@ -418,6 +422,18 @@ defmodule Concord.KV do
 
   defp validate_cas_revision(expected) when is_integer(expected) and expected >= 0, do: :ok
   defp validate_cas_revision(_expected), do: {:error, :invalid_mod_revision}
+
+  defp validate_cas_value(value, opts) do
+    if Engine.engine(opts) == Concord.Engine.Turso,
+      do: CasAdmission.validate_value(value),
+      else: Validation.validate_value(value)
+  end
+
+  defp validate_cas_emission(command, opts) do
+    if Engine.engine(opts) == Concord.Engine.Turso,
+      do: CasAdmission.validate(command),
+      else: CommandSchema.validate_emission(command)
+  end
 
   @doc """
   Updates a key only if its `mod_revision` matches the expected value.

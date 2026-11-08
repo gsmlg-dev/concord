@@ -5,6 +5,7 @@ defmodule Concord.RevisionCASTest do
   alias Concord.Engine.{Local, VSR}
   alias Concord.KV
   alias Concord.KV.Record
+  alias Concord.Turso.CasAdmission
 
   @moduletag :tmp_dir
 
@@ -76,10 +77,11 @@ defmodule Concord.RevisionCASTest do
                  KV.update_if("history", new, opts ++ [mod_revision: second])
       end
 
-      test "both encodings honor the16MiB logical value boundary", context do
+      test "both encodings honor the engine's logical value boundary", context do
         opts = [engine: context.engine, timeout: 30_000, mod_revision: 0]
-        largest = :binary.copy("x", CommandSchema.max_value_bytes() - 6)
-        assert :erlang.external_size(largest) == CommandSchema.max_value_bytes()
+        max = max_value_bytes(context.engine)
+        largest = :binary.copy("x", max - 6)
+        assert :erlang.external_size(largest) == max
         oversized = largest <> "x"
 
         for compress <- [false, true] do
@@ -235,6 +237,69 @@ defmodule Concord.RevisionCASTest do
   end
 
   @tag engine: :turso
+  test "Turso CAS atomically replaces values beyond the replicated 16 MiB maximum" do
+    opts = [timeout: 30_000]
+    first = :crypto.strong_rand_bytes(18_739_083)
+    second = :binary.copy("runtime stage", 1_500_000)
+    assert :erlang.external_size(first) > CommandSchema.max_value_bytes()
+    assert :erlang.external_size(second) > CommandSchema.max_value_bytes()
+
+    assert {:ok, %{succeeded: true, revision: created, current_kv: %Record{value: nil}}} =
+             Concord.Turso.compare_and_swap("stage", first, opts ++ [mod_revision: 0])
+
+    assert {:ok, %{succeeded: true, revision: replaced, current_kv: %Record{version: 2}}} =
+             Concord.Turso.compare_and_swap(
+               "stage",
+               second,
+               opts ++ [mod_revision: created, compress: true, metadata: %{incarnation: 2}]
+             )
+
+    assert {:ok, %{succeeded: false, revision: ^replaced, current_kv: %Record{value: nil}}} =
+             Concord.Turso.compare_and_swap("stage", first, opts ++ [mod_revision: created])
+
+    assert {:ok, ^second} = Concord.Turso.get("stage", opts)
+    assert {:ok, ^first} = KV.get("stage", opts ++ [engine: :turso, revision: created])
+
+    # The larger bound is node-local: replicated engines and transactions keep v1 limits.
+    assert {:error, :value_too_large} =
+             KV.compare_and_swap("stage", second, engine: :local, mod_revision: 0)
+
+    # Direct engine commands are admitted with the same Turso bound.
+    oversized = :binary.copy("x", CasAdmission.max_value_bytes())
+
+    assert {:error, {:invalid_command, :value_too_large}} =
+             Concord.Engine.Turso.command({:compare_and_swap, "stage", oversized, replaced, %{}},
+               timeout: 30_000
+             )
+
+    assert {:ok, ^second} = Concord.Turso.get("stage", opts)
+  end
+
+  @tag engine: :turso
+  test "Turso CAS value cap can be lowered but not raised by configuration" do
+    previous = Application.get_env(:concord, :turso)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:concord, :turso, previous),
+        else: Application.delete_env(:concord, :turso)
+    end)
+
+    value = :binary.copy("x", 1_000)
+
+    Application.put_env(:concord, :turso, max_cas_value_bytes: 512)
+
+    assert {:error, :value_too_large} =
+             Concord.Turso.compare_and_swap("capped", value, mod_revision: 0, compress: true)
+
+    Application.put_env(:concord, :turso, max_cas_value_bytes: 1024 * 1024 * 1024)
+    assert CasAdmission.max_value_bytes() == 32 * 1_024 * 1_024
+
+    Application.put_env(:concord, :turso, max_cas_value_bytes: :unlimited)
+    assert CasAdmission.max_value_bytes() == 0
+  end
+
+  @tag engine: :turso
   test "Turso pool acquisition uses the original API deadline" do
     assert {:ok, %{succeeded: true, revision: revision}} =
              Concord.Turso.compare_and_swap("held", :before, mod_revision: 0)
@@ -381,6 +446,9 @@ defmodule Concord.RevisionCASTest do
   end
 
   defp wrapper(:local), do: Concord.Local
+  defp max_value_bytes(:turso), do: CasAdmission.max_value_bytes()
+  defp max_value_bytes(_engine), do: CommandSchema.max_value_bytes()
+
   defp wrapper(:turso), do: Concord.Turso
   defp wrapper(:vsr), do: Concord
 

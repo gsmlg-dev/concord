@@ -14,7 +14,8 @@ defmodule Concord.Engine.Turso do
   alias Concord.Deadline
   alias Concord.KV.Record
   alias Concord.Turso
-  alias Concord.Turso.{Codec, ConditionalPut, ListQueue, Migrations, PrefixReplacement}
+  alias Concord.Turso.{CasAdmission, Codec, ConditionalPut, ListQueue, Migrations}
+  alias Concord.Turso.PrefixReplacement
   alias Concord.Txn.Result, as: TxnResult
 
   @db Concord.Turso.DB
@@ -48,7 +49,7 @@ defmodule Concord.Engine.Turso do
   def command({:compare_and_swap, key, value, expected, put_opts} = command, opts) do
     opts = Deadline.start(opts)
 
-    with :ok <- CommandSchema.validate_emission(command),
+    with :ok <- CasAdmission.validate(command),
          :ok <- Deadline.check(opts),
          :ok <- cas_lease_supported(put_opts) do
       {:compare_and_swap, ^key, ^value, ^expected, put_opts} =

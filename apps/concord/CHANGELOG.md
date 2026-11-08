@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (BLOB) upper bounds, and non-UTF-8 keys are no longer omitted from prefixes.
   Add a covering byte-order index so key-only pages still avoid value reads.
 
+### Added
+- Admit node-local Turso `compare_and_swap/3` values up to 32 MiB logical and
+  encoded size within the existing 64 MiB command limit. The optional
+  `turso: [max_cas_value_bytes: bytes]` setting can lower that cap. VSR, Local,
+  transactions and the immutable replicated command envelope keep their limits.
+
 ## [3.1.16] - 2026-11-08
 
 ### Fixed

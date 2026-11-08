@@ -284,7 +284,10 @@ Performance varies significantly depending on hardware, cluster size, and networ
 ```
 
 `compare_and_swap/3` atomically compares the visible modification revision
-and stores one new value, up to the normal 16 MiB logical value limit. Revision
+and stores one new value, up to the normal 16 MiB logical value limit. Node-local
+`Concord.Turso.compare_and_swap/3` admits up to 32 MiB logical and encoded values
+within the 64 MiB command limit; `config :concord, turso: [max_cas_value_bytes: n]`
+can lower that cap. Replicated VSR commands keep the immutable 16 MiB limit. Revision
 zero means absent, deleted or expired. Conflicts return current value-free
 metadata without advancing the revision. The existing `KV.update_if/3`
 transaction wrapper and generic transactions retain their 1,000,000-byte cap.
