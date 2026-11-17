@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.18] - 2026-11-17
+
+### Fixed
+- Restore FTS-enabled native builds on Rust 1.100.0 by upgrading the embedded
+  Turso crates from 0.8.3 to the exact 0.9.0-pre.2 prerelease, which includes
+  the upstream allocator-constructor fix. Keep cloud sync and FTS enabled.
+
+### Changed
+- Document Rust 1.100.0 as the tested source-build toolchain for ExTurso.
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.18.
+
 ## [3.1.17] - 2026-11-09
 
 ### Fixed

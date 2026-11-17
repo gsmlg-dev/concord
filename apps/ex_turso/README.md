@@ -4,7 +4,7 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_turso.svg)](https://hex.pm/packages/ex_turso)
 
 An Elixir library that wraps the [`turso`](https://crates.io/crates/turso) Rust
-crate (v0.8.3) via [Rustler](https://github.com/rusterlium/rustler) NIFs, exposed
+crate (pinned to v0.9.0-pre.2) via [Rustler](https://github.com/rusterlium/rustler) NIFs, exposed
 through a [`DBConnection`](https://hexdocs.pm/db_connection) pool.
 
 It supports **local file databases** (and `":memory:"`), **Turso Cloud sync**
@@ -14,9 +14,13 @@ working connection pool. Ecto support is optional via `Ecto.Adapters.Turso`.
 
 ## Native binaries
 
-Version 0.5 builds the NIF from source while its renamed `Turso.*` API is
-prepared for a new set of precompiled artifacts. A working Rust toolchain
-(`cargo`) matching the BEAM architecture is therefore required.
+ExTurso 3.1.18 builds the NIF from source. Rust 1.100.0 (`rustc` and `cargo`)
+matching the BEAM architecture is the tested toolchain for this release.
+
+The exact Turso 0.9.0-pre.2 prerelease includes the
+[upstream FTS allocator fix](https://github.com/tursodatabase/turso/commit/28972ff38240f9c3b18beb567343796fe6dab3b0)
+needed for Rust 1.100. Turso 0.8.3 and 0.8.4-pre.3 fail to build with FTS on
+that compiler. Cloud sync and FTS remain enabled.
 
 Future releases may provide precompiled binaries for:
 
