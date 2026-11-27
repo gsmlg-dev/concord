@@ -1167,7 +1167,7 @@ defmodule Concord.Engine.Turso do
 
   defp prefix_successor(prefix) do
     size = byte_size(prefix) - 1
-    <<start::binary-size(size), last>> = prefix
+    <<start::binary-size(^size), last>> = prefix
     if last == 255, do: prefix_successor(start), else: start <> <<last + 1>>
   end
 

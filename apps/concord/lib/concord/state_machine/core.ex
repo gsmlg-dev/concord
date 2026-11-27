@@ -140,7 +140,7 @@ defmodule Concord.StateMachine.Core do
   end
 
   @spec apply(Context.t(), term(), State.t()) :: {term(), State.t()}
-  def apply(%Context{} = context, command, %State{} = state) do
+  def apply(%Context{} = context, command, %{__struct__: State} = state) do
     case CommandSchema.validate(context.command_version, command) do
       :ok ->
         command = normalize_current_command(command)
@@ -157,7 +157,7 @@ defmodule Concord.StateMachine.Core do
 
   @doc false
   @spec apply_legacy(Context.t(), term(), State.t()) :: {term(), State.t()}
-  def apply_legacy(%Context{} = context, command, %State{} = state) do
+  def apply_legacy(%Context{} = context, command, %{__struct__: State} = state) do
     {result, state} = finalize_apply(do_apply_legacy(context, command, state), state)
     {result, %{state | representation: :legacy}}
   end

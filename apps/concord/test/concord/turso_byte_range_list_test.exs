@@ -66,6 +66,26 @@ defmodule Concord.TursoByteRangeListTest do
     assert Enum.map(records, & &1.key) == Enum.sort(@inside -- ["range/a/" <> <<0xFF>>])
   end
 
+  test "prefix bounds handle empty, single-byte, and trailing 255 prefixes" do
+    extra = [<<255>>, <<255, 0>>, <<255, 255>>, <<255, 255, 0>>, "edge/" <> <<255>>, "edge0"]
+
+    for key <- extra do
+      assert {:ok, _} = KV.put(key, key, engine: :turso)
+    end
+
+    keys = @inside ++ @outside ++ extra
+
+    for prefix <- ["", "r", "range/a/", "edge/" <> <<255>>, <<255>>, <<255, 255>>],
+        keys_only <- [false, true] do
+      expected = keys |> Enum.filter(&String.starts_with?(&1, prefix)) |> Enum.sort()
+
+      assert {:ok, records, %{has_more: false}} =
+               KV.list(engine: :turso, prefix: prefix, keys_only: keys_only, limit: 100)
+
+      assert Enum.map(records, & &1.key) == expected
+    end
+  end
+
   test "transaction range reads and deletes follow byte order" do
     selector = {:range, "range/a/", "range/a/" <> <<0xFF, 0xFF>>}
 

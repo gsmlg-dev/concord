@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.19] - 2026-11-27
+
+### Fixed
+- Remove Elixir 1.20 compiler warnings by pinning the external bitstring size
+  in Turso prefix bounds and allowing transient change-tracking metadata at
+  the state-machine entry points. Change metadata remains excluded from returned
+  state and persisted snapshots.
+
+### Changed
+- Synchronize all three umbrella packages and exact Hex dependencies at 3.1.19.
+
 ## [3.1.18] - 2026-11-17
 
 ### Fixed

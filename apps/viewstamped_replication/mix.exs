@@ -2,7 +2,7 @@ defmodule ViewstampedReplication.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/gsmlg-dev/concord/tree/main/apps/viewstamped_replication"
-  @version "3.1.18"
+  @version "3.1.19"
 
   def project do
     [
